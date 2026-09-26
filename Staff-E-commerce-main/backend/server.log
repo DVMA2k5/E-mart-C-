@@ -1,0 +1,17 @@
+Using launch settings from C:\THAYTHE\Staff-E-commerce\backend\Properties\launchSettings.json...
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5099
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\THAYTHE\Staff-E-commerce\backend
+info: backend.Services.AI.SemanticSearch.SemanticIndexingHostedService[0]
+      === Starting semantic indexing check ===
+info: backend.Services.AI.VectorStore.QdrantVectorStoreService[0]
+      [Qdrant] Client initialized: d841a62d-2582-473d-98c1-401dccec1483.eu-west-1-0.aws.cloud.qdrant.io:6334
+info: backend.Services.AI.SemanticSearch.SemanticIndexingHostedService[0]
+      [Products] Collection 'products' already has 80 items. Skipping.
+info: backend.Services.AI.SemanticSearch.SemanticIndexingHostedService[0]
+      === Semantic indexing check completed ===

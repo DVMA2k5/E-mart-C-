@@ -1,0 +1,17 @@
+[2026-09-23 20:07:09.767] [00003CEC] === Logging started ===
+[2026-09-23 20:07:09.778] [00003CEC] Executing: "C:\Program Files\dotnet\dotnet.exe" build .\Staff-E-commerce-main\backend\backend.csproj, PID: 15596, PPID: 16488
+[2026-09-23 20:07:09.779] [00003CEC] IsElevated: False
+[2026-09-23 20:07:09.779] [00003CEC] Is64BitProcess: True
+[2026-09-23 20:07:09.779] [00003CEC] RebootPending: False
+[2026-09-23 20:07:09.779] [00003CEC] ProcessorArchitecture: amd64
+[2026-09-23 20:07:09.779] [00003CEC] HostArchitecture: x64
+[2026-09-23 20:07:09.779] [00003CEC] SdkDirectory: 10.0.401
+[2026-09-23 20:07:09.779] [00003CEC] VerifySignatures: False
+[2026-09-23 20:07:09.779] [00003CEC] SDK feature band: 10.0.400
+[2026-09-23 20:07:15.684] [00003CEC] ExtractManifestAsync: Extracting 'C:\Staff-E-commerce-main\Staff-E-commerce-main\.tmp\xrivwrbw.smc\microsoft.net.workloads.10.0.400.msi.x64\10.401.0\microsoft.net.workloads.10.0.400.msi.x64.10.401.0.nupkg' to 'C:\Users\Admin\.dotnet\sdk-advertising\10.0.400\microsoft.net.workloads'
+[2026-09-23 20:07:15.685] [00003CEC] ExtractManifestAsync: Temporary extraction path: 'C:\Staff-E-commerce-main\Staff-E-commerce-main\.tmp\yrvny23q.ej4'
+[2026-09-23 20:07:15.708] [00003CEC] ExtractManifestAsync: Running admin install for 'C:\Staff-E-commerce-main\Staff-E-commerce-main\.tmp\yrvny23q.ej4\msi'.  Log file: 'C:\Staff-E-commerce-main\Staff-E-commerce-main\.tmp\Microsoft.NET.Workload_15596_20260923_200709_766_4654124f06a3b97be3fb6c48229426a8-x64_AdminInstall.log'
+[2026-09-23 20:07:29.654] [00003CEC] Shutting down
+[2026-09-23 20:07:29.654] [00003CEC] Shutdown completed.
+[2026-09-23 20:07:29.654] [00003CEC] Restart required: False
+[2026-09-23 20:07:29.654] [00003CEC] === Logging ended ===

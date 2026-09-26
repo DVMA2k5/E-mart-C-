@@ -1,0 +1,39 @@
+import { useState, useEffect } from "react";
+import { jwtDecode } from "jwt-decode";
+
+export const useAuth = () => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem("auth_token");
+
+    if (token) {
+      try {
+        console.log("Decoding token:", token);
+
+        const decoded = jwtDecode(token);
+
+        console.log("Decoded token:", decoded);
+
+        setUser({
+          id: decoded.uid,
+          username: decoded.username || decoded.unique_name,
+          email: decoded.email,
+          role: decoded.role,
+          fullName: decoded.fullname || decoded.username,
+        });
+      } catch (error) {
+        console.error("Invalid token:", error);
+        localStorage.removeItem("auth_token");
+        setUser(null);
+      }
+    } else {
+      setUser(null);
+    }
+
+    setLoading(false);
+  }, []);
+
+  return { user, loading };
+};

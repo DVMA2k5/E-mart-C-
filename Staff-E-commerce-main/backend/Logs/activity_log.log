@@ -76,3 +76,15 @@
 [2026-09-24 14:57:59] [User:2] [Action:CREATE_Auth] [Entity:Auth#login] [IP:::1] {"username":"admin123","password":"[REDACTED]"}
 [2026-09-24 14:59:00] [User:2] [Action:CREATE_Auth] [Entity:Auth#login] [IP:::1] {"username":"admin","password":"[REDACTED]"}
 [2026-09-24 14:59:11] [User:1] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:::1] {"raw":"[Empty Body]"}
+[2026-09-28 13:41:29] [User:2] [Action:CREATE_Auth] [Entity:Auth#login] [IP:::1] {"username":"admin","password":"[REDACTED]"}
+[2026-09-28 13:42:44] [User:1] [Action:CREATE_Ai] [Entity:Ai#stream] [IP:::1] {"message":"h\u00F4m nay \u0103n g\u00EC","conversationId":null,"history":[]}
+[2026-10-01 15:56:52] [User:1] [Action:CREATE_Auth] [Entity:Auth#login] [IP:::1] {"username":"staff01","password":"[REDACTED]"}
+[2026-10-01 15:56:57] [User:2] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:::1] {"raw":"[Empty Body]"}
+[2026-10-01 15:57:36] [User:2] [Action:CREATE_Orders] [Entity:Orders#create] [IP:::1] {"Id":0,"OrderNumber":"ee3dfc05-c20c-4d16-bf1a-69692e1ab1bc","UserId":2,"Status":"completed","Subtotal":20000,"Discount":0,"TotalAmount":20000,"PromotionId":null,"CreatedAt":"2026-10-01T08:57:36.383Z","UpdatedAt":"2026-10-01T08:57:36.383Z"}
+[2026-10-01 15:57:36] [User:2] [Action:CREATE_Orderitem] [Entity:Orderitem#create] [IP:::1] [{"OrderId":31,"ProductId":73,"Quantity":1,"UnitPrice":20000,"TotalPrice":20000,"CreatedAt":"2026-10-01T08:57:36.473Z"}]
+[2026-10-01 15:57:36] [User:2] [Action:CREATE_Inventory] [Entity:Inventory#reduce-multiple] [IP:::1] [{"ProductId":73,"Quantity":1}]
+[2026-10-01 15:57:49] [User:2] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:::1] {"raw":"[Empty Body]"}
+[2026-10-01 15:58:18] [User:2] [Action:CREATE_Orders] [Entity:Orders#create] [IP:::1] {"Id":0,"OrderNumber":"16872084-7c7d-4590-9843-2b15dfdfd2fc","UserId":2,"Status":"completed","Subtotal":35000,"Discount":0,"TotalAmount":35000,"PromotionId":null,"CreatedAt":"2026-10-01T08:58:18.617Z","UpdatedAt":"2026-10-01T08:58:18.617Z"}
+[2026-10-01 15:58:18] [User:2] [Action:CREATE_Orderitem] [Entity:Orderitem#create] [IP:::1] [{"OrderId":32,"ProductId":74,"Quantity":1,"UnitPrice":35000,"TotalPrice":35000,"CreatedAt":"2026-10-01T08:58:18.640Z"}]
+[2026-10-01 15:58:18] [User:2] [Action:CREATE_Inventory] [Entity:Inventory#reduce-multiple] [IP:::1] [{"ProductId":74,"Quantity":1}]
+[2026-10-01 16:14:03] [User:2] [Action:CREATE_Customers] [Entity:Customers#0] [IP:::1] {"fullName":"Nguy\u1EC5n V\u0103n C","email":null,"phone":"0988603527","address":null}

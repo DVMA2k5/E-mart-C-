@@ -4,6 +4,8 @@ namespace backend.DTO
     {
         public int Id { get; set; }
         public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string PromotionKind { get; set; } = "event";
         public string Type { get; set; } = "percent"; // "percent" | "fixed"
         public decimal Value { get; set; }
         public decimal MinOrderAmount { get; set; }
@@ -13,7 +15,10 @@ namespace backend.DTO
         public int? UsageLimit { get; set; }
         public int UsedCount { get; set; }
         public bool Active { get; set; }
+        public string Status { get; set; } = "active";
         public string? Description { get; set; }
+        public string? VoucherCode { get; set; }
+        public List<int> ProductIds { get; set; } = new();
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

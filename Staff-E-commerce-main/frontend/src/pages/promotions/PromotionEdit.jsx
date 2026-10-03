@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { updatePromotion } from "../../api/promotionApi";
+import { getProductsPaginated } from "../../api/apiClient";
 
 export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
   const [formData, setFormData] = useState({
     id: "",
+    name: "",
     code: "",
+    promotionKind: "event",
     type: "percent",
     value: "",
     minOrderAmount: "",
@@ -15,16 +18,28 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
     active: true,
     description: "",
     usedCount: 0,
+    status: "active",
+    voucherCode: "",
+    productIds: [],
   });
 
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    getProductsPaginated(1, 100, "", null, null, null, null, "name_asc", 1)
+      .then((data) => setProducts(data.items ?? data.Items ?? []))
+      .catch(() => setProducts([]));
+  }, []);
 
   useEffect(() => {
     if (promotion) {
       setFormData({
         id: promotion.id,
+        name: promotion.name || "",
         code: promotion.code,
+        promotionKind: promotion.promotionKind || "event",
         type: promotion.type,
         value: promotion.value,
         minOrderAmount: promotion.minOrderAmount,
@@ -35,6 +50,9 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
         active: promotion.active,
         description: promotion.description || "",
         usedCount: promotion.usedCount || 0,
+        status: promotion.status || (promotion.active ? "active" : "disabled"),
+        voucherCode: promotion.voucherCode || "",
+        productIds: promotion.productIds || [],
       });
     }
   }, [promotion]);
@@ -51,6 +69,9 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
       if (name === "type" && value === "fixed") {
         newData.maxDiscount = "";
       }
+      if (name === "promotionKind" && value === "product") {
+        newData.type = "percent";
+      }
       
       return newData;
     });
@@ -62,23 +83,32 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
     setError(null);
 
     try {
-      if (!formData.code || !formData.value || !formData.minOrderAmount) {
+      if (!formData.code || !formData.value ||
+          (formData.promotionKind === "event" && formData.minOrderAmount === "") ||
+          (formData.promotionKind === "product" && formData.productIds.length === 0)) {
         throw new Error("Vui lòng điền đầy đủ thông tin bắt buộc");
       }
 
       const payload = {
         id: formData.id,
+        name: formData.name.trim() || formData.code,
         code: formData.code.toUpperCase(),
+        promotionKind: formData.promotionKind,
         type: formData.type,
         value: parseFloat(formData.value),
-        minOrderAmount: parseFloat(formData.minOrderAmount),
+        minOrderAmount: formData.promotionKind === "event" ? parseFloat(formData.minOrderAmount || 0) : 0,
         maxDiscount: formData.maxDiscount ? parseFloat(formData.maxDiscount) : null,
         usageLimit: formData.usageLimit ? parseInt(formData.usageLimit) : null,
         startDate: formData.startDate || null,
         endDate: formData.endDate || null,
         active: formData.active,
+        status: formData.active
+          ? (formData.status === "expired" ? "expired" : "active")
+          : "disabled",
         description: formData.description || "",
         usedCount: formData.usedCount,
+        voucherCode: formData.voucherCode.trim() || formData.code.toUpperCase(),
+        productIds: formData.productIds,
       };
 
       await updatePromotion(formData.id, payload);
@@ -115,6 +145,16 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
 
           {/* Mã khuyến mãi (disabled) */}
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Tên chương trình</label>
+            <input
+              type="text"
+              name="name"
+              value={formData.name}
+              onChange={handleChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Mã khuyến mãi
             </label>
@@ -127,6 +167,56 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
             />
             <p className="text-xs text-gray-500 mt-1">Mã khuyến mãi không thể thay đổi</p>
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Nhóm khuyến mãi</label>
+            <select
+              name="promotionKind"
+              value={formData.promotionKind}
+              onChange={handleChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="event">Theo đơn hàng</option>
+              <option value="voucher">Voucher</option>
+              <option value="product">Theo sản phẩm</option>
+            </select>
+          </div>
+
+          {formData.promotionKind === "voucher" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Mã voucher</label>
+              <input
+                type="text"
+                name="voucherCode"
+                value={formData.voucherCode}
+                onChange={handleChange}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 uppercase"
+              />
+            </div>
+          )}
+
+          {formData.promotionKind === "product" && (
+            <fieldset className="rounded-lg border border-gray-200 p-4">
+              <legend className="px-1 text-sm font-medium text-gray-700">Sản phẩm áp dụng</legend>
+              <div className="max-h-40 space-y-2 overflow-y-auto">
+                {products.map((product) => (
+                  <label key={product.id} className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={formData.productIds.includes(product.id)}
+                      onChange={(event) => setFormData((current) => ({
+                        ...current,
+                        productIds: event.target.checked
+                          ? [...current.productIds, product.id]
+                          : current.productIds.filter((id) => id !== product.id),
+                      }))}
+                    />
+                    <span>{product.productName ?? product.name} (#{product.id})</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
 
           {/* Loại và giá trị */}
           <div className="grid grid-cols-2 gap-4">
@@ -141,7 +231,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="percent">Giảm theo %</option>
-                <option value="fixed">Giảm cố định (VNĐ)</option>
+                {formData.promotionKind !== "product" && <option value="fixed">Giảm cố định (VNĐ)</option>}
               </select>
             </div>
             <div>
@@ -164,36 +254,39 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
 
           {/* Điều kiện đơn hàng */}
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Đơn hàng tối thiểu (VNĐ) <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number"
-                name="minOrderAmount"
-                value={formData.minOrderAmount}
-                onChange={handleChange}
-                min="0"
-                step="1000"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Giảm tối đa (VNĐ) {formData.type === "percent" && <span className="text-gray-500 text-xs">(nếu có)</span>}
-              </label>
-              <input
-                type="number"
-                name="maxDiscount"
-                value={formData.maxDiscount}
-                onChange={handleChange}
-                min="0"
-                step="1000"
-                disabled={formData.type === "fixed"}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-              />
-            </div>
+            {formData.promotionKind === "event" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Đơn hàng tối thiểu (VNĐ) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  name="minOrderAmount"
+                  value={formData.minOrderAmount}
+                  onChange={handleChange}
+                  min="0"
+                  step="1000"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+            )}
+            {formData.type === "percent" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Giảm tối đa (VNĐ) <span className="text-gray-500 text-xs">(nếu có)</span>
+                </label>
+                <input
+                  type="number"
+                  name="maxDiscount"
+                  value={formData.maxDiscount}
+                  onChange={handleChange}
+                  min="0"
+                  step="1000"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            )}
           </div>
 
           {/* Thời gian */}

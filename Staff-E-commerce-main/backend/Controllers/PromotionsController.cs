@@ -119,6 +119,8 @@ namespace backend.Controllers
                 var promotion = new Promotion
                 {
                     Code = promotionDto.Code.ToUpper(),
+                    Name = promotionDto.Name,
+                    PromotionKind = promotionDto.PromotionKind,
                     Type = promotionDto.Type,
                     Value = promotionDto.Value,
                     MinOrderAmount = promotionDto.MinOrderAmount,
@@ -127,6 +129,9 @@ namespace backend.Controllers
                     EndDate = promotionDto.EndDate,
                     UsageLimit = promotionDto.UsageLimit,
                     Active = promotionDto.Active,
+                    Status = promotionDto.Status,
+                    VoucherCode = promotionDto.VoucherCode,
+                    ProductIds = promotionDto.ProductIds,
                     Description = promotionDto.Description
                 };
 
@@ -162,6 +167,8 @@ namespace backend.Controllers
                 {
                     Id = promotionDto.Id,
                     Code = promotionDto.Code.ToUpper(),
+                    Name = promotionDto.Name,
+                    PromotionKind = promotionDto.PromotionKind,
                     Type = promotionDto.Type,
                     Value = promotionDto.Value,
                     MinOrderAmount = promotionDto.MinOrderAmount,
@@ -171,6 +178,9 @@ namespace backend.Controllers
                     UsageLimit = promotionDto.UsageLimit,
                     UsedCount = promotionDto.UsedCount,
                     Active = promotionDto.Active,
+                    Status = promotionDto.Status,
+                    VoucherCode = promotionDto.VoucherCode,
+                    ProductIds = promotionDto.ProductIds,
                     Description = promotionDto.Description
                 };
 

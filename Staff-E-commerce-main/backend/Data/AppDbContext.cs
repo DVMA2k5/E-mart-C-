@@ -21,6 +21,11 @@ namespace backend.Data
         public DbSet<Customer> Customers { get; set; }
         public DbSet<User> Users { get; set; }
         public DbSet<Promotion> Promotions { get; set; }
+        public DbSet<EventPromotion> EventPromotions { get; set; }
+        public DbSet<VoucherPromotion> VoucherPromotions { get; set; }
+        public DbSet<ProductPromotion> ProductPromotions { get; set; }
+        public DbSet<PurchaseOrder> PurchaseOrders { get; set; }
+        public DbSet<PurchaseOrderDetail> PurchaseOrderDetails { get; set; }
         public DbSet<AiConversation> AiConversations { get; set; }
         public DbSet<AiMessage> AiMessages { get; set; }
 
@@ -162,9 +167,57 @@ namespace backend.Data
                 .HasForeignKey(pr => pr.OrderId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            modelBuilder.Entity<PurchaseOrder>()
+                .HasOne(po => po.Supplier)
+                .WithMany()
+                .HasForeignKey(po => po.SupplierId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PurchaseOrder>()
+                .HasOne(po => po.User)
+                .WithMany()
+                .HasForeignKey(po => po.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PurchaseOrderDetail>()
+                .HasOne(detail => detail.PurchaseOrder)
+                .WithMany(po => po.Details)
+                .HasForeignKey(detail => detail.PurchaseOrderId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<PurchaseOrderDetail>()
+                .HasOne(detail => detail.Product)
+                .WithMany()
+                .HasForeignKey(detail => detail.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+
             // Global query filters
             modelBuilder.Entity<Promotion>()
                 .HasQueryFilter(p => !p.IsDeleted);
+
+            modelBuilder.Entity<Promotion>()
+                .HasOne(p => p.EventPromotion)
+                .WithOne(detail => detail.Promotion)
+                .HasForeignKey<EventPromotion>(detail => detail.PromotionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<Promotion>()
+                .HasOne(p => p.VoucherPromotion)
+                .WithOne(detail => detail.Promotion)
+                .HasForeignKey<VoucherPromotion>(detail => detail.PromotionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<Promotion>()
+                .HasMany(p => p.ProductPromotions)
+                .WithOne(detail => detail.Promotion)
+                .HasForeignKey(detail => detail.PromotionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<ProductPromotion>()
+                .HasOne(detail => detail.Product)
+                .WithMany()
+                .HasForeignKey(detail => detail.ProductId)
+                .OnDelete(DeleteBehavior.Cascade);
 
             // Customer -> Orders
             modelBuilder.Entity<Customer>()

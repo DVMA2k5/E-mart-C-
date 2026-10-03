@@ -1,9 +1,12 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createPromotion } from "../../api/promotionApi";
+import { getProductsPaginated } from "../../api/apiClient";
 
 export default function PromotionCreate({ onCancel, onSuccess }) {
   const [formData, setFormData] = useState({
+    name: "",
     code: "",
+    promotionKind: "event",
     type: "percent",
     value: "",
     minOrderAmount: "",
@@ -13,10 +16,19 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
     startDate: "",
     endDate: "",
     active: true,
+    voucherCode: "",
+    productIds: [],
   });
 
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    getProductsPaginated(1, 100, "", null, null, null, null, "name_asc", 1)
+      .then((data) => setProducts(data.items ?? data.Items ?? []))
+      .catch(() => setProducts([]));
+  }, []);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -30,6 +42,9 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
       if (name === "type" && value === "fixed") {
         newData.maxDiscount = "";
       }
+      if (name === "promotionKind" && value === "product") {
+        newData.type = "percent";
+      }
       
       return newData;
     });
@@ -42,22 +57,28 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
 
     try {
       // Validate
-      if (!formData.code || !formData.value || !formData.minOrderAmount) {
+      if (!formData.code || !formData.value ||
+          (formData.promotionKind === "event" && formData.minOrderAmount === "") ||
+          (formData.promotionKind === "product" && formData.productIds.length === 0)) {
         throw new Error("Vui lòng điền đầy đủ thông tin bắt buộc");
       }
 
       // Convert to proper types
       const payload = {
+        name: formData.name.trim() || formData.code.trim().toUpperCase(),
         code: formData.code.toUpperCase(),
+        promotionKind: formData.promotionKind,
         type: formData.type,
         value: parseFloat(formData.value),
-        minOrderAmount: parseFloat(formData.minOrderAmount),
+        minOrderAmount: formData.promotionKind === "event" ? parseFloat(formData.minOrderAmount || 0) : 0,
         maxDiscount: formData.maxDiscount ? parseFloat(formData.maxDiscount) : null,
         usageLimit: formData.usageLimit ? parseInt(formData.usageLimit) : null,
         description: formData.description || "",
         startDate: formData.startDate || null,
         endDate: formData.endDate || null,
         active: formData.active,
+        voucherCode: formData.voucherCode.trim() || formData.code.toUpperCase(),
+        productIds: formData.productIds,
       };
 
       await createPromotion(payload);
@@ -101,6 +122,19 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
           {/* Mã khuyến mãi */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
+              Tên chương trình
+            </label>
+            <input
+              type="text"
+              name="name"
+              value={formData.name}
+              onChange={handleChange}
+              placeholder="VD: Khuyến mãi cuối tuần"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               Mã khuyến mãi <span className="text-red-500">*</span>
             </label>
             <input
@@ -113,6 +147,60 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
               required
             />
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Nhóm khuyến mãi <span className="text-red-500">*</span>
+            </label>
+            <select
+              name="promotionKind"
+              value={formData.promotionKind}
+              onChange={handleChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="event">Theo đơn hàng</option>
+              <option value="voucher">Voucher</option>
+              <option value="product">Theo sản phẩm</option>
+            </select>
+          </div>
+
+          {formData.promotionKind === "voucher" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Mã voucher</label>
+              <input
+                type="text"
+                name="voucherCode"
+                value={formData.voucherCode}
+                onChange={handleChange}
+                placeholder="Để trống sẽ dùng mã khuyến mãi"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 uppercase"
+              />
+            </div>
+          )}
+
+          {formData.promotionKind === "product" && (
+            <fieldset className="rounded-lg border border-gray-200 p-4">
+              <legend className="px-1 text-sm font-medium text-gray-700">Sản phẩm áp dụng</legend>
+              <div className="max-h-40 space-y-2 overflow-y-auto">
+                {products.map((product) => (
+                  <label key={product.id} className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={formData.productIds.includes(product.id)}
+                      onChange={(event) => setFormData((current) => ({
+                        ...current,
+                        productIds: event.target.checked
+                          ? [...current.productIds, product.id]
+                          : current.productIds.filter((id) => id !== product.id),
+                      }))}
+                    />
+                    <span>{product.productName ?? product.name} (#{product.id})</span>
+                  </label>
+                ))}
+                {products.length === 0 && <p className="text-sm text-gray-500">Không tải được danh sách sản phẩm.</p>}
+              </div>
+            </fieldset>
+          )}
 
           {/* Loại và giá trị */}
           <div className="grid grid-cols-2 gap-4">
@@ -127,7 +215,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="percent">Giảm theo %</option>
-                <option value="fixed">Giảm cố định (VNĐ)</option>
+                {formData.promotionKind !== "product" && <option value="fixed">Giảm cố định (VNĐ)</option>}
               </select>
             </div>
             <div>
@@ -149,21 +237,23 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
           </div>
 
           {/* Điều kiện đơn hàng */}
-          <div className="grid grid-cols-2 gap-4">
+          {(formData.promotionKind === "event" || formData.promotionKind === "voucher") && <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Đơn hàng tối thiểu (VNĐ) <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number"
-                name="minOrderAmount"
-                value={formData.minOrderAmount}
-                onChange={handleChange}
-                min="0"
-                step="1000"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
+              {formData.promotionKind === "event" && <>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Đơn hàng tối thiểu (VNĐ) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  name="minOrderAmount"
+                  value={formData.minOrderAmount}
+                  onChange={handleChange}
+                  min="0"
+                  step="1000"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -180,7 +270,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
               />
             </div>
-          </div>
+          </div>}
 
           {/* Thời gian */}
           <div className="grid grid-cols-2 gap-4">

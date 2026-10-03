@@ -71,8 +71,8 @@ CREATE TABLE categories (
 
 CREATE TABLE suppliers (
   id INT IDENTITY(1,1) PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  contact_name VARCHAR(255),
+  name NVARCHAR(255) NOT NULL,
+  contact_name NVARCHAR(255),
   phone VARCHAR(50),
   email VARCHAR(255),
   address NVARCHAR(MAX),
@@ -115,13 +115,13 @@ CREATE TABLE users (
   last_name NVARCHAR(100) NOT NULL,
   email VARCHAR(255),
   phone VARCHAR(20),
-  role VARCHAR(20) NOT NULL DEFAULT 'employee',
+  role VARCHAR(20) NOT NULL DEFAULT 'staff',
   is_active BIT NOT NULL DEFAULT 1,
   locked BIT NOT NULL DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_login DATETIME DEFAULT NULL,
-  CONSTRAINT ck_users_role CHECK (role IN ('admin','employee'))
+  CONSTRAINT ck_users_role CHECK (role IN ('admin','staff'))
 );
 GO
 CREATE UNIQUE INDEX ux_users_email
@@ -414,8 +414,8 @@ INSERT INTO users
 (username, password_hash, first_name, last_name, email, phone, role, is_active, locked, created_at)
 VALUES
   ('admin', '$2a$11$B5Pre4vLwlsfDIMg/gXXjuH/CyqianiPXHXSXikWE5R0djN/9Tf7.', N'Quản trị', N'Viên', 'admin@example.com', '0909000000', 'admin', 1, 0, GETDATE()),
-  ('staff01', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Nguyễn Văn', N'A', 'staff01@example.com', '0909000001', 'employee', 1, 0, GETDATE()),
-  ('staff02', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Lê Thị', N'B', 'staff02@example.com', '0909000002', 'employee', 1, 0, GETDATE());
+  ('staff01', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Nguyễn Văn', N'A', 'staff01@example.com', '0909000001', 'staff', 1, 0, GETDATE()),
+  ('staff02', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Lê Thị', N'B', 'staff02@example.com', '0909000002', 'staff', 1, 0, GETDATE());
 
 -- password của admin là admin123
 -- password của employee là 123456
@@ -467,19 +467,19 @@ VALUES
 -- ===== SUPPLIERS (name, contact_name, phone, email, address) =====
 INSERT INTO suppliers (name, contact_name, phone, email, address, created_at)
 VALUES
-('Công ty TNHH Đồ uống Quốc tế ABC', 'Nguyễn Văn A', '0909123456', 'abc@gmail.com', 'Số 123, Đường Láng, Quận Đống Đa, Hà Nội', GETDATE()),
-('Công ty CP Thương mại & Phân phối XYZ', 'Trần Thị B', '0912123456', 'xyz@gmail.com', 'Số 456, Nguyễn Văn Linh, Quận 7, TP HCM', GETDATE()),
-('Công ty TNHH Sản xuất 123', 'Lê Văn C', '0933123456', '123@gmail.com', 'Số 789, Đường 2/9, Quận Hải Châu, Đà Nẵng', GETDATE()),
-('Công ty Thực phẩm Việt', 'Phạm Minh D', '0909123457', 'thucphamviet@company.com', 'Khu công nghiệp Bắc Thăng Long, Hà Nội', GETDATE()),
-('Công ty Đồ uống Sài Gòn', 'Hoàng Thị E', '0912123457', 'douongsaigon@company.com', 'Số 321, Lê Văn Việt, Quận 9, TP HCM', GETDATE()),
-('Công ty Gia dụng Toàn Cầu', 'Đặng Văn F', '0933123457', 'giadungtoancau@company.com', 'Khu công nghiệp Hòa Khánh, Đà Nẵng', GETDATE()),
-('Công ty Mỹ phẩm Hàn Quốc', 'Kim Soo G', '0909123458', 'myphamkorea@company.com', 'Tầng 5, Tòa nhà Vina, Quận 1, TP HCM', GETDATE()),
-('Công ty Bánh kẹo Hữu Nghị', 'Ngô Thị H', '0912123458', 'banhkeohuunghi@company.com', 'Số 55, Minh Khai, Quận Hai Bà Trưng, Hà Nội', GETDATE()),
-('Công ty Gia vị Phương Nam', 'Võ Văn I', '0933123458', 'giaviphuongnam@company.com', 'Khu chế xuất Tân Thuận, Quận 7, TP HCM', GETDATE()),
-('Công ty Điện tử Viễn Thông', 'Trương Văn J', '0909123459', 'dientuvienthong@company.com', 'Khu công nghiệp Sóng Thần, Bình Dương', GETDATE()),
-('Công ty Văn phòng phẩm STC', 'Lý Thị K', '0912123459', 'vanphongphamstc@company.com', 'Số 88, Lê Hồng Phong, Quận 10, TP HCM', GETDATE()),
-('Công ty Dược phẩm Việt Đức', 'Mai Văn L', '0933123459', 'duocphamvietduc@company.com', 'Khu công nghiệp Yên Phong, Bắc Ninh', GETDATE()),
-('Công ty Thủy hải sản Biển Đông', 'Bùi Thị M', '0909123460', 'haisanbiendong@company.com', 'Cảng cá Thọ Quang, Đà Nẵng', GETDATE());
+(N'Công ty TNHH Đồ uống Quốc tế ABC', N'Nguyễn Văn A', '0909123456', 'abc@gmail.com', N'Số 123, Đường Láng, Quận Đống Đa, Hà Nội', GETDATE()),
+(N'Công ty CP Thương mại & Phân phối XYZ', N'Trần Thị B', '0912123456', 'xyz@gmail.com', N'Số 456, Nguyễn Văn Linh, Quận 7, TP HCM', GETDATE()),
+(N'Công ty TNHH Sản xuất 123', N'Lê Văn C', '0933123456', '123@gmail.com', N'Số 789, Đường 2/9, Quận Hải Châu, Đà Nẵng', GETDATE()),
+(N'Công ty Thực phẩm Việt', N'Phạm Minh D', '0909123457', 'thucphamviet@company.com', N'Khu công nghiệp Bắc Thăng Long, Hà Nội', GETDATE()),
+(N'Công ty Đồ uống Sài Gòn', N'Hoàng Thị E', '0912123457', 'douongsaigon@company.com', N'Số 321, Lê Văn Việt, Quận 9, TP HCM', GETDATE()),
+(N'Công ty Gia dụng Toàn Cầu', N'Đặng Văn F', '0933123457', 'giadungtoancau@company.com', N'Khu công nghiệp Hòa Khánh, Đà Nẵng', GETDATE()),
+(N'Công ty Mỹ phẩm Hàn Quốc', N'Kim Soo G', '0909123458', 'myphamkorea@company.com', N'Tầng 5, Tòa nhà Vina, Quận 1, TP HCM', GETDATE()),
+(N'Công ty Bánh kẹo Hữu Nghị', N'Ngô Thị H', '0912123458', 'banhkeohuunghi@company.com', N'Số 55, Minh Khai, Quận Hai Bà Trưng, Hà Nội', GETDATE()),
+(N'Công ty Gia vị Phương Nam', N'Võ Văn I', '0933123458', 'giaviphuongnam@company.com', N'Khu chế xuất Tân Thuận, Quận 7, TP HCM', GETDATE()),
+(N'Công ty Điện tử Viễn Thông', N'Trương Văn J', '0909123459', 'dientuvienthong@company.com', N'Khu công nghiệp Sóng Thần, Bình Dương', GETDATE()),
+(N'Công ty Văn phòng phẩm STC', N'Lý Thị K', '0912123459', 'vanphongphamstc@company.com', N'Số 88, Lê Hồng Phong, Quận 10, TP HCM', GETDATE()),
+(N'Công ty Dược phẩm Việt Đức', N'Mai Văn L', '0933123459', 'duocphamvietduc@company.com', N'Khu công nghiệp Yên Phong, Bắc Ninh', GETDATE()),
+(N'Công ty Thủy hải sản Biển Đông', N'Bùi Thị M', '0909123460', 'haisanbiendong@company.com', N'Cảng cá Thọ Quang, Đà Nẵng', GETDATE());
 
 -- ===== THÊM DỮ LIỆU MẪU CHO BẢNG UNITS =====
 INSERT INTO units (code, name, created_at) VALUES
@@ -839,6 +839,6 @@ SELECT COUNT(*) AS products_count FROM products;
 SELECT COUNT(*) AS orders_count FROM [orders];
 SELECT COUNT(*) AS purchase_orders_count FROM purchase_orders;
 SELECT COUNT(*) AS promotions_count FROM promotions;
-SELECT COUNT(*) AS employees_count FROM users WHERE role = 'employee';
+SELECT COUNT(*) AS employees_count FROM users WHERE role = 'staff';
 SELECT COUNT(*) AS admins_count FROM users WHERE role = 'admin';
 GO

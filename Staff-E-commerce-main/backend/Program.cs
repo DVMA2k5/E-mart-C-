@@ -84,6 +84,7 @@ builder.Services.AddScoped<SupplierRepository>();
 builder.Services.AddScoped<ReportsRepository>();
 builder.Services.AddScoped<UnitRepository>();
 builder.Services.AddScoped<AiRepository>();
+builder.Services.AddScoped<PurchaseOrderRepository>();
 
 builder.Services.AddHttpContextAccessor();
 
@@ -110,6 +111,7 @@ builder.Services.AddScoped<SupplierService>();
 builder.Services.AddScoped<ReportsService>();
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<UnitService>();
+builder.Services.AddScoped<PurchaseOrderService>();
 
 // AI Service - Semantic Kernel + Chat
 builder.Services.AddSingleton<TokenizerService>();

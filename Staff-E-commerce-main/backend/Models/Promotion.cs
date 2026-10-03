@@ -19,15 +19,22 @@ namespace backend.Models
         [StringLength(100)]
         public string Code { get; set; } = string.Empty;
 
-        // "percent" or "fixed" as in DB ENUM
+        [Required]
+        [Column("name")]
+        [StringLength(150)]
+        public string Name { get; set; } = string.Empty;
+
         [Column("type")]
-        [StringLength(50)]
+        [StringLength(20)]
+        public string PromotionKind { get; set; } = "event";
+
+        [NotMapped]
         public string Type { get; set; } = "percent";
 
-        [Column("value", TypeName = "decimal(12,2)")]
+        [NotMapped]
         public decimal Value { get; set; } = 0m;
 
-        [Column("min_order_amount", TypeName = "decimal(12,2)")]
+        [NotMapped]
         public decimal MinOrderAmount { get; set; } = 0m;
 
         [Column("max_discount", TypeName = "decimal(12,2)")]
@@ -45,8 +52,12 @@ namespace backend.Models
         [Column("used_count")]
         public int UsedCount { get; set; } = 0;
 
-        [Column("active")]
+        [NotMapped]
         public bool Active { get; set; } = true;
+
+        [Column("status")]
+        [StringLength(20)]
+        public string Status { get; set; } = "active";
 
         [Column("description")]
         [StringLength(1000)]
@@ -68,5 +79,14 @@ namespace backend.Models
         // Navigation
         public virtual ICollection<Order>? Orders { get; set; }
         public virtual ICollection<PromotionRedemption>? Redemptions { get; set; }
+        public virtual EventPromotion? EventPromotion { get; set; }
+        public virtual VoucherPromotion? VoucherPromotion { get; set; }
+        public virtual ICollection<ProductPromotion> ProductPromotions { get; set; } = new List<ProductPromotion>();
+
+        [NotMapped]
+        public List<int> ProductIds { get; set; } = new();
+
+        [NotMapped]
+        public string? VoucherCode { get; set; }
     }
 }

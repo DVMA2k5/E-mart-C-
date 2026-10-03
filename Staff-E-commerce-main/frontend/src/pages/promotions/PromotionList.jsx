@@ -324,8 +324,9 @@ export default function PromotionList() {
               className="block w-full lg:w-56 px-4 py-3 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
             >
               <option value="all">Tất cả loại</option>
-              <option value="percent">Giảm theo %</option>
-              <option value="fixed">Giảm cố định</option>
+              <option value="event">Theo đơn hàng</option>
+              <option value="voucher">Voucher</option>
+              <option value="product">Theo sản phẩm</option>
             </select>
           </div>
         </div>
@@ -435,14 +436,21 @@ export default function PromotionList() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span
                             className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                              promo.type === "percent"
+                              promo.promotionKind === "event"
                                 ? "bg-purple-100 text-purple-800"
-                                : "bg-blue-100 text-blue-800"
+                                : promo.promotionKind === "voucher"
+                                  ? "bg-blue-100 text-blue-800"
+                                  : "bg-emerald-100 text-emerald-800"
                             }`}
                           >
-                            {promo.type === "percent"
-                              ? "Giảm theo %"
-                              : "Giảm cố định"}
+                            {promo.promotionKind === "event"
+                              ? "Theo đơn hàng"
+                              : promo.promotionKind === "voucher"
+                                ? "Voucher"
+                                : "Theo sản phẩm"}
+                          </span>
+                          <span className="ml-2 text-xs text-gray-500">
+                            {promo.type === "percent" ? "Phần trăm" : "Cố định"}
                           </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
@@ -451,7 +459,9 @@ export default function PromotionList() {
                             : `${promo.value.toLocaleString()}đ`}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {promo.minOrderAmount.toLocaleString()}đ
+                          {promo.promotionKind === "event"
+                            ? `${Number(promo.minOrderAmount || 0).toLocaleString()}đ`
+                            : "-"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           <div>{formatDate(promo.startDate)}</div>

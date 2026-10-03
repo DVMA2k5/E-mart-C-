@@ -192,6 +192,16 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
                 <h3 className="text-sm font-semibold text-gray-900 mb-3">Thông tin giảm giá</h3>
                 <div className="grid grid-cols-2 gap-6">
                 <div>
+                    <label className="text-sm font-medium text-gray-500">Nhóm khuyến mãi</label>
+                    <p className="mt-1 text-gray-900">
+                      {promotion.promotionKind === "event"
+                        ? "Theo đơn hàng"
+                        : promotion.promotionKind === "voucher"
+                          ? `Voucher${promotion.voucherCode ? ` (${promotion.voucherCode})` : ""}`
+                          : `Theo sản phẩm (${(promotion.productIds || []).length} sản phẩm)`}
+                    </p>
+                  </div>
+                  <div>
                   <label className="text-sm font-medium text-gray-500">Loại giảm giá</label>
                   <p className="mt-1 text-lg font-semibold text-gray-900">
                     {promotion.type === "percent" ? "Giảm theo %" : "Giảm cố định"}

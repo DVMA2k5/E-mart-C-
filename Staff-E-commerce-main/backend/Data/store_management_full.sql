@@ -34,8 +34,6 @@ GO
 USE [store_management];
 GO
 
-IF OBJECT_ID(N'ai_messages', N'U') IS NOT NULL DROP TABLE ai_messages;
-IF OBJECT_ID(N'ai_conversations', N'U') IS NOT NULL DROP TABLE ai_conversations;
 
 IF OBJECT_ID(N'activity_logs', N'U') IS NOT NULL DROP TABLE activity_logs;
 IF OBJECT_ID(N'promotion_redemptions', N'U') IS NOT NULL DROP TABLE promotion_redemptions;
@@ -797,29 +795,6 @@ VALUES
 (30, 1050000.00, 'card', NULL, 'completed', GETDATE());
 
 
-
--- ===== AI CONVERSATIONS & MESSAGES =====
-CREATE TABLE ai_conversations (
-  id INT IDENTITY(1,1) PRIMARY KEY,
-  user_id INT NOT NULL,
-  title VARCHAR(255),
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_ai_conversations_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
-);
-CREATE INDEX idx_ai_conversations_user ON ai_conversations (user_id);
-
-CREATE TABLE ai_messages (
-  id BIGINT IDENTITY(1,1) PRIMARY KEY,
-  conversation_id INT NOT NULL,
-  role VARCHAR(20) NOT NULL,
-  content NVARCHAR(MAX) NOT NULL,
-  function_called VARCHAR(100),
-  function_data NVARCHAR(MAX),
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_ai_messages_conversation FOREIGN KEY (conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE ON UPDATE CASCADE
-);
-CREATE INDEX idx_ai_messages_conversation ON ai_messages (conversation_id);
 
 -- ===== VERIFICATION =====
 SELECT DB_NAME() AS current_database;

@@ -35,9 +35,10 @@ namespace backend.Services
                    decimal? minPrice = null,
                    decimal? maxPrice = null,
                    string? sortBy = "",
-                   int? status = null)
+                   int? status = null,
+                   string? stockStatus = null)
         {
-            var result = await _productRepository.GetFilteredAsync(page, pageSize, supplierId, categoryId, minPrice, maxPrice, sortBy, search, status);
+            var result = await _productRepository.GetFilteredAsync(page, pageSize, supplierId, categoryId, minPrice, maxPrice, sortBy, search, status, stockStatus);
 
             return new PaginationResult<ProductDTO>
             {
@@ -226,6 +227,7 @@ namespace backend.Services
                 } : null,
                 Inventory = p.Inventory != null ? new InventoryDTO
                 {
+                    Id = p.Inventory.Id,
                     ProductId = p.Inventory.ProductId,
                     Quantity = p.Inventory.Quantity,
                     LastCheckedAt = p.Inventory.LastCheckedAt,

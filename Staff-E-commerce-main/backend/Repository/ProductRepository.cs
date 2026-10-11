@@ -99,7 +99,8 @@ namespace backend.Repository
             decimal? maxPrice = null,
             string? sortBy = "",
             string? search = null,
-            int? status = null)
+            int? status = null,
+            string? stockStatus = null)
         {
             if (page < 1) page = 1;
             if (pageSize <= 0) pageSize = 10;
@@ -129,6 +130,18 @@ namespace backend.Repository
             if (status.HasValue)
                 query = query.Where(p => p.IsActive == (status.Value == 1));
 
+            // Stock remains product data, while this endpoint owns the product-list UI.
+            if (!string.IsNullOrWhiteSpace(stockStatus))
+            {
+                query = stockStatus.ToLowerInvariant() switch
+                {
+                    "out_of_stock" => query.Where(p => p.Inventory == null || p.Inventory.Quantity == 0),
+                    "low_stock" => query.Where(p => p.Inventory != null && p.Inventory.Quantity > 0 && p.Inventory.Quantity < 10),
+                    "in_stock" => query.Where(p => p.Inventory != null && p.Inventory.Quantity >= 10),
+                    _ => query
+                };
+            }
+
             // Search by product name, sku, barcode, supplier name
             if (!string.IsNullOrWhiteSpace(search))
             {
@@ -153,6 +166,10 @@ namespace backend.Repository
                 "budget" => query.OrderBy(p => p.Price), // cheapest first
                 "newest" => query.OrderByDescending(p => p.CreatedAt),
                 "oldest" => query.OrderBy(p => p.CreatedAt),
+                "quantity_asc" => query.OrderBy(p => p.Inventory == null ? 0 : p.Inventory.Quantity),
+                "quantity_desc" => query.OrderByDescending(p => p.Inventory == null ? 0 : p.Inventory.Quantity),
+                "updated_at_desc" => query.OrderByDescending(p => p.Inventory == null ? p.UpdatedAt : p.Inventory.UpdatedAt),
+                "updated_at_asc" => query.OrderBy(p => p.Inventory == null ? p.UpdatedAt : p.Inventory.UpdatedAt),
                 "id" => query.OrderBy(p => p.Id),
                 "id_desc" => query.OrderByDescending(p => p.Id),
 

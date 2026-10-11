@@ -16,7 +16,6 @@ import "./App.css";
 import CustomerList from "./pages/customers/CustomerList";
 import CategoryList from "./pages/categories/CategoryList";
 import ReportsPage from "./pages/reports/ReportsPage";
-import InventoryPage from "./pages/inventory/InventoryPage";
 import UnitList from "./pages/units/UnitList";
 import SupplierList from "./pages/suppliers/SupplierList";
 import PurchaseOrderList from "./pages/purchaseOrders/PurchaseOrderList";
@@ -49,7 +48,7 @@ function App() {
         >
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/products" element={<ProductList />} />
-          <Route path="/inventory" element={<InventoryPage />} />
+          <Route path="/inventory" element={<Navigate to="/products" replace />} />
           <Route path="/orders" element={<OrdersPage />} />
           <Route path="/pos" element={<POS />} />
           <Route path="/audit" element={<AuditPage />} />

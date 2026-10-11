@@ -117,13 +117,31 @@ namespace backend.Services
                 throw new ArgumentException("Trạng thái đơn hàng không hợp lệ.");
             }
 
+            var now = DateTime.UtcNow;
+
             order.Id = 0;
             order.UserId = GetCurrentUserId();
             order.OrderNumber = string.IsNullOrWhiteSpace(order.OrderNumber)
                 ? $"DH-{Guid.NewGuid():N}"
                 : order.OrderNumber.Trim();
-            order.CreatedAt = DateTime.UtcNow;
-            order.UpdatedAt = DateTime.UtcNow;
+            order.CreatedAt = now;
+            order.UpdatedAt = now;
+
+            // A POS order is saved together with its nested items. The client does
+            // not need to supply audit timestamps, and an omitted non-nullable
+            // DateTime binds as DateTime.MinValue, which SQL Server DATETIME
+            // cannot store (its minimum is 1753-01-01).
+            foreach (var item in order.OrderItems)
+            {
+                item.Id = 0;
+                item.CreatedAt = now;
+            }
+
+            foreach (var payment in order.Payments)
+            {
+                payment.Id = 0;
+                payment.CreatedAt = now;
+            }
             var created = await _orderRepo.CreateOrderAsync(order);
 
             // Tích điểm nếu đơn hoàn tất tại quầy

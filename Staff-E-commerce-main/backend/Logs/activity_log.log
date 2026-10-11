@@ -427,3 +427,17 @@
 [2026-10-12 00:04:23] [User:1] [Action:CREATE_Orderitem] [Entity:Orderitem#create] [IP:127.0.0.1] [{"OrderId":74,"ProductId":79,"Quantity":1,"UnitPrice":220000,"TotalPrice":220000,"CreatedAt":"2026-10-11T17:04:23.231Z"}]
 [2026-10-12 00:04:23] [User:1] [Action:CREATE_Inventory] [Entity:Inventory#reduce-multiple] [IP:127.0.0.1] [{"ProductId":79,"Quantity":1}]
 [2026-10-12 00:05:07] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:08:11] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:08:13] [User:1] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:09:09] [User:1] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:11:10] [User:1] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:11:16] [User:1] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:12:27] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:12:29] [User:1] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:20:58] [User:1] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:21:33] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:21:55] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:22:05] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:22:05] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 00:22:16] [User:1] [Action:CREATE_Orders] [Entity:Orders#0] [IP:127.0.0.1] {"orderNumber":"POS-1791739336683","orderType":"pos","customerId":null,"status":"completed","subtotal":32000,"discount":0,"totalAmount":32000,"paymentMethod":"cash","paymentStatus":"paid","note":"B\u00E1n l\u1EBB t\u1EA1i qu\u1EA7y","orderItems":[{"productId":3,"quantity":1,"unitPrice":12000,"totalPrice":12000},{"productId":5,"quantity":1,"unitPrice":20000,"totalPrice":20000}]}
+[2026-10-12 00:22:53] [User:1] [Action:CREATE_Orders] [Entity:Orders#0] [IP:127.0.0.1] {"orderNumber":"POS-1791739372998","orderType":"pos","customerId":22,"status":"completed","subtotal":32000,"discount":0,"totalAmount":32000,"paymentMethod":"cash","paymentStatus":"paid","note":"Kh\u00E1ch: B\u00ECnh - \u0110\u00E3 d\u00F9ng 0 \u0111i\u1EC3m","orderItems":[{"productId":3,"quantity":1,"unitPrice":12000,"totalPrice":12000},{"productId":5,"quantity":1,"unitPrice":20000,"totalPrice":20000}]}

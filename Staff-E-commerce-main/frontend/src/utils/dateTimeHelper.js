@@ -95,23 +95,23 @@ export const isWithinRange = (utcStartDate, utcEndDate) => {
 
 /**
  * Get promotion status based on its properties
- * @param {Object} promotion - Promotion object with Active, StartDate, EndDate, UsageLimit, UsedCount
+ * @param {Object} promotion - Promotion object returned by the API
  * @returns {Object} { status: string, label: string, color: string }
  */
 export const getPromotionStatus = (promotion) => {
-  if (!promotion.Active) {
+  if (!promotion?.active) {
     return { status: 'inactive', label: 'Không hoạt động', color: 'gray' };
   }
   
-  if (isExpired(promotion.EndDate)) {
+  if (isExpired(promotion.endDate)) {
     return { status: 'expired', label: 'Hết hạn', color: 'red' };
   }
   
-  if (isScheduled(promotion.StartDate)) {
+  if (isScheduled(promotion.startDate)) {
     return { status: 'scheduled', label: 'Chưa bắt đầu', color: 'yellow' };
   }
   
-  if (promotion.UsageLimit && promotion.UsedCount >= promotion.UsageLimit) {
+  if (promotion.usageLimit && promotion.usedCount >= promotion.usageLimit) {
     return { status: 'exhausted', label: 'Hết lượt', color: 'orange' };
   }
   

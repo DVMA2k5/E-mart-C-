@@ -69,17 +69,26 @@ function AppButton({ title, onPress, secondary = false, disabled = false, style 
   );
 }
 
-function ProductCard({ product, onAdd }) {
+const hasProductPromotion = (product) => Number(product?.discountAmount) > 0 && Number(product?.originalPrice) > Number(product?.price);
+const productDiscountAmount = (product) => Math.max(
+  0,
+  Number(product?.discountAmount) || Number(product?.originalPrice || 0) - Number(product?.price || 0),
+);
+
+function ProductCard({ product, onAdd, onOpen }) {
+  const onSale = hasProductPromotion(product);
   return (
     <View style={styles.productCard}>
-      <View style={styles.productImageBox}>
+      <Pressable onPress={() => onOpen(product)} style={styles.productImageBox} accessibilityLabel={`Xem chi tiết ${product.productName}`}>
         <ProductImage imagePath={product.imageUrl} productId={product.id} style={styles.productImage} />
-      </View>
-      <Text style={styles.productCategory} numberOfLines={1}>{product.categoryName || "HÀNG TIÊU DÙNG"}</Text>
-      <Text style={styles.productName} numberOfLines={2}>{product.productName}</Text>
+      </Pressable>
+      <Pressable onPress={() => onOpen(product)}>
+        <Text style={styles.productCategory} numberOfLines={1}>{product.categoryName || "HÀNG TIÊU DÙNG"}</Text>
+        <Text style={styles.productName} numberOfLines={2}>{product.productName}</Text>
+      </Pressable>
       <Text style={styles.stockLabel}>●  Còn hàng</Text>
       <View style={styles.productFooter}>
-        <Text style={styles.productPrice}>{money(product.price)}</Text>
+        {onSale ? <View><Text style={styles.originalPrice}>{money(product.originalPrice)}</Text><Text style={styles.productPrice}>{money(product.price)}</Text><Text style={styles.productSaving}>Giảm {money(productDiscountAmount(product))}</Text></View> : <Text style={styles.productPrice}>{money(product.price)}</Text>}
         <Pressable accessibilityLabel={`Thêm ${product.productName} vào giỏ`} onPress={() => onAdd(product)} style={styles.addButton}><Text style={styles.addButtonText}>＋</Text></Pressable>
       </View>
     </View>
@@ -126,6 +135,7 @@ export default function App() {
   const [appliedVoucher, setAppliedVoucher] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState("cod");
   const [useRewardPoints, setUseRewardPoints] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
 
   useEffect(() => {
     AsyncStorage.getItem(ADDRESS_KEY).then((stored) => {
@@ -318,6 +328,8 @@ export default function App() {
   }), [products, query, categoryId]);
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const productDiscount = cart.reduce((sum, item) => sum + productDiscountAmount(item) * item.quantity, 0);
+  const originalSubtotal = subtotal + productDiscount;
   const voucherDiscount = appliedVoucher?.discountAmount || 0;
   const afterVoucher = Math.max(0, subtotal - voucherDiscount);
   const maxPointsUsable = Math.min(customer?.rewardPoints || 0, Math.floor(afterVoucher / 1000));
@@ -362,11 +374,33 @@ export default function App() {
     }
   };
 
+  const requireAuthenticatedCustomer = () => {
+    if (customer && customerToken) return true;
+    setProfilePage("");
+    setTab("profile");
+    return false;
+  };
+
   const addToCart = (product) => {
+    if (!requireAuthenticatedCustomer()) return;
     setCart((current) => {
       const found = current.find((item) => item.id === product.id);
-      if (found) return current.map((item) => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
-      return [...current, { id: product.id, name: product.productName, price: product.price, image: product.imageUrl, quantity: 1 }];
+      if (found) return current.map((item) => item.id === product.id ? {
+        ...item,
+        price: product.price,
+        originalPrice: product.originalPrice,
+        discountAmount: productDiscountAmount(product),
+        quantity: item.quantity + 1,
+      } : item);
+      return [...current, {
+        id: product.id,
+        name: product.productName,
+        price: product.price,
+        originalPrice: product.originalPrice,
+        discountAmount: productDiscountAmount(product),
+        image: product.imageUrl,
+        quantity: 1,
+      }];
     });
   };
 
@@ -375,6 +409,10 @@ export default function App() {
     .filter((item) => item.quantity > 0));
 
   const submitOrder = async () => {
+    if (!requireAuthenticatedCustomer()) {
+      setCheckoutOpen(false);
+      return;
+    }
     if (!checkoutForm.fullName.trim() || !checkoutForm.phone.trim() || !checkoutForm.address.trim()) {
       setOrderError("Nhập họ tên, số điện thoại và địa chỉ nhận hàng.");
       return;
@@ -389,7 +427,10 @@ export default function App() {
     try {
       const response = await fetch(`${API_URL}/storefront/orders`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${customerToken}`,
+        },
         body: JSON.stringify({
           ...checkoutForm,
           fullName: customer?.fullName?.trim() || checkoutForm.fullName.trim(),
@@ -453,7 +494,7 @@ export default function App() {
       </ScrollView>
 
       <View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>{query ? "TÌM KIẾM" : "TƯƠI NGON, GIÁ TỐT"}</Text><Text style={styles.sectionTitle}>{query ? "Kết quả tìm kiếm" : "Sản phẩm đang có"}</Text></View><Pressable onPress={loadStore} style={styles.refreshButton}><Text style={styles.refreshText}>Làm mới</Text></Pressable></View>
-      {loading ? <View style={styles.centerState}><ActivityIndicator size="large" color={GREEN} /><Text style={styles.stateText}>Đang tải sản phẩm...</Text></View> : loadError ? <View style={styles.errorCard}><Text style={styles.errorTitle}>Chưa kết nối được cửa hàng</Text><Text style={styles.errorText}>{loadError}</Text><Text style={styles.apiHint}>API: {API_URL}</Text><AppButton title="Thử kết nối lại" onPress={loadStore} /></View> : visibleProducts.length === 0 ? <View style={styles.emptyState}><Text style={styles.stateText}>Chưa có sản phẩm phù hợp.</Text></View> : <View style={styles.productGrid}>{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={addToCart} />)}</View>}
+      {loading ? <View style={styles.centerState}><ActivityIndicator size="large" color={GREEN} /><Text style={styles.stateText}>Đang tải sản phẩm...</Text></View> : loadError ? <View style={styles.errorCard}><Text style={styles.errorTitle}>Chưa kết nối được cửa hàng</Text><Text style={styles.errorText}>{loadError}</Text><Text style={styles.apiHint}>API: {API_URL}</Text><AppButton title="Thử kết nối lại" onPress={loadStore} /></View> : visibleProducts.length === 0 ? <View style={styles.emptyState}><Text style={styles.stateText}>Chưa có sản phẩm phù hợp.</Text></View> : <View style={styles.productGrid}>{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={addToCart} onOpen={setSelectedProduct} />)}</View>}
       <View style={{ height: 22 }} />
     </ScrollView>
   );
@@ -463,8 +504,8 @@ export default function App() {
       <Text style={styles.eyebrow}>GIỎ HÀNG CỦA BẠN</Text>
       <Text style={styles.pageTitle}>{itemCount} sản phẩm</Text>
       {!cart.length ? <View style={styles.emptyState}><Text style={styles.emptyEmoji}>🛍️</Text><Text style={styles.emptyTitle}>Giỏ hàng đang trống</Text><Text style={styles.stateText}>Chọn vài món ngon cho hôm nay nhé.</Text><AppButton title="Tiếp tục mua sắm" onPress={() => setTab("home")} style={styles.emptyCta} /></View> : <>
-        {cart.map((item) => <View key={item.id} style={styles.cartRow}><View style={styles.cartThumb}><ProductImage imagePath={item.image} productId={item.id} style={styles.cartImage} /></View><View style={styles.cartInfo}><Text style={styles.cartName} numberOfLines={2}>{item.name}</Text><Text style={styles.cartPrice}>{money(item.price)}</Text><View style={styles.quantityControl}><Pressable onPress={() => changeQuantity(item.id, -1)} style={styles.quantityButton}><Text style={styles.quantityText}>−</Text></Pressable><Text style={styles.quantityValue}>{item.quantity}</Text><Pressable onPress={() => changeQuantity(item.id, 1)} style={styles.quantityButton}><Text style={styles.quantityText}>＋</Text></Pressable></View></View></View>)}
-        <View style={styles.summaryCard}><View style={styles.summaryLine}><Text style={styles.summaryLabel}>Tạm tính</Text><Text style={styles.summaryValue}>{money(subtotal)}</Text></View><View style={styles.summaryLine}><Text style={styles.summaryLabel}>Thanh toán</Text><Text style={styles.freeShipping}>Khi nhận hàng</Text></View><Pressable style={styles.voucherRow} onPress={openVouchers}><Text style={styles.voucherLabel}>Phiếu mua hàng</Text><Text style={styles.voucherAction}>{appliedVoucher ? `-${money(appliedVoucher.discountAmount)} · Đổi` : "Sử dụng  ›"}</Text></Pressable>{appliedVoucher ? <Pressable onPress={() => setAppliedVoucher(null)}><Text style={styles.voucherRemove}>Bỏ phiếu mua hàng</Text></Pressable> : null}<View style={styles.summaryTotal}><Text style={styles.summaryTotalLabel}>Tổng cộng</Text><Text style={styles.summaryTotalValue}>{money(payable)}</Text></View><AppButton title="Tiến hành đặt hàng  →" onPress={() => { setOrderError(""); setCompletedOrder(null); setCheckoutOpen(true); }} /><AppButton title="Xóa hết sản phẩm" secondary onPress={() => Alert.alert("Xóa giỏ hàng", "Bạn có chắc muốn xóa tất cả sản phẩm khỏi giỏ hàng?", [{ text: "Hủy", style: "cancel" }, { text: "Xóa hết", style: "destructive", onPress: () => { setCart([]); setAppliedVoucher(null); } }])} /></View>
+        {cart.map((item) => <View key={item.id} style={styles.cartRow}><View style={styles.cartThumb}><ProductImage imagePath={item.image} productId={item.id} style={styles.cartImage} /></View><View style={styles.cartInfo}><Text style={styles.cartName} numberOfLines={2}>{item.name}</Text><Text style={styles.cartPrice}>{money(item.price)}</Text>{productDiscountAmount(item) > 0 ? <Text style={styles.cartSaving}>Giảm {money(productDiscountAmount(item))}/sản phẩm</Text> : null}<View style={styles.quantityControl}><Pressable onPress={() => changeQuantity(item.id, -1)} style={styles.quantityButton}><Text style={styles.quantityText}>−</Text></Pressable><Text style={styles.quantityValue}>{item.quantity}</Text><Pressable onPress={() => changeQuantity(item.id, 1)} style={styles.quantityButton}><Text style={styles.quantityText}>＋</Text></Pressable></View></View></View>)}
+        <View style={styles.summaryCard}><View style={styles.summaryLine}><Text style={styles.summaryLabel}>Tạm tính</Text><Text style={styles.summaryValue}>{money(originalSubtotal)}</Text></View>{productDiscount > 0 ? <View style={styles.summaryLine}><Text style={styles.summaryLabel}>Giảm giá sản phẩm</Text><Text style={styles.summaryDiscount}>-{money(productDiscount)}</Text></View> : null}<View style={styles.summaryLine}><Text style={styles.summaryLabel}>Thanh toán</Text><Text style={styles.freeShipping}>Khi nhận hàng</Text></View><Pressable style={styles.voucherRow} onPress={openVouchers}><Text style={styles.voucherLabel}>Phiếu mua hàng</Text><Text style={styles.voucherAction}>{appliedVoucher ? `-${money(appliedVoucher.discountAmount)} · Đổi` : "Sử dụng  ›"}</Text></Pressable>{appliedVoucher ? <Pressable onPress={() => setAppliedVoucher(null)}><Text style={styles.voucherRemove}>Bỏ phiếu mua hàng</Text></Pressable> : null}<View style={styles.summaryTotal}><Text style={styles.summaryTotalLabel}>Tổng cộng</Text><Text style={styles.summaryTotalValue}>{money(payable)}</Text></View><AppButton title="Tiến hành đặt hàng  →" onPress={() => { if (!requireAuthenticatedCustomer()) return; setOrderError(""); setCompletedOrder(null); setCheckoutOpen(true); }} /><AppButton title="Xóa hết sản phẩm" secondary onPress={() => Alert.alert("Xóa giỏ hàng", "Bạn có chắc muốn xóa tất cả sản phẩm khỏi giỏ hàng?", [{ text: "Hủy", style: "cancel" }, { text: "Xóa hết", style: "destructive", onPress: () => { setCart([]); setAppliedVoucher(null); } }])} /></View>
       </>}
     </ScrollView>
   );
@@ -621,11 +662,6 @@ export default function App() {
           <AppButton title="Đăng xuất" secondary onPress={logoutCustomer} />
         </View>
       </> : <>
-        <View style={styles.profileCard}>
-          <Text style={styles.profileEmoji}>📱</Text>
-          <Text style={styles.emptyTitle}>Đăng nhập bằng số điện thoại</Text>
-          <Text style={styles.stateText}>Lần đầu đăng nhập, chúng tôi sẽ tạo hồ sơ khách hàng để bạn bổ sung họ tên sau.</Text>
-        </View>
         <View style={styles.infoCard}>
           <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI</Text>
           <TextInput value={loginPhone} onChangeText={setLoginPhone} placeholder="0912345678" style={styles.formInput} keyboardType="phone-pad" maxLength={13} autoComplete="tel" />
@@ -643,14 +679,32 @@ export default function App() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       <View style={styles.header}>
-        <View style={styles.headerTop}><View style={styles.brandIcon}><Text style={styles.brandLetter}>e</Text></View><View><Text style={styles.brandName}>E-Mart</Text><Text style={styles.brandTagline}>ĐI CHỢ THẬT NHANH</Text></View><Pressable onPress={() => setTab("cart")} style={styles.headerCart}><Text style={styles.headerCartIcon}>🛒</Text>{itemCount > 0 && <View style={styles.cartBadge}><Text style={styles.cartBadgeText}>{itemCount}</Text></View>}</Pressable></View>
         <View style={styles.searchBar}><Text style={styles.searchIcon}>⌕</Text><TextInput value={query} onChangeText={setQuery} placeholder="Tìm sản phẩm bạn cần..." placeholderTextColor="#929c95" style={styles.searchInput} returnKeyType="search" /></View>
-        <View style={styles.promises}><Text style={styles.promiseText}>✓ Hàng chính hãng</Text><Text style={styles.promiseDot}>·</Text><Text style={styles.promiseText}>✓ Giao nhanh</Text></View>
       </View>
 
       <View style={styles.screen}>{tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}</View>
 
       <View style={styles.bottomNav}>{[["home", "⌂", "Trang chủ"], ["orders", "▤", "Đơn hàng"], ["cart", "🛒", "Giỏ hàng"], ["profile", "○", "Tài khoản"]].map(([key, icon, label]) => <Pressable key={key} onPress={() => setTab(key)} style={styles.navItem}><Text style={[styles.navIcon, tab === key && styles.navActive]}>{icon}{key === "cart" && itemCount > 0 ? <Text style={styles.navBadge}> {itemCount}</Text> : null}</Text><Text style={[styles.navLabel, tab === key && styles.navActive]}>{label}</Text></Pressable>)}</View>
+
+      <Modal visible={Boolean(selectedProduct)} animationType="slide" onRequestClose={() => setSelectedProduct(null)}>
+        {selectedProduct ? <SafeAreaView style={styles.productDetailScreen}>
+          <View style={styles.productDetailHeader}><Pressable onPress={() => setSelectedProduct(null)} style={styles.productDetailBack}><Text style={styles.productDetailBackText}>‹</Text></Pressable><Text style={styles.productDetailHeaderTitle} numberOfLines={1}>Chi tiết sản phẩm</Text></View>
+          <ScrollView contentContainerStyle={styles.productDetailContent}>
+            <View style={styles.productDetailImageBox}><ProductImage imagePath={selectedProduct.imageUrl} productId={selectedProduct.id} style={styles.productDetailImage} /></View>
+            {hasProductPromotion(selectedProduct) ? <View style={styles.flashSaleBanner}>
+              <Text style={styles.flashSaleTitle}>⚡ FLASH SALE</Text>
+              <Text style={styles.flashSaleText}>{selectedProduct.promotionName || "Ưu đãi đang áp dụng"}{selectedProduct.promotionEndsAt ? ` · Kết thúc ${new Date(selectedProduct.promotionEndsAt).toLocaleDateString("vi-VN")}` : ""}</Text>
+            </View> : null}
+            <View style={styles.productDetailInfo}>
+              <Text style={styles.productCategory}>{selectedProduct.categoryName || "HÀNG TIÊU DÙNG"}</Text>
+              <Text style={styles.productDetailName}>{selectedProduct.productName}</Text>
+              {hasProductPromotion(selectedProduct) ? <View style={styles.productDetailPriceBlock}><Text style={styles.productDetailOriginalPrice}>{money(selectedProduct.originalPrice)}</Text><View style={styles.productDetailPriceRow}><Text style={styles.productDetailPrice}>{money(selectedProduct.price)}</Text><Text style={styles.discountBadge}>-{selectedProduct.discountPercent || Math.round(selectedProduct.discountAmount / selectedProduct.originalPrice * 100)}%</Text></View><Text style={styles.productDetailSaving}>Bạn tiết kiệm {money(productDiscountAmount(selectedProduct))}</Text></View> : <Text style={styles.productDetailPrice}>{money(selectedProduct.price)}</Text>}
+              <Text style={styles.productDetailStock}>● Còn hàng</Text>
+            </View>
+          </ScrollView>
+          <View style={styles.productDetailAction}><AppButton title="Thêm vào giỏ hàng" onPress={() => { addToCart(selectedProduct); if (customer && customerToken) setSelectedProduct(null); }} /></View>
+        </SafeAreaView> : null}
+      </Modal>
 
       <Modal visible={checkoutOpen} transparent animationType="slide" onRequestClose={() => !orderSubmitting && setCheckoutOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -888,6 +942,8 @@ const styles = StyleSheet.create({
   stockLabel: { color: "#328259", fontSize: 9, marginTop: 5 },
   productFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 },
   productPrice: { color: "#1e573b", fontSize: 12, fontWeight: "900", flexShrink: 1 },
+  originalPrice: { color: "#8b95a1", fontSize: 10, marginTop: 2, textDecorationLine: "line-through" },
+  productSaving: { color: "#df4c42", fontSize: 9, fontWeight: "800", marginTop: 2 },
   addButton: { width: 29, height: 29, borderRadius: 9, backgroundColor: "#eaf3ea", alignItems: "center", justifyContent: "center", marginLeft: 4 },
   addButtonText: { color: GREEN, fontSize: 22, lineHeight: 25, fontWeight: "600" },
   centerState: { minHeight: 170, alignItems: "center", justifyContent: "center" },
@@ -967,6 +1023,7 @@ const styles = StyleSheet.create({
   cartInfo: { flex: 1, justifyContent: "center" },
   cartName: { color: "#435349", fontSize: 11, fontWeight: "800" },
   cartPrice: { color: GREEN, fontWeight: "900", fontSize: 12, marginTop: 4 },
+  cartSaving: { color: "#df4c42", fontSize: 10, fontWeight: "800", marginTop: 3 },
   quantityControl: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 7 },
   quantityButton: { width: 25, height: 25, borderWidth: 1, borderColor: "#e2e9e1", borderRadius: 7, alignItems: "center", justifyContent: "center" },
   quantityText: { color: "#526157", fontSize: 16 },
@@ -975,6 +1032,7 @@ const styles = StyleSheet.create({
   summaryLine: { flexDirection: "row", justifyContent: "space-between", marginVertical: 5 },
   summaryLabel: { color: MUTED, fontSize: 11 },
   summaryValue: { color: "#34463b", fontSize: 11, fontWeight: "800" },
+  summaryDiscount: { color: "#df4c42", fontSize: 11, fontWeight: "800" },
   freeShipping: { color: "#258256", fontSize: 11, fontWeight: "800" },
   summaryTotal: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: "#edf0ec", marginTop: 10, paddingTop: 13 },
   summaryTotalLabel: { color: DARK, fontSize: 12, fontWeight: "800" },
@@ -1040,6 +1098,27 @@ const styles = StyleSheet.create({
   navActive: { color: GREEN, fontWeight: "900" },
   navBadge: { color: "#fff", backgroundColor: "#dc5a42", overflow: "hidden", borderRadius: 8, fontSize: 9, fontWeight: "900" },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "#14221988" },
+  productDetailScreen: { flex: 1, backgroundColor: "#f7f9f6" },
+  productDetailHeader: { minHeight: 56, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e8ebe8", alignItems: "center", justifyContent: "center", paddingHorizontal: 56 },
+  productDetailBack: { position: "absolute", left: 14, top: 6, width: 42, height: 44, justifyContent: "center", zIndex: 1 },
+  productDetailBackText: { color: DARK, fontSize: 37, lineHeight: 41 },
+  productDetailHeaderTitle: { color: DARK, fontSize: 16, fontWeight: "900" },
+  productDetailContent: { paddingBottom: 100 },
+  productDetailImageBox: { height: 350, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" },
+  productDetailImage: { width: "92%", height: "92%" },
+  flashSaleBanner: { backgroundColor: "#ff8c19", paddingHorizontal: 18, paddingVertical: 13 },
+  flashSaleTitle: { color: "#fff", fontSize: 17, fontWeight: "900" },
+  flashSaleText: { color: "#fff", fontSize: 12, fontWeight: "700", marginTop: 4 },
+  productDetailInfo: { backgroundColor: "#fff", padding: 18, marginTop: 10 },
+  productDetailName: { color: DARK, fontSize: 22, fontWeight: "900", lineHeight: 30, marginTop: 6 },
+  productDetailPriceBlock: { marginTop: 16 },
+  productDetailPriceRow: { flexDirection: "row", alignItems: "baseline", flexWrap: "wrap", gap: 9 },
+  productDetailPrice: { color: GREEN, fontSize: 25, fontWeight: "900" },
+  productDetailOriginalPrice: { color: "#8b95a1", fontSize: 15, textDecorationLine: "line-through" },
+  productDetailSaving: { color: "#df4c42", fontSize: 13, fontWeight: "800", marginTop: 7 },
+  discountBadge: { color: "#fff", backgroundColor: "#df4c42", overflow: "hidden", borderRadius: 5, paddingHorizontal: 6, paddingVertical: 3, fontSize: 12, fontWeight: "900" },
+  productDetailStock: { color: GREEN, fontSize: 13, fontWeight: "800", marginTop: 16 },
+  productDetailAction: { backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#e8ebe8", paddingHorizontal: 18, paddingTop: 12, paddingBottom: 16 },
   checkoutSheet: { maxHeight: "92%", backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 18 },
   sheetHandle: { width: 38, height: 4, borderRadius: 2, backgroundColor: "#d7ded7", alignSelf: "center", marginBottom: 15 },
   checkoutContent: { paddingBottom: 10 },

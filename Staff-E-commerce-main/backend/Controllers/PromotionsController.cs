@@ -4,6 +4,7 @@ using backend.Models;
 using backend.Services;
 using backend.DTO;
 using backend.Repository;
+using backend.Helpers;
 
 namespace backend.Controllers
 {
@@ -239,6 +240,10 @@ namespace backend.Controllers
 
                 return NoContent();
             }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
             catch (Exception ex)
             {
                 return StatusCode(500, $"Internal server error: {ex.Message}");
@@ -290,6 +295,28 @@ namespace backend.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Supplies the admin picker with product rows that should remain visible
+        // but cannot be selected for the requested promotion date range.
+        [HttpGet("product-selection-locks")]
+        public async Task<ActionResult<List<ProductPromotionAvailabilityDTO>>> GetProductSelectionLocks(
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null,
+            [FromQuery] int? excludePromotionId = null)
+        {
+            try
+            {
+                var locks = await _promotionService.GetProductSelectionLocksAsync(
+                    startDate ?? DateTimeHelper.VietnamToday,
+                    endDate,
+                    excludePromotionId);
+                return Ok(locks);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
             }
         }
 

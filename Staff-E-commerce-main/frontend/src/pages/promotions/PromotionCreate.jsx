@@ -257,6 +257,8 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
       {showProductPicker && <ProductPickerModal
         selectedIds={formData.productIds}
         onChange={(productIds) => setFormData((previous) => ({ ...previous, productIds }))}
+        startDate={formData.startDate}
+        endDate={formData.endDate}
         onClose={() => setShowProductPicker(false)}
       />}
     </div>

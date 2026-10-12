@@ -172,6 +172,18 @@ namespace backend.Services
             return true;
         }
 
+        public async Task<List<ProductPromotionAvailabilityDTO>> GetProductSelectionLocksAsync(
+            DateTime? startDate,
+            DateTime? endDate,
+            int? excludePromotionId = null)
+        {
+            var start = (startDate ?? DateTimeHelper.VietnamToday).Date;
+            var end = (endDate ?? start).Date;
+            if (end < start) throw new ArgumentException("End date must not be before start date.");
+
+            return await _promotionRepository.GetProductSelectionLocksAsync(start, end, excludePromotionId);
+        }
+
         // Validate promotion
         public async Task<ValidatePromotionResult> ValidatePromotionAsync(string code, decimal orderAmount)
         {

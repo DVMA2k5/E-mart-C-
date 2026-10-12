@@ -457,3 +457,23 @@
 [2026-10-12 10:45:51] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#orders] [IP:192.168.1.2] {"fullName":"B\u00ECnh","phone":"0945021928","address":"Gggydhdh","note":"Gdghyh","paymentMethod":"cod","pointsUsed":0,"items":[{"productId":1,"quantity":1}],"promotionCode":null}
 [2026-10-12 10:46:35] [User:1] [Action:DELETE_Promotions] [Entity:Promotions#9] [IP:127.0.0.1] {"raw":"[Empty Body]"}
 [2026-10-12 10:47:26] [User:1] [Action:CREATE_Promotions] [Entity:Promotions#0] [IP:127.0.0.1] {"name":"Coca","type":"product","discountType":"percent","value":10,"minOrderAmount":0,"voucherCode":null,"productIds":[1],"maxDiscount":10000,"usageLimit":null,"description":"","startDate":"2026-10-12","endDate":"2027-10-29","active":true,"status":"active"}
+[2026-10-12 12:56:05] [User:1] [Action:CREATE_Auth] [Entity:Auth#login] [IP:127.0.0.1] {"username":"admin","password":"[REDACTED]"}
+[2026-10-12 12:56:11] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 12:58:25] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#login] [IP:192.168.1.2] {"phone":"0945021928"}
+[2026-10-12 12:58:37] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#promotions] [IP:192.168.1.2] {"code":"123","orderAmount":13500}
+[2026-10-12 13:01:08] [User:1] [Action:UPDATE_Products] [Entity:Products#1] [IP:127.0.0.1] {"id":1,"productName":"Coca Cola lon","price":14000,"sku":"8900000000001","unitId":4,"categoryId":1,"supplierId":1,"isActive":true,"description":"","imageUrl":""}
+[2026-10-12 13:04:13] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 13:05:23] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 13:06:34] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 13:12:31] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 13:12:38] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 13:15:34] [User:1] [Action:UPDATE_Products] [Entity:Products#1] [IP:127.0.0.1] {"id":1,"productName":"Coca Cola lon","price":15000,"sku":"8900000000001","unitId":4,"categoryId":1,"supplierId":1,"isActive":true,"description":"","imageUrl":""}
+[2026-10-12 13:21:44] [User:1] [Action:CREATE_Promotions] [Entity:Promotions#0] [IP:127.0.0.1] {"name":"dasdas","type":"product","discountType":"fixed","value":5000,"minOrderAmount":0,"voucherCode":null,"productIds":[1],"maxDiscount":null,"usageLimit":null,"description":"","startDate":"2026-10-12","endDate":"2027-10-01","active":true,"status":"active"}
+[2026-10-12 13:22:04] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 13:23:13] [User:1] [Action:UPDATE_Products] [Entity:Products#1] [IP:127.0.0.1] {"id":1,"productName":"Coca Cola lon","price":14000,"sku":"8900000000001","unitId":4,"categoryId":1,"supplierId":1,"isActive":true,"description":"","imageUrl":""}
+[2026-10-12 13:24:13] [User:1] [Action:CREATE_Promotions] [Entity:Promotions#0] [IP:127.0.0.1] {"name":"ddasdas","type":"product","discountType":"percent","value":90,"minOrderAmount":0,"voucherCode":null,"productIds":[1],"maxDiscount":null,"usageLimit":null,"description":"","startDate":"2026-10-12","endDate":"2027-10-22","active":true,"status":"active"}
+[2026-10-12 13:29:21] [User:1] [Action:DELETE_Promotions] [Entity:Promotions#12] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 13:29:24] [User:1] [Action:DELETE_Promotions] [Entity:Promotions#11] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-12 13:45:49] [User:1] [Action:CREATE_Promotions] [Entity:Promotions#0] [IP:127.0.0.1] {"name":"njhihij","type":"product","discountType":"percent","value":5,"minOrderAmount":0,"voucherCode":null,"productIds":[1],"maxDiscount":null,"usageLimit":null,"description":"","startDate":"2026-10-12","endDate":"2027-10-12","active":true,"status":"active"}
+[2026-10-12 13:59:32] [User:1] [Action:CREATE_Auth] [Entity:Auth#login] [IP:127.0.0.1] {"username":"admin","password":"[REDACTED]"}
+[2026-10-12 14:00:57] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}

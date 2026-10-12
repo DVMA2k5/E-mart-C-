@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using backend.Data;
+using backend.DTO;
+using backend.Helpers;
 using backend.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -201,6 +203,64 @@ namespace backend.Repository
             var q = _context.Products.AsQueryable().Where(p => p.Sku == sku);
             if (excludeId.HasValue) q = q.Where(p => p.Id != excludeId.Value);
             return await q.AnyAsync();
+        }
+
+        /// <summary>
+        /// Returns each product's best active, product-specific discount. This is
+        /// deliberately calculated rather than stored on Product: promotions own
+        /// discount rules and can start, end, or reach their usage limit at any time.
+        /// </summary>
+        public async Task<Dictionary<int, (decimal Amount, string Name)>> GetActiveProductDiscountsAsync(
+            IEnumerable<ProductDTO> products)
+        {
+            var productPrices = products
+                .Where(product => product.Id > 0 && product.Price > 0)
+                .ToDictionary(product => product.Id, product => product.Price);
+
+            if (productPrices.Count == 0)
+                return new Dictionary<int, (decimal Amount, string Name)>();
+
+            var today = DateTimeHelper.VietnamToday;
+            var promotions = await (
+                from link in _context.ProductPromotions.AsNoTracking()
+                join promotion in _context.Promotions.AsNoTracking() on link.PromotionId equals promotion.Id
+                where productPrices.Keys.Contains(link.ProductId)
+                      && !promotion.IsDeleted
+                      && promotion.Status == "active"
+                      && promotion.Type == "product"
+                      && (!promotion.StartDate.HasValue || promotion.StartDate.Value.Date <= today)
+                      && (!promotion.EndDate.HasValue || promotion.EndDate.Value.Date >= today)
+                      && (!promotion.UsageLimit.HasValue || promotion.UsedCount < promotion.UsageLimit)
+                select new { link.ProductId, promotion.Name, promotion.DiscountType, promotion.Value, promotion.MaxDiscount }
+            ).ToListAsync();
+
+            return promotions
+                .Select(promotion => new
+                {
+                    promotion.ProductId,
+                    promotion.Name,
+                    Amount = CalculateDiscount(
+                        productPrices[promotion.ProductId],
+                        promotion.DiscountType,
+                        promotion.Value,
+                        promotion.MaxDiscount)
+                })
+                .Where(promotion => promotion.Amount > 0)
+                .GroupBy(promotion => promotion.ProductId)
+                .ToDictionary(
+                    group => group.Key,
+                    group =>
+                    {
+                        var best = group.OrderByDescending(promotion => promotion.Amount).First();
+                        return (best.Amount, best.Name);
+                    });
+        }
+
+        private static decimal CalculateDiscount(decimal price, string discountType, decimal value, decimal? maxDiscount)
+        {
+            var discount = discountType == "percent" ? price * value / 100m : value;
+            if (maxDiscount.HasValue) discount = Math.Min(discount, maxDiscount.Value);
+            return Math.Min(price, discount);
         }
 
         public async Task<List<Product>> GetByIdsAsync(IEnumerable<int> ids)

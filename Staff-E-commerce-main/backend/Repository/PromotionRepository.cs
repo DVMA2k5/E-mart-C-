@@ -1,4 +1,5 @@
 using backend.Data;
+using backend.DTO;
 using backend.Models;
 using backend.Helpers;
 using Microsoft.EntityFrameworkCore;
@@ -121,6 +122,32 @@ namespace backend.Repository
                 .FirstOrDefaultAsync(p => p.VoucherDetails != null &&
                     p.VoucherDetails.VoucherCode.ToUpper() == code.Trim().ToUpper() && !p.IsDeleted);
             return promotion == null ? null : PopulateDiscountFields(new List<Promotion> { promotion }).Single();
+        }
+
+        public async Task<List<ProductPromotionAvailabilityDTO>> GetProductSelectionLocksAsync(
+            DateTime startDate,
+            DateTime endDate,
+            int? excludePromotionId = null)
+        {
+            var today = DateTimeHelper.VietnamToday;
+            return await (
+                from link in _context.ProductPromotions.AsNoTracking()
+                join promotion in _context.Promotions.AsNoTracking() on link.PromotionId equals promotion.Id
+                where !promotion.IsDeleted
+                      && promotion.Type == "product"
+                      && promotion.Status == "active"
+                      && (!excludePromotionId.HasValue || promotion.Id != excludePromotionId.Value)
+                      && (!promotion.EndDate.HasValue || promotion.EndDate.Value.Date >= today)
+                      && (!promotion.StartDate.HasValue || promotion.StartDate.Value.Date <= endDate.Date)
+                      && (!promotion.EndDate.HasValue || promotion.EndDate.Value.Date >= startDate.Date)
+                select new ProductPromotionAvailabilityDTO
+                {
+                    ProductId = link.ProductId,
+                    PromotionId = promotion.Id,
+                    PromotionName = promotion.Name,
+                    EndDate = promotion.EndDate
+                }
+            ).ToListAsync();
         }
 
         // Create promotion

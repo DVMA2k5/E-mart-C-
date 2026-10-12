@@ -285,6 +285,9 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
       {showProductPicker && <ProductPickerModal
         selectedIds={formData.productIdsText.split(",").filter(Boolean).map(Number)}
         onChange={(ids) => setFormData((previous) => ({ ...previous, productIdsText: ids.join(",") }))}
+        startDate={formData.startDate}
+        endDate={formData.endDate}
+        excludePromotionId={formData.id}
         onClose={() => setShowProductPicker(false)}
       />}
     </div>

@@ -320,6 +320,7 @@ export default function ProductList() {
   // --- helpers
   const getName = (p) => p.productName ?? p.product_name ?? p.model ?? "—";
   const getPrice = (p) => p.price ?? p.Price ?? 0;
+  const getDiscountPrice = (p) => p.discountPrice ?? p.DiscountPrice ?? null;
   const getQty = (p) => p.inventory?.quantity ?? p.Quantity ?? 0;
   const getInventoryId = (p) => p.inventory?.id ?? p.Inventory?.id;
   const getQuantityBadge = (quantity) => {
@@ -578,7 +579,7 @@ export default function ProductList() {
                   Tên
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
-                  Giá
+                  Giá / Giá giảm
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">
                   ĐVT
@@ -629,8 +630,13 @@ export default function ProductList() {
                     <td className="px-4 py-3 text-sm text-gray-800">
                       {getName(p)}
                     </td>
-                    <td className="px-4 py-3 text-sm text-right text-indigo-600 font-semibold">
-                      {formatPrice(getPrice(p))}
+                    <td className="px-4 py-3 text-sm text-right">
+                      <div className="text-indigo-600 font-semibold">{formatPrice(getPrice(p))}</div>
+                      {getDiscountPrice(p) != null && getDiscountPrice(p) < getPrice(p) && (
+                        <div className="mt-1 text-rose-600 font-semibold">
+                          Giảm: {formatPrice(getDiscountPrice(p))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-center text-gray-600">
                       {p.unitName || p.unitCode || "—"}

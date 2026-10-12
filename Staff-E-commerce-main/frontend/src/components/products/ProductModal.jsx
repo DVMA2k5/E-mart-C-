@@ -68,6 +68,7 @@ const ProductModal = ({
       setFormData({
         productName: "",
         price: "",
+        discountPrice: null,
         sku: "",
         unitId: "",
         categoryId: "",
@@ -84,6 +85,7 @@ const ProductModal = ({
         id: p.id,
         productName: p.productName || p.product_name || p.name || "",
         price: p.price !== undefined && p.price !== null ? p.price : "",
+        discountPrice: p.discountPrice ?? p.DiscountPrice ?? null,
         sku: p.sku || p.barcode || "",
         unitId: p.unitId || p.unit?.id || p.unit_id || "",
         categoryId: p.categoryId || p.category?.id || p.category_id || "",
@@ -109,6 +111,7 @@ const ProductModal = ({
               id: detail.id,
               productName: prev.productName || detail.productName || "",
               price: prev.price !== "" && prev.price !== undefined ? prev.price : detail.price,
+              discountPrice: detail.discountPrice ?? detail.DiscountPrice ?? null,
               sku: prev.sku || detail.sku || detail.barcode || "",
               unitId: prev.unitId || detail.unitId || detail.unit?.id || "",
               categoryId: prev.categoryId || detail.categoryId || detail.category?.id || "",
@@ -525,6 +528,18 @@ const ProductModal = ({
                     )}
                   </>
                 )}
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-600">Giá giảm</label>
+                <div className="p-2 border rounded bg-gray-50 text-rose-600 font-medium">
+                  {formData.discountPrice != null && Number(formData.discountPrice) < Number(formData.price)
+                    ? formatPrice(formData.discountPrice)
+                    : "Chưa có khuyến mãi áp dụng"}
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  Giá này được tính tự động từ khuyến mãi theo sản phẩm đang hoạt động.
+                </p>
               </div>
 
               {/* --- ĐƠN VỊ --- */}

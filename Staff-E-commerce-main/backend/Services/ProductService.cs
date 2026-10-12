@@ -40,9 +40,12 @@ namespace backend.Services
         {
             var result = await _productRepository.GetFilteredAsync(page, pageSize, supplierId, categoryId, minPrice, maxPrice, sortBy, search, status, stockStatus);
 
+            var products = result.Items.Select(MapToProductDto).ToList();
+            await AddDiscountPricesAsync(products);
+
             return new PaginationResult<ProductDTO>
             {
-                Items = result.Items.Select(MapToProductDto).ToList(),
+                Items = products,
                 TotalItems = result.TotalItems,
                 CurrentPage = result.CurrentPage,
                 PageSize = result.PageSize,
@@ -58,7 +61,11 @@ namespace backend.Services
                 throw new ArgumentException("Product ID must be greater than 0", nameof(id));
 
             var product = await _productRepository.GetByIdAsync(id);
-            return product != null ? MapToProductDto(product) : null;
+            if (product == null) return null;
+
+            var dto = MapToProductDto(product);
+            await AddDiscountPricesAsync(new List<ProductDTO> { dto });
+            return dto;
         }
 
         public async Task<ProductDTO> CreateProductAsync(Product product, IFormFile? imageFile = null)
@@ -241,6 +248,19 @@ namespace backend.Services
 
 
             return dto;
+        }
+
+        private async Task AddDiscountPricesAsync(List<ProductDTO> products)
+        {
+            var discounts = await _productRepository.GetActiveProductDiscountsAsync(products);
+            foreach (var product in products)
+            {
+                if (!discounts.TryGetValue(product.Id, out var discount)) continue;
+
+                product.DiscountAmount = discount.Amount;
+                product.DiscountPrice = Math.Max(0, product.Price - discount.Amount);
+                product.PromotionName = discount.Name;
+            }
         }
 
 

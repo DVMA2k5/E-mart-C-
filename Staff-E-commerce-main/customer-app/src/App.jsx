@@ -143,7 +143,7 @@ export default function App() {
       const address = JSON.parse(stored);
       setDeliveryAddress(address);
       setCheckoutForm((form) => ({ ...form, address: [address.street, address.ward, address.city].filter(Boolean).join(", ") }));
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const loadStore = useCallback(async () => {
@@ -326,7 +326,7 @@ export default function App() {
     const matchesCategory = categoryId === "all" || String(product.categoryId) === String(categoryId);
     return matchesSearch && matchesCategory;
   }), [products, query, categoryId]);
-  const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const productCount = cart.length;
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const productDiscount = cart.reduce((sum, item) => sum + productDiscountAmount(item) * item.quantity, 0);
   const originalSubtotal = subtotal + productDiscount;
@@ -382,7 +382,6 @@ export default function App() {
   };
 
   const addToCart = (product) => {
-    if (!requireAuthenticatedCustomer()) return;
     setCart((current) => {
       const found = current.find((item) => item.id === product.id);
       if (found) return current.map((item) => item.id === product.id ? {
@@ -407,6 +406,8 @@ export default function App() {
   const changeQuantity = (id, amount) => setCart((current) => current
     .map((item) => item.id === id ? { ...item, quantity: item.quantity + amount } : item)
     .filter((item) => item.quantity > 0));
+
+  const getCartQuantity = (productId) => cart.find((item) => item.id === productId)?.quantity || 0;
 
   const submitOrder = async () => {
     if (!requireAuthenticatedCustomer()) {
@@ -502,7 +503,7 @@ export default function App() {
   const renderCart = () => (
     <ScrollView contentContainerStyle={styles.pageContent}>
       <Text style={styles.eyebrow}>GIỎ HÀNG CỦA BẠN</Text>
-      <Text style={styles.pageTitle}>{itemCount} sản phẩm</Text>
+      <Text style={styles.pageTitle}>{productCount} sản phẩm</Text>
       {!cart.length ? <View style={styles.emptyState}><Text style={styles.emptyEmoji}>🛍️</Text><Text style={styles.emptyTitle}>Giỏ hàng đang trống</Text><Text style={styles.stateText}>Chọn vài món ngon cho hôm nay nhé.</Text><AppButton title="Tiếp tục mua sắm" onPress={() => setTab("home")} style={styles.emptyCta} /></View> : <>
         {cart.map((item) => <View key={item.id} style={styles.cartRow}><View style={styles.cartThumb}><ProductImage imagePath={item.image} productId={item.id} style={styles.cartImage} /></View><View style={styles.cartInfo}><Text style={styles.cartName} numberOfLines={2}>{item.name}</Text><Text style={styles.cartPrice}>{money(item.price)}</Text>{productDiscountAmount(item) > 0 ? <Text style={styles.cartSaving}>Giảm {money(productDiscountAmount(item))}/sản phẩm</Text> : null}<View style={styles.quantityControl}><Pressable onPress={() => changeQuantity(item.id, -1)} style={styles.quantityButton}><Text style={styles.quantityText}>−</Text></Pressable><Text style={styles.quantityValue}>{item.quantity}</Text><Pressable onPress={() => changeQuantity(item.id, 1)} style={styles.quantityButton}><Text style={styles.quantityText}>＋</Text></Pressable></View></View></View>)}
         <View style={styles.summaryCard}><View style={styles.summaryLine}><Text style={styles.summaryLabel}>Tạm tính</Text><Text style={styles.summaryValue}>{money(originalSubtotal)}</Text></View>{productDiscount > 0 ? <View style={styles.summaryLine}><Text style={styles.summaryLabel}>Giảm giá sản phẩm</Text><Text style={styles.summaryDiscount}>-{money(productDiscount)}</Text></View> : null}<View style={styles.summaryLine}><Text style={styles.summaryLabel}>Thanh toán</Text><Text style={styles.freeShipping}>Khi nhận hàng</Text></View><Pressable style={styles.voucherRow} onPress={openVouchers}><Text style={styles.voucherLabel}>Phiếu mua hàng</Text><Text style={styles.voucherAction}>{appliedVoucher ? `-${money(appliedVoucher.discountAmount)} · Đổi` : "Sử dụng  ›"}</Text></Pressable>{appliedVoucher ? <Pressable onPress={() => setAppliedVoucher(null)}><Text style={styles.voucherRemove}>Bỏ phiếu mua hàng</Text></Pressable> : null}<View style={styles.summaryTotal}><Text style={styles.summaryTotalLabel}>Tổng cộng</Text><Text style={styles.summaryTotalValue}>{money(payable)}</Text></View><AppButton title="Tiến hành đặt hàng  →" onPress={() => { if (!requireAuthenticatedCustomer()) return; setOrderError(""); setCompletedOrder(null); setCheckoutOpen(true); }} /><AppButton title="Xóa hết sản phẩm" secondary onPress={() => Alert.alert("Xóa giỏ hàng", "Bạn có chắc muốn xóa tất cả sản phẩm khỏi giỏ hàng?", [{ text: "Hủy", style: "cancel" }, { text: "Xóa hết", style: "destructive", onPress: () => { setCart([]); setAppliedVoucher(null); } }])} /></View>
@@ -635,42 +636,42 @@ export default function App() {
           <AppButton title="Lưu địa chỉ" onPress={saveDeliveryAddress} />
         </View>}
       </> : <>
-      <Text style={styles.eyebrow}>E-MART</Text>
-      <Text style={styles.pageTitle}>Tài khoản</Text>
-      {!accountReady ? <View style={styles.centerState}><ActivityIndicator color={GREEN} /><Text style={styles.stateText}>Đang tải tài khoản...</Text></View> : customer ? <>
-        <View style={styles.profileCard}>
-          <Text style={styles.profileEmoji}>👋</Text>
-          <Text style={styles.emptyTitle}>{customer.fullName || "Chào mừng bạn"}</Text>
-          <Text style={styles.stateText}>{customer.phone}</Text>
-          <View style={{ marginTop: 10, backgroundColor: "#eef7ef", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Text style={{ fontSize: 14 }}>⭐</Text>
-            <Text style={{ fontSize: 13, fontWeight: "800", color: GREEN }}>
-              {customer.rewardPoints || 0} điểm thưởng
-            </Text>
-            <Text style={{ fontSize: 11, color: MUTED }}>
-              (đổi được {money((customer.rewardPoints || 0) * 1000)})
-            </Text>
+        <Text style={styles.eyebrow}>E-MART</Text>
+        <Text style={styles.pageTitle}>Tài khoản</Text>
+        {!accountReady ? <View style={styles.centerState}><ActivityIndicator color={GREEN} /><Text style={styles.stateText}>Đang tải tài khoản...</Text></View> : customer ? <>
+          <View style={styles.profileCard}>
+            <Text style={styles.profileEmoji}>👋</Text>
+            <Text style={styles.emptyTitle}>{customer.fullName || "Chào mừng bạn"}</Text>
+            <Text style={styles.stateText}>{customer.phone}</Text>
+            <View style={{ marginTop: 10, backgroundColor: "#eef7ef", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ fontSize: 14 }}>⭐</Text>
+              <Text style={{ fontSize: 13, fontWeight: "800", color: GREEN }}>
+                {customer.rewardPoints || 0} điểm thưởng
+              </Text>
+              <Text style={{ fontSize: 11, color: MUTED }}>
+                (đổi được {money((customer.rewardPoints || 0) * 1000)})
+              </Text>
+            </View>
           </View>
-        </View>
-        <View style={styles.infoCard}><Text style={styles.infoTitle}>Thông tin cá nhân</Text>
-          <Pressable style={styles.profileMenuRow} onPress={() => { setAccountName(customer.fullName || ""); setProfilePage("personal"); }}><Text style={styles.profileMenuIcon}>♙</Text><Text style={styles.profileMenuText}>Sửa thông tin cá nhân</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
-          <Pressable style={styles.profileMenuRow} onPress={() => { setAddressMessage(""); setProfilePage("address"); }}><Text style={styles.profileMenuIcon}>♧</Text><Text style={styles.profileMenuText}>Địa chỉ nhận hàng</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
-        </View>
-        <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>Hỗ trợ khách hàng</Text>
-          <Text style={styles.stateText}>Đơn hàng hiện thanh toán khi nhận hàng.</Text>
-          <AppButton title="Đăng xuất" secondary onPress={logoutCustomer} />
-        </View>
-      </> : <>
-        <View style={styles.infoCard}>
-          <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI</Text>
-          <TextInput value={loginPhone} onChangeText={setLoginPhone} placeholder="0912345678" style={styles.formInput} keyboardType="phone-pad" maxLength={13} autoComplete="tel" />
-          {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
-          <AppButton title={accountBusy ? "Đang đăng nhập..." : "Đăng nhập / Tạo tài khoản"} onPress={loginWithPhone} disabled={accountBusy} />
-          {accountMessage ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
-        </View>
-      </>}
-      <View style={styles.infoCard}><Text style={styles.infoTitle}>Hỗ trợ khách hàng</Text><Text style={styles.stateText}>Đơn hàng hiện thanh toán khi nhận hàng.</Text></View>
+          <View style={styles.infoCard}><Text style={styles.infoTitle}>Thông tin cá nhân</Text>
+            <Pressable style={styles.profileMenuRow} onPress={() => { setAccountName(customer.fullName || ""); setProfilePage("personal"); }}><Text style={styles.profileMenuIcon}>♙</Text><Text style={styles.profileMenuText}>Sửa thông tin cá nhân</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
+            <Pressable style={styles.profileMenuRow} onPress={() => { setAddressMessage(""); setProfilePage("address"); }}><Text style={styles.profileMenuIcon}>♧</Text><Text style={styles.profileMenuText}>Địa chỉ nhận hàng</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
+          </View>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>Hỗ trợ khách hàng</Text>
+            <Text style={styles.stateText}>Đơn hàng hiện thanh toán khi nhận hàng.</Text>
+            <AppButton title="Đăng xuất" secondary onPress={logoutCustomer} />
+          </View>
+        </> : <>
+          <View style={styles.infoCard}>
+            <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI</Text>
+            <TextInput value={loginPhone} onChangeText={setLoginPhone} placeholder="0912345678" style={styles.formInput} keyboardType="phone-pad" maxLength={13} autoComplete="tel" />
+            {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
+            <AppButton title={accountBusy ? "Đang đăng nhập..." : "Đăng nhập / Tạo tài khoản"} onPress={loginWithPhone} disabled={accountBusy} />
+            {accountMessage ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
+          </View>
+        </>}
+        <View style={styles.infoCard}><Text style={styles.infoTitle}>Hỗ trợ khách hàng</Text><Text style={styles.stateText}>Đơn hàng hiện thanh toán khi nhận hàng.</Text></View>
       </>}
     </ScrollView>
   );
@@ -679,15 +680,39 @@ export default function App() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       <View style={styles.header}>
-        <View style={styles.searchBar}><Text style={styles.searchIcon}>⌕</Text><TextInput value={query} onChangeText={setQuery} placeholder="Tìm sản phẩm bạn cần..." placeholderTextColor="#929c95" style={styles.searchInput} returnKeyType="search" /></View>
+        <View style={styles.searchBar}>
+          <Text style={styles.searchIcon}>⌕</Text>
+          <TextInput value={query} onChangeText={setQuery} placeholder="Tìm sản phẩm bạn cần..." placeholderTextColor="#929c95" style={styles.searchInput} returnKeyType="search" />
+        </View>
       </View>
 
       <View style={styles.screen}>{tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}</View>
 
-      <View style={styles.bottomNav}>{[["home", "⌂", "Trang chủ"], ["orders", "▤", "Đơn hàng"], ["cart", "🛒", "Giỏ hàng"], ["profile", "○", "Tài khoản"]].map(([key, icon, label]) => <Pressable key={key} onPress={() => setTab(key)} style={styles.navItem}><Text style={[styles.navIcon, tab === key && styles.navActive]}>{icon}{key === "cart" && itemCount > 0 ? <Text style={styles.navBadge}> {itemCount}</Text> : null}</Text><Text style={[styles.navLabel, tab === key && styles.navActive]}>{label}</Text></Pressable>)}</View>
+      <View style={styles.bottomNav}>{[["home", "⌂", "Trang chủ"], ["orders", "▤", "Đơn hàng"], ["cart", "🛒", "Giỏ hàng"], ["profile", "○", "Tài khoản"]].map(([key, icon, label]) => <Pressable key={key} onPress={() => setTab(key)} style={styles.navItem}><Text style={[styles.navIcon, tab === key && styles.navActive]}>{icon}{key === "cart" && productCount > 0 ? <Text style={styles.navBadge}> {productCount > 99 ? "99+" : productCount}</Text> : null}</Text><Text style={[styles.navLabel, tab === key && styles.navActive]}>{label}</Text></Pressable>)}</View>
 
       <Modal visible={Boolean(selectedProduct)} animationType="slide" onRequestClose={() => setSelectedProduct(null)}>
         {selectedProduct ? <SafeAreaView style={styles.productDetailScreen}>
+          <View style={styles.productDetailTopBar}>
+            <View style={styles.productDetailSearchBar}>
+              <Text style={styles.searchIcon}>⌕</Text>
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Tìm sản phẩm bạn cần..."
+                placeholderTextColor="#929c95"
+                style={styles.searchInput}
+                returnKeyType="search"
+              />
+              <Pressable
+                accessibilityLabel="Mở giỏ hàng"
+                onPress={() => { setSelectedProduct(null); setTab("cart"); }}
+                style={styles.headerCart}
+              >
+                <Text style={styles.headerCartIcon}>🛒</Text>
+                {productCount > 0 ? <View style={styles.cartBadge}><Text style={styles.cartBadgeText}>{productCount > 99 ? "99+" : productCount}</Text></View> : null}
+              </Pressable>
+            </View>
+          </View>
           <View style={styles.productDetailHeader}><Pressable onPress={() => setSelectedProduct(null)} style={styles.productDetailBack}><Text style={styles.productDetailBackText}>‹</Text></Pressable><Text style={styles.productDetailHeaderTitle} numberOfLines={1}>Chi tiết sản phẩm</Text></View>
           <ScrollView contentContainerStyle={styles.productDetailContent}>
             <View style={styles.productDetailImageBox}><ProductImage imagePath={selectedProduct.imageUrl} productId={selectedProduct.id} style={styles.productDetailImage} /></View>
@@ -702,7 +727,29 @@ export default function App() {
               <Text style={styles.productDetailStock}>● Còn hàng</Text>
             </View>
           </ScrollView>
-          <View style={styles.productDetailAction}><AppButton title="Thêm vào giỏ hàng" onPress={() => { addToCart(selectedProduct); if (customer && customerToken) setSelectedProduct(null); }} /></View>
+          <View style={styles.productDetailAction}>
+            {getCartQuantity(selectedProduct.id) > 0 ? (
+              <View style={styles.productDetailQuantityControl}>
+                <Pressable
+                  accessibilityLabel={`Giảm số lượng ${selectedProduct.productName}`}
+                  onPress={() => changeQuantity(selectedProduct.id, -1)}
+                  style={styles.productDetailQuantityButton}
+                >
+                  <Text style={styles.productDetailQuantityButtonText}>−</Text>
+                </Pressable>
+                <Text style={styles.productDetailQuantityValue}>{getCartQuantity(selectedProduct.id)}</Text>
+                <Pressable
+                  accessibilityLabel={`Tăng số lượng ${selectedProduct.productName}`}
+                  onPress={() => changeQuantity(selectedProduct.id, 1)}
+                  style={styles.productDetailQuantityButton}
+                >
+                  <Text style={styles.productDetailQuantityButtonText}>＋</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <AppButton title="Thêm vào giỏ hàng" onPress={() => addToCart(selectedProduct)} />
+            )}
+          </View>
         </SafeAreaView> : null}
       </Modal>
 
@@ -863,7 +910,7 @@ export default function App() {
                 {orderError ? <Text style={styles.orderError}>{orderError}</Text> : null}
                 <View style={styles.checkoutTotal}>
                   <Text style={styles.summaryLabel}>
-                    {itemCount} sản phẩm{useRewardPoints ? ` · giảm ${money(pointsDiscount)} điểm` : ""}
+                    {productCount} sản phẩm{useRewardPoints ? ` · giảm ${money(pointsDiscount)} điểm` : ""}
                   </Text>
                   <Text style={styles.summaryTotalValue}>{money(payable)}</Text>
                 </View>
@@ -962,21 +1009,21 @@ const styles = StyleSheet.create({
   buttonSecondaryText: { color: GREEN },
   buttonDisabled: { opacity: 0.65 },
   ordersScreen: { flex: 1, backgroundColor: "#f4f4f4" },
-  ordersTitle: { color: DARK, fontSize: 20, fontWeight: "900", textAlign: "center", paddingVertical: 16, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
+  ordersTitle: { color: DARK, fontSize: 16, fontWeight: "900", textAlign: "center", paddingVertical: 13, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
   orderFilterScroll: { height: 48, flexGrow: 0, flexShrink: 0 },
   orderFilterRow: { paddingHorizontal: 14, alignItems: "center", gap: 8 },
   orderFilterChip: { paddingHorizontal: 14, paddingVertical: 4, borderRadius: 24, backgroundColor: "#e4eaf7" },
   orderFilterChipActive: { backgroundColor: "#328656" },
-  orderFilterText: { color: "#344054", fontSize: 12, fontWeight: "600" },
+  orderFilterText: { color: "#344054", fontSize: 10, fontWeight: "600" },
   orderFilterTextActive: { color: "#fff" },
   orderListContent: { padding: 14, paddingTop: 4, paddingBottom: 20 },
   orderListCard: { backgroundColor: "#fff", borderRadius: 14, padding: 12, marginBottom: 12 },
   orderListHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 },
-  orderListNumber: { flex: 1, color: DARK, fontSize: 14, fontWeight: "900" },
-  orderViewLink: { color: "#344054", fontSize: 12, fontWeight: "700" },
+  orderListNumber: { flex: 1, color: DARK, fontSize: 12, fontWeight: "900" },
+  orderViewLink: { color: "#344054", fontSize: 10, fontWeight: "700" },
   orderPickup: { flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 9, backgroundColor: "#f0f3fa", padding: 10 },
-  orderPickupIcon: { color: "#78857c", fontSize: 17 },
-  orderPickupText: { flex: 1, color: "#586273", fontSize: 12, fontWeight: "600" },
+  orderPickupIcon: { color: "#78857c", fontSize: 15 },
+  orderPickupText: { flex: 1, color: "#586273", fontSize: 10, fontWeight: "600" },
   orderThumbnailRow: { flexDirection: "row", gap: 8, paddingVertical: 13, minHeight: 83, alignItems: "center" },
   orderThumbnailBox: { width: 57, height: 68, borderRadius: 7, backgroundColor: "#f7f8f5", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   orderThumbnail: { width: "90%", height: "90%" },
@@ -984,10 +1031,10 @@ const styles = StyleSheet.create({
   orderMoreText: { color: "#fff", fontSize: 17, fontWeight: "900" },
   orderListTotals: { borderTopWidth: 1, borderTopColor: "#edf0ec", paddingTop: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 6 },
   orderListStatus: { color: GREEN, fontSize: 11, fontWeight: "800", flexShrink: 1 },
-  orderListTotal: { color: DARK, fontSize: 13, fontWeight: "700" },
+  orderListTotal: { color: DARK, fontSize: 11, fontWeight: "700" },
   orderListActions: { flexDirection: "row", marginHorizontal: -12, marginTop: 12, borderTopWidth: 1, borderTopColor: "#edf0ec" },
   orderListAction: { flex: 1, alignItems: "center", paddingVertical: 12 },
-  orderListActionText: { color: DARK, fontSize: 12, fontWeight: "800" },
+  orderListActionText: { color: DARK, fontSize: 10, fontWeight: "800" },
   orderDetailHeading: { minHeight: 52, backgroundColor: "#fff", flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 15, borderBottomWidth: 1, borderBottomColor: "#edf0ec" },
   orderBack: { position: "absolute", left: 13, height: 44, justifyContent: "center", paddingHorizontal: 5 },
   orderBackText: { color: DARK, fontSize: 34, lineHeight: 38 },
@@ -1016,7 +1063,7 @@ const styles = StyleSheet.create({
   orderActionPrimary: { flex: 1.3, minHeight: 45, borderRadius: 10, backgroundColor: GREEN, alignItems: "center", justifyContent: "center" },
   orderActionPrimaryText: { color: "#fff", fontSize: 13, fontWeight: "800" },
   pageContent: { padding: 18, paddingBottom: 25 },
-  pageTitle: { color: DARK, fontSize: 24, fontWeight: "900", marginTop: 4, marginBottom: 17 },
+  pageTitle: { color: DARK, fontSize: 16, fontWeight: "900", marginTop: 4, marginBottom: 17 },
   cartRow: { flexDirection: "row", gap: 12, backgroundColor: "#fff", borderRadius: 12, padding: 10, marginBottom: 9, borderWidth: 1, borderColor: "#edf0ec" },
   cartThumb: { width: 67, height: 67, backgroundColor: "#f5f7f3", borderRadius: 9, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   cartImage: { width: "90%", height: "90%" },
@@ -1099,6 +1146,8 @@ const styles = StyleSheet.create({
   navBadge: { color: "#fff", backgroundColor: "#dc5a42", overflow: "hidden", borderRadius: 8, fontSize: 9, fontWeight: "900" },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "#14221988" },
   productDetailScreen: { flex: 1, backgroundColor: "#f7f9f6" },
+  productDetailTopBar: { backgroundColor: "#fff", paddingHorizontal: 14, paddingTop: 7, paddingBottom: 9, borderBottomWidth: 1, borderBottomColor: "#edf0ec" },
+  productDetailSearchBar: { height: 44, backgroundColor: "#f4f6f2", borderRadius: 11, paddingLeft: 12, paddingRight: 5, flexDirection: "row", alignItems: "center" },
   productDetailHeader: { minHeight: 56, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e8ebe8", alignItems: "center", justifyContent: "center", paddingHorizontal: 56 },
   productDetailBack: { position: "absolute", left: 14, top: 6, width: 42, height: 44, justifyContent: "center", zIndex: 1 },
   productDetailBackText: { color: DARK, fontSize: 37, lineHeight: 41 },
@@ -1119,6 +1168,10 @@ const styles = StyleSheet.create({
   discountBadge: { color: "#fff", backgroundColor: "#df4c42", overflow: "hidden", borderRadius: 5, paddingHorizontal: 6, paddingVertical: 3, fontSize: 12, fontWeight: "900" },
   productDetailStock: { color: GREEN, fontSize: 13, fontWeight: "800", marginTop: 16 },
   productDetailAction: { backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#e8ebe8", paddingHorizontal: 18, paddingTop: 12, paddingBottom: 16 },
+  productDetailQuantityControl: { minHeight: 45, borderRadius: 10, backgroundColor: "#eaf3ea", flexDirection: "row", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  productDetailQuantityButton: { width: 58, height: 45, alignItems: "center", justifyContent: "center" },
+  productDetailQuantityButtonText: { color: GREEN, fontSize: 26, lineHeight: 30, fontWeight: "700" },
+  productDetailQuantityValue: { minWidth: 54, color: DARK, fontSize: 17, fontWeight: "900", textAlign: "center" },
   checkoutSheet: { maxHeight: "92%", backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 18 },
   sheetHandle: { width: 38, height: 4, borderRadius: 2, backgroundColor: "#d7ded7", alignSelf: "center", marginBottom: 15 },
   checkoutContent: { paddingBottom: 10 },

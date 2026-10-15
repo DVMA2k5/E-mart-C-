@@ -129,6 +129,8 @@ namespace backend.Repository
                     CustomerId = o.CustomerId,
                     UserId = o.UserId,
                     Status = o.Status,
+                    PaymentStatus = o.PaymentStatus,
+                    PaymentMethod = o.PaymentMethod,
                     Subtotal = o.Subtotal,
                     Discount = o.Discount,
                     TotalAmount = o.TotalAmount,

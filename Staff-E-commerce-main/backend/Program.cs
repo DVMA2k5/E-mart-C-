@@ -88,6 +88,7 @@ builder.Services.AddHttpContextAccessor();
 // -------------------------
 builder.Services.AddScoped<ProductService>();
 builder.Services.AddScoped<OrderService>();
+builder.Services.AddScoped<InvoiceService>();
 builder.Services.AddScoped<ActivityLogService>();
 builder.Services.AddScoped<CustomerService>();
 builder.Services.AddScoped<CategoryService>();

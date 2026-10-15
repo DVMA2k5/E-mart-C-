@@ -20,6 +20,7 @@ import UnitList from "./pages/units/UnitList";
 import SupplierList from "./pages/suppliers/SupplierList";
 import PurchaseOrderList from "./pages/purchaseOrders/PurchaseOrderList";
 import POS from "./pages/pos/POS";
+import InvoicePage from "./pages/invoices/InvoicePage";
 
 // Component để xử lý redirect từ root
 function RootRedirect() {
@@ -50,6 +51,7 @@ function App() {
           <Route path="/products" element={<ProductList />} />
           <Route path="/inventory" element={<Navigate to="/products" replace />} />
           <Route path="/orders" element={<OrdersPage />} />
+          <Route path="/invoices" element={<InvoicePage />} />
           <Route path="/pos" element={<POS />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/users" element={<UserManagement />} />

@@ -120,6 +120,11 @@ export default function Sidebar({ collapsed, onClose }) {
           <span className="text-sm">Lịch sử đơn hàng</span>
         </NavLink>
 
+        <NavLink to="/invoices" className={linkClass}>
+          <span className="w-5 h-5">🧾</span>
+          <span className="text-sm">Quản lý hóa đơn</span>
+        </NavLink>
+
         <NavLink to="/products" className={linkClass}>
           <span className="w-5 h-5"><IconProducts /></span>
           <span className="text-sm">Danh sách sản phẩm</span>

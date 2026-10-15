@@ -25,6 +25,7 @@ import {
   IconLocation,
   IconChevronRight,
   IconClose,
+  IconCloseCircle,
   IconHome,
   IconCategoryGrid,
   IconReceipt,
@@ -38,7 +39,9 @@ import {
   IconSort,
   CategoryAll,
   getCategoryIcon,
+  getSubCategoryIcon,
 } from "./components/Icons";
+import { BHX_CATEGORIES } from "./constants/bhxData";
 
 const defaultHost = typeof window !== "undefined" && window.location?.hostname
   ? `http://${window.location.hostname}:5099/api`
@@ -242,7 +245,8 @@ export default function App() {
   // Bộ lọc & Sắp xếp
   const [sortOption, setSortOption] = useState("default");
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
-  const [selectedDrawerCatId, setSelectedDrawerCatId] = useState("all");
+  const [selectedDrawerCatId, setSelectedDrawerCatId] = useState(5);
+  const [drawerSearchText, setDrawerSearchText] = useState("");
 
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutForm, setCheckoutForm] = useState({ fullName: "", phone: "", address: "", note: "" });
@@ -492,11 +496,20 @@ export default function App() {
     return result;
   }, [products, query, categoryId, sortOption]);
 
-  // Sản phẩm hiển thị trong Drawer phân loại
-  const drawerProducts = useMemo(() => {
-    if (selectedDrawerCatId === "all") return products.slice(0, 30);
-    return products.filter((p) => String(p.categoryId) === String(selectedDrawerCatId));
-  }, [products, selectedDrawerCatId]);
+  // Danh mục BHX đang chọn trong Drawer
+  const activeBhxCategory = useMemo(() => {
+    return BHX_CATEGORIES.find((c) => c.id === selectedDrawerCatId) || BHX_CATEGORIES[0];
+  }, [selectedDrawerCatId]);
+
+  // Các nhóm hàng con Sub-categories được lọc theo từ khóa tìm kiếm trong Drawer
+  const filteredSubCategories = useMemo(() => {
+    if (!activeBhxCategory?.subCategories) return [];
+    if (!drawerSearchText.trim()) return activeBhxCategory.subCategories;
+    const kw = drawerSearchText.trim().toLowerCase();
+    return activeBhxCategory.subCategories.filter((sub) =>
+      sub.name.toLowerCase().includes(kw) || (sub.keyword && sub.keyword.toLowerCase().includes(kw))
+    );
+  }, [activeBhxCategory, drawerSearchText]);
 
   const cartItemMap = useMemo(() => {
     const map = {};
@@ -1287,12 +1300,18 @@ export default function App() {
         {tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
       </View>
 
-      {/* BOTTOM NAVIGATION CHUẨN APP */}
+      {/* BOTTOM NAVIGATION CHUẨN APP (5 TABS ĐẦY ĐỦ CÓ GIỎ HÀNG KÈM BADGE ĐỎ CHỐNG MẤT GIỎ) */}
       <View style={styles.bottomNav}>
         <View style={styles.bottomNavInner}>
           {[
             { key: "home", label: "Trang chủ", icon: (active) => <IconHome size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
             { key: "categories", label: "Danh mục", icon: (active) => <IconCategoryGrid size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
+            { 
+              key: "cart", 
+              label: "Giỏ hàng", 
+              badge: itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
+              icon: (active) => <IconCart size={20} color={active ? BHX_GREEN : "#64748b"} /> 
+            },
             { key: "orders", label: "Đơn hàng", icon: (active) => <IconReceipt size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
             { key: "profile", label: "Tài khoản", icon: (active) => <IconUser size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
           ].map((item) => {
@@ -1302,7 +1321,6 @@ export default function App() {
                 key={item.key}
                 onPress={() => {
                   if (item.key === "categories") {
-                    setSelectedDrawerCatId(categoryId === "all" ? "all" : categoryId);
                     setCategoryModalOpen(true);
                   } else {
                     setTab(item.key);
@@ -1312,6 +1330,11 @@ export default function App() {
               >
                 <View style={styles.navIconWrapper}>
                   {item.icon(isActive)}
+                  {item.badge && (
+                    <View style={styles.bottomNavBadge}>
+                      <Text style={styles.bottomNavBadgeText}>{item.badge}</Text>
+                    </View>
+                  )}
                 </View>
                 <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>{item.label}</Text>
               </Pressable>
@@ -1320,8 +1343,33 @@ export default function App() {
         </View>
       </View>
 
+      {/* THANH GIỎ HÀNG NỔI Ở ĐÁY KHI CÓ MẶT HÀNG TRONG GIỎ */}
+      {itemCount > 0 && tab === "home" && (
+        <Pressable
+          onPress={() => setTab("cart")}
+          style={styles.floatingHomeCartBar}
+        >
+          <View style={styles.floatingCartLeft}>
+            <View style={styles.floatingCartIconCircle}>
+              <IconCart size={18} color="#ffffff" />
+              <View style={styles.floatingCartBadge}>
+                <Text style={styles.floatingCartBadgeText}>{itemCount}</Text>
+              </View>
+            </View>
+            <View style={styles.floatingCartInfo}>
+              <Text style={styles.floatingCartQtyText}>Giỏ hàng • {itemCount} sản phẩm</Text>
+              <Text style={styles.floatingCartPriceText}>{money(payable)}</Text>
+            </View>
+          </View>
+          <View style={styles.floatingCartRight}>
+            <Text style={styles.floatingCartCtaText}>Xem giỏ hàng</Text>
+            <IconChevronRight size={14} color="#ffffff" />
+          </View>
+        </Pressable>
+      )}
+
       {/* ========================================================================= */}
-      {/* MODAL MENU PHÂN LOẠI 2 CỘT CHUẨN BÁCH HÓA XANH (FIXED TỶ LỆ SIDEBAR TRÊN MOBILE) */}
+      {/* MODAL MENU PHÂN LOẠI CHUẨN 100% BÁCH HÓA XANH (LƯỚI SUB-CATEGORIES 3 CỘT) */}
       {/* ========================================================================= */}
       <Modal
         visible={categoryModalOpen}
@@ -1329,136 +1377,170 @@ export default function App() {
         transparent={isDesktop}
         onRequestClose={() => setCategoryModalOpen(false)}
       >
-        <View style={isDesktop ? styles.drawerDesktopBackdrop : styles.drawerSafeArea}>
+        <SafeAreaView style={isDesktop ? styles.drawerDesktopBackdrop : styles.drawerSafeArea}>
           <View style={isDesktop ? styles.drawerDesktopDialog : styles.drawerMobileContainer}>
-            {/* Drawer Header */}
-            <View style={styles.drawerHeader}>
-              <Pressable onPress={() => setCategoryModalOpen(false)} style={styles.drawerCloseBtn}>
-                <Text style={styles.drawerBackText}>‹</Text>
-              </Pressable>
-              <Text style={styles.drawerTitle}>DANH MỤC PHÂN LOẠI</Text>
-              <Pressable onPress={() => { setCategoryModalOpen(false); setTab("cart"); }} style={styles.drawerCartBtn}>
-                <IconCart size={18} color={BHX_GREEN} />
-                {itemCount > 0 && (
-                  <View style={styles.drawerCartBadge}>
-                    <Text style={styles.drawerCartBadgeText}>{itemCount}</Text>
-                  </View>
+            {/* Header màu xanh lá cây chuẩn Bách Hóa Xanh: [Đóng] [Trang chủ] + [Ô tìm kiếm bo tròn] */}
+            <View style={styles.bhxModalHeader}>
+              <View style={styles.bhxHeaderActionGroup}>
+                <Pressable
+                  onPress={() => setCategoryModalOpen(false)}
+                  style={styles.bhxHeaderCircleBtn}
+                >
+                  <IconCloseCircle size={22} color="#ffffff" />
+                  <Text style={styles.bhxHeaderBtnLabel}>Đóng</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setCategoryModalOpen(false);
+                    setTab("home");
+                  }}
+                  style={styles.bhxHeaderCircleBtn}
+                >
+                  <IconHome size={22} color="#ffffff" active={true} />
+                  <Text style={styles.bhxHeaderBtnLabel}>Trang chủ</Text>
+                </Pressable>
+              </View>
+
+              {/* Ô tìm kiếm bo tròn chuẩn Bách Hóa Xanh */}
+              <View style={styles.bhxModalSearchBox}>
+                <IconSearch size={16} color="#64748b" />
+                <TextInput
+                  value={drawerSearchText}
+                  onChangeText={setDrawerSearchText}
+                  placeholder="Tìm nhanh trong nhóm hàng"
+                  placeholderTextColor="#94a3b8"
+                  style={styles.bhxModalSearchInput}
+                  returnKeyType="search"
+                />
+                {drawerSearchText.length > 0 && (
+                  <Pressable onPress={() => setDrawerSearchText("")} style={{ padding: 4 }}>
+                    <IconClose size={14} color="#64748b" />
+                  </Pressable>
                 )}
-              </Pressable>
+              </View>
             </View>
 
-            {/* Layout 2 cột chuẩn Bách Hóa Xanh */}
+            {/* Layout 2 Cột chuẩn ảnh: Cột Trái 105px (Sidebar Ngành), Cột Phải (Lưới Sub-Categories 3 Cột) */}
             <View style={styles.drawerBody}>
-              {/* CỘT TRÁI: DANH SÁCH CÁC NGÀNH HÀNG (CỐ ĐỊNH 92px TRÊN MOBILE) */}
-              <View style={[styles.drawerSidebarWrapper, isDesktop ? { width: 220, maxWidth: 220, flexBasis: 220 } : { width: 92, maxWidth: 92, flexBasis: 92 }]}>
+              {/* CỘT TRÁI: SIDEBAR CÁC NGÀNH HÀNG */}
+              <View style={[styles.drawerSidebarWrapper, isDesktop ? { width: 200, maxWidth: 200 } : { width: 105, maxWidth: 105, flexBasis: 105 }]}>
                 <ScrollView style={styles.drawerSidebar} showsVerticalScrollIndicator={false}>
-                  {/* Tất cả */}
-                  <Pressable
-                    onPress={() => setSelectedDrawerCatId("all")}
-                    style={[styles.sidebarItem, selectedDrawerCatId === "all" && styles.sidebarItemActive]}
-                  >
-                    <View style={styles.sidebarIconWrap}>
-                      <CategoryAll size={24} />
-                    </View>
-                    <Text style={[styles.sidebarText, selectedDrawerCatId === "all" && styles.sidebarTextActive]}>
-                      Tất cả
-                    </Text>
-                    {selectedDrawerCatId === "all" && <View style={styles.sidebarActiveLine} />}
-                  </Pressable>
-
-                  {categories.map((cat) => {
-                    const isCur = String(selectedDrawerCatId) === String(cat.id);
+                  {BHX_CATEGORIES.map((cat) => {
+                    const isCur = selectedDrawerCatId === cat.id;
                     return (
                       <Pressable
                         key={cat.id}
-                        onPress={() => setSelectedDrawerCatId(String(cat.id))}
-                        style={[styles.sidebarItem, isCur && styles.sidebarItemActive]}
+                        onPress={() => {
+                          setSelectedDrawerCatId(cat.id);
+                          setDrawerSearchText("");
+                        }}
+                        style={[styles.bhxSidebarItem, isCur && styles.bhxSidebarItemActive]}
                       >
-                        <View style={styles.sidebarIconWrap}>
-                          {getCategoryIcon(cat.name, 24)}
+                        <View style={[styles.bhxSidebarIconBox, isCur && styles.bhxSidebarIconBoxActive]}>
+                          {getCategoryIcon(cat.name, 28)}
                         </View>
-                        <Text style={[styles.sidebarText, isCur && styles.sidebarTextActive]} numberOfLines={2}>
-                          {cat.name}
+                        <Text
+                          style={[styles.bhxSidebarName, isCur && styles.bhxSidebarNameActive]}
+                          numberOfLines={2}
+                        >
+                          {cat.shortName || cat.name}
                         </Text>
-                        {isCur && <View style={styles.sidebarActiveLine} />}
+                        {isCur && <View style={styles.bhxSidebarActiveBar} />}
                       </Pressable>
                     );
                   })}
+                  <View style={{ height: 60 }} />
                 </ScrollView>
               </View>
 
-              {/* CỘT PHẢI: CHI TIẾT SẢN PHẨM CỦA NGÀNH HÀNG ĐANG CHỌN */}
+              {/* CỘT PHẢI: LƯỚI SUB-CATEGORIES 3 CỘT (CHUẨN ẢNH BÁCH HÓA XANH) */}
               <View style={styles.drawerContentCol}>
-                <View style={styles.drawerContentHeader}>
-                  <Text style={styles.drawerSelectedCategoryName} numberOfLines={1}>
-                    {selectedDrawerCatId === "all" ? "Tất cả sản phẩm" : (categories.find((c) => String(c.id) === String(selectedDrawerCatId))?.name || "Ngành hàng")}
+                {/* Header nhóm ngành & Nút xem tất cả */}
+                <View style={styles.bhxSubHeaderRow}>
+                  <Text style={styles.bhxSubHeaderTitle} numberOfLines={1}>
+                    {activeBhxCategory?.name || "Nhóm hàng"}
                   </Text>
                   <Pressable
                     onPress={() => {
-                      setCategoryId(selectedDrawerCatId);
+                      setCategoryId(String(activeBhxCategory?.dbCategoryId || "all"));
+                      setQuery("");
                       setCategoryModalOpen(false);
                       setTab("home");
                     }}
-                    style={styles.viewCategoryInHomeBtn}
+                    style={styles.bhxViewAllCategoryBtn}
                   >
-                    <Text style={styles.viewCategoryInHomeText}>Xem ngoài trang chủ ›</Text>
+                    <Text style={styles.bhxViewAllCategoryText}>Xem tất cả ›</Text>
                   </Pressable>
                 </View>
 
-                <ScrollView contentContainerStyle={styles.drawerProductList} showsVerticalScrollIndicator={false}>
-                  {drawerProducts.map((p) => {
-                    const qty = cartItemMap[p.id] || 0;
-                    return (
-                      <View key={p.id} style={styles.drawerProductRow}>
-                        <View style={styles.drawerProductThumb}>
-                          <ProductImage
-                            imagePath={p.imageUrl}
-                            productId={p.id}
-                            categoryName={p.categoryName}
-                            style={styles.drawerProductImage}
-                          />
-                        </View>
-                        <View style={styles.drawerProductInfo}>
-                          <Text style={styles.drawerProductName} numberOfLines={2}>{p.productName}</Text>
-                          <Text style={styles.drawerProductPrice}>{money(p.price)}</Text>
-                        </View>
-
-                        {/* Nút mua / tăng giảm ngay trong menu phân loại */}
-                        <View style={styles.drawerProductAction}>
-                          {qty === 0 ? (
-                            <Pressable
-                              onPress={() => addToCart(p)}
-                              style={styles.drawerAddBtn}
-                            >
-                              <IconPlus size={12} color="#ffffff" />
-                              <Text style={styles.drawerAddBtnText}>Mua</Text>
-                            </Pressable>
-                          ) : (
-                            <View style={styles.drawerStepperBox}>
-                              <Pressable onPress={() => changeQuantity(p.id, -1)} style={styles.drawerStepperMiniBtn}>
-                                <IconMinus size={11} color={BHX_GREEN} />
-                              </Pressable>
-                              <Text style={styles.drawerStepperQty}>{qty}</Text>
-                              <Pressable onPress={() => changeQuantity(p.id, 1)} style={[styles.drawerStepperMiniBtn, styles.drawerStepperPlus]}>
-                                <IconPlus size={11} color="#ffffff" />
-                              </Pressable>
-                            </View>
-                          )}
-                        </View>
+                {/* Lưới Grid 3 Cột nhóm hàng con */}
+                <ScrollView contentContainerStyle={styles.bhxSubGridContainer} showsVerticalScrollIndicator={false}>
+                  {filteredSubCategories.map((sub) => (
+                    <Pressable
+                      key={sub.id}
+                      onPress={() => {
+                        setCategoryId(String(activeBhxCategory?.dbCategoryId || "all"));
+                        setQuery(sub.keyword || sub.name);
+                        setCategoryModalOpen(false);
+                        setTab("home");
+                      }}
+                      style={styles.bhxSubGridItem}
+                    >
+                      <View style={styles.bhxSubImageBox}>
+                        {getSubCategoryIcon(sub.iconType, 36)}
+                        {sub.tag && (
+                          <View style={styles.bhxSubTagBadge}>
+                            <Text style={styles.bhxSubTagText}>{sub.tag}</Text>
+                          </View>
+                        )}
                       </View>
-                    );
-                  })}
-                  {!drawerProducts.length && (
-                    <View style={styles.centerState}>
-                      <Text style={styles.stateText}>Không có sản phẩm trong nhóm này.</Text>
+                      <Text style={styles.bhxSubName} numberOfLines={2}>
+                        {sub.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+
+                  {filteredSubCategories.length === 0 && (
+                    <View style={styles.bhxEmptySubState}>
+                      <IconCart size={40} color="#cbd5e1" />
+                      <Text style={styles.stateText}>Không tìm thấy nhóm hàng phù hợp.</Text>
                     </View>
                   )}
-                  <View style={{ height: 20 }} />
+                  <View style={{ height: 90 }} />
                 </ScrollView>
               </View>
             </View>
+
+            {/* DƯỚI ĐÁY MODAL: THANH GIỎ HÀNG NỔI (STICKY BOTTOM CART) CHỐNG MẤT GIỎ */}
+            {itemCount > 0 && (
+              <Pressable
+                onPress={() => {
+                  setCategoryModalOpen(false);
+                  setTab("cart");
+                }}
+                style={styles.drawerFloatingCart}
+              >
+                <View style={styles.floatingCartLeft}>
+                  <View style={styles.floatingCartIconCircle}>
+                    <IconCart size={18} color="#ffffff" />
+                    <View style={styles.floatingCartBadge}>
+                      <Text style={styles.floatingCartBadgeText}>{itemCount}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.floatingCartInfo}>
+                    <Text style={styles.floatingCartQtyText}>Giỏ hàng • {itemCount} sản phẩm</Text>
+                    <Text style={styles.floatingCartPriceText}>{money(payable)}</Text>
+                  </View>
+                </View>
+                <View style={styles.floatingCartRight}>
+                  <Text style={styles.floatingCartCtaText}>Xem giỏ hàng</Text>
+                  <IconChevronRight size={14} color="#ffffff" />
+                </View>
+              </Pressable>
+            )}
           </View>
-        </View>
+        </SafeAreaView>
       </Modal>
 
       {/* MODAL CHECKOUT & THANH TOÁN */}
@@ -2339,57 +2421,46 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#ffffff",
   },
-  drawerHeader: {
-    height: 48,
+  bhxModalHeader: {
+    height: 54,
     backgroundColor: BHX_GREEN,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
+    gap: 8,
   },
-  drawerCloseBtn: {
-    width: 36,
-    height: 36,
+  bhxHeaderActionGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  bhxHeaderCircleBtn: {
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 4,
   },
-  drawerBackText: {
-    color: "#ffffff",
-    fontSize: 28,
-    fontWeight: "900",
-    lineHeight: 30,
-  },
-  drawerTitle: {
-    color: "#ffffff",
-    fontSize: 14,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-  },
-  drawerCartBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#ffffff",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-  },
-  drawerCartBadge: {
-    position: "absolute",
-    top: -4,
-    right: -4,
-    backgroundColor: BHX_RED,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 2,
-  },
-  drawerCartBadgeText: {
+  bhxHeaderBtnLabel: {
     color: "#ffffff",
     fontSize: 9,
-    fontWeight: "900",
+    fontWeight: "800",
+    marginTop: 1,
+  },
+  bhxModalSearchBox: {
+    flex: 1,
+    height: 36,
+    backgroundColor: "#ffffff",
+    borderRadius: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  bhxModalSearchInput: {
+    flex: 1,
+    fontSize: 11,
+    color: TEXT_DARK,
+    fontWeight: "600",
+    paddingVertical: 0,
   },
 
   drawerBody: {
@@ -2404,14 +2475,14 @@ const styles = StyleSheet.create({
     borderRightColor: BORDER_COLOR,
     flexGrow: 0,
     flexShrink: 0,
-    width: 92,
-    maxWidth: 92,
+    width: 105,
+    maxWidth: 105,
   },
   drawerSidebar: {
     flex: 1,
     width: "100%",
   },
-  sidebarItem: {
+  bhxSidebarItem: {
     paddingVertical: 10,
     paddingHorizontal: 4,
     alignItems: "center",
@@ -2419,28 +2490,33 @@ const styles = StyleSheet.create({
     borderBottomColor: "#f1f5f9",
     position: "relative",
   },
-  sidebarItemActive: {
+  bhxSidebarItemActive: {
     backgroundColor: "#ffffff",
   },
-  sidebarIconWrap: {
-    width: 28,
-    height: 28,
+  bhxSidebarIconBox: {
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 3,
+    borderRadius: 8,
+    backgroundColor: "#f8fafc",
   },
-  sidebarText: {
+  bhxSidebarIconBoxActive: {
+    backgroundColor: "#e8f5ec",
+  },
+  bhxSidebarName: {
     fontSize: 9,
-    color: TEXT_MUTED,
+    color: "#475569",
     fontWeight: "700",
     textAlign: "center",
     lineHeight: 12,
   },
-  sidebarTextActive: {
+  bhxSidebarNameActive: {
     color: BHX_GREEN,
     fontWeight: "900",
   },
-  sidebarActiveLine: {
+  bhxSidebarActiveBar: {
     position: "absolute",
     left: 0,
     top: 4,
@@ -2459,7 +2535,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     overflow: "hidden",
   },
-  drawerContentHeader: {
+  bhxSubHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -2469,102 +2545,181 @@ const styles = StyleSheet.create({
     borderBottomColor: BORDER_COLOR,
     backgroundColor: "#fdfdfd",
   },
-  drawerSelectedCategoryName: {
+  bhxSubHeaderTitle: {
     fontSize: 12,
     fontWeight: "900",
     color: TEXT_DARK,
     flex: 1,
     marginRight: 6,
   },
-  viewCategoryInHomeBtn: {
+  bhxViewAllCategoryBtn: {
     paddingVertical: 2,
+    paddingHorizontal: 4,
   },
-  viewCategoryInHomeText: {
+  bhxViewAllCategoryText: {
     fontSize: 10,
     color: BHX_GREEN,
     fontWeight: "800",
   },
-  drawerProductList: {
-    padding: 8,
-  },
-  drawerProductRow: {
+  bhxSubGridContainer: {
     flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
-    gap: 8,
+    flexWrap: "wrap",
+    padding: 6,
+    justifyContent: "flex-start",
+    rowGap: 8,
   },
-  drawerProductThumb: {
-    width: 52,
-    height: 52,
-    borderRadius: 6,
+  bhxSubGridItem: {
+    width: "31.5%",
+    marginHorizontal: "0.9%",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  bhxSubImageBox: {
+    width: 58,
+    height: 58,
+    borderRadius: 10,
     backgroundColor: "#f8fafc",
     alignItems: "center",
     justifyContent: "center",
-    padding: 4,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    position: "relative",
+    overflow: "hidden",
   },
-  drawerProductImage: {
-    width: "100%",
-    height: "100%",
+  bhxSubTagBadge: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: BHX_RED,
+    paddingVertical: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  drawerProductInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  drawerProductName: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: TEXT_DARK,
-    lineHeight: 15,
-  },
-  drawerProductPrice: {
-    fontSize: 12,
+  bhxSubTagText: {
+    color: "#ffffff",
+    fontSize: 7,
     fontWeight: "900",
-    color: BHX_GREEN,
-    marginTop: 2,
   },
-  drawerProductAction: {
-    alignItems: "flex-end",
-    marginLeft: 4,
+  bhxSubName: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: TEXT_DARK,
+    textAlign: "center",
+    lineHeight: 13,
+    marginTop: 4,
   },
-  drawerAddBtn: {
+  bhxEmptySubState: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 30,
+  },
+
+  // Thanh Giỏ Hàng Nổi (Sticky Bottom Cart Strip)
+  floatingHomeCartBar: {
+    position: "absolute",
+    bottom: 60,
+    left: 12,
+    right: 12,
     backgroundColor: BHX_GREEN,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    zIndex: 99,
+    ...Platform.select({
+      web: {
+        boxShadow: "0 6px 20px rgba(0, 136, 72, 0.45)",
+      },
+      default: {
+        elevation: 8,
+      },
+    }),
+  },
+  drawerFloatingCart: {
+    position: "absolute",
+    bottom: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: BHX_GREEN,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    zIndex: 999,
+    ...Platform.select({
+      web: {
+        boxShadow: "0 6px 20px rgba(0, 136, 72, 0.45)",
+      },
+      default: {
+        elevation: 8,
+      },
+    }),
+  },
+  floatingCartLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  floatingCartIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  floatingCartBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    backgroundColor: BHX_RED,
+    minWidth: 15,
+    height: 15,
+    borderRadius: 7.5,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 2,
+    borderWidth: 1,
+    borderColor: "#ffffff",
+  },
+  floatingCartBadgeText: {
+    color: "#ffffff",
+    fontSize: 8,
+    fontWeight: "900",
+  },
+  floatingCartInfo: {
+    justifyContent: "center",
+  },
+  floatingCartQtyText: {
+    color: "#e8f5ec",
+    fontSize: 9,
+    fontWeight: "700",
+  },
+  floatingCartPriceText: {
+    color: BHX_YELLOW,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  floatingCartRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 5,
-    gap: 3,
+    borderRadius: 6,
   },
-  drawerAddBtnText: {
+  floatingCartCtaText: {
     color: "#ffffff",
     fontSize: 10,
     fontWeight: "900",
-  },
-  drawerStepperBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: BHX_GREEN,
-    borderRadius: 5,
-    overflow: "hidden",
-  },
-  drawerStepperMiniBtn: {
-    width: 22,
-    height: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#ffffff",
-  },
-  drawerStepperPlus: {
-    backgroundColor: BHX_GREEN,
-  },
-  drawerStepperQty: {
-    paddingHorizontal: 6,
-    fontSize: 11,
-    fontWeight: "900",
-    color: BHX_GREEN,
   },
 
   // Bottom Navigation (Responsive)
@@ -2601,6 +2756,25 @@ const styles = StyleSheet.create({
   },
   navLabelActive: {
     color: BHX_GREEN,
+    fontWeight: "900",
+  },
+  bottomNavBadge: {
+    position: "absolute",
+    top: -5,
+    right: -8,
+    backgroundColor: BHX_RED,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 2,
+    borderWidth: 1.5,
+    borderColor: "#ffffff",
+  },
+  bottomNavBadgeText: {
+    color: "#ffffff",
+    fontSize: 8,
     fontWeight: "900",
   },
 

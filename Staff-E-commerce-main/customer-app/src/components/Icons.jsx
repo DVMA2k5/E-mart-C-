@@ -61,6 +61,15 @@ export function IconClose({ size = 18, color = "#666666" }) {
   );
 }
 
+export function IconCloseCircle({ size = 20, color = "#ffffff" }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth="2" />
+      <Path d="M15 9l-6 6M9 9l6 6" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 export function IconHome({ size = 22, color = "#008848", active = false }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -330,6 +339,161 @@ export function CategoryAll({ size = 32 }) {
   );
 }
 
+// Helper lấy icon cho nhóm con Sub-Category trong Menu Bách Hóa Xanh
+export function getSubCategoryIcon(iconType, size = 32) {
+  switch (iconType) {
+    case "sanitary_pad":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#e0f2fe" />
+          <Rect x="10" y="8" width="16" height="20" rx="4" fill="#38bdf8" />
+          <Path d="M12 18h12M14 14h8M14 22h8" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
+        </Svg>
+      );
+    case "toothpaste":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#fee2e2" />
+          <Path d="M13 26l3-14h4l3 14H13z" fill="#ef4444" />
+          <Rect x="16" y="8" width="4" height="4" rx="1" fill="#ffffff" />
+          <Path d="M15 17h6" stroke="#ffffff" strokeWidth="1.5" />
+        </Svg>
+      );
+    case "shampoo":
+    case "body_wash":
+    case "conditioner":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#ecfdf5" />
+          <Rect x="12" y="12" width="12" height="16" rx="3" fill="#10b981" />
+          <Rect x="16" y="9" width="4" height="3" fill="#047857" />
+          <Path d="M14 9h8" stroke="#047857" strokeWidth="1.5" strokeLinecap="round" />
+          <Circle cx="18" cy="18" r="2.5" fill="#ffffff" />
+        </Svg>
+      );
+    case "hand_soap":
+    case "dishwashing":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#fef3c7" />
+          <Rect x="12" y="14" width="12" height="14" rx="3" fill="#f59e0b" />
+          <Path d="M18 14V9m0 0h-3m3 0h3" stroke="#d97706" strokeWidth="1.5" strokeLinecap="round" />
+          <Path d="M15 20h6" stroke="#ffffff" strokeWidth="1.5" />
+        </Svg>
+      );
+    case "toothbrush":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#f3e8ff" />
+          <Path d="M22 8l-8 18" stroke="#a855f7" strokeWidth="2.5" strokeLinecap="round" />
+          <Path d="M20 7l3 3M22 9l2 2" stroke="#6b21a8" strokeWidth="2" strokeLinecap="round" />
+        </Svg>
+      );
+    case "mouthwash":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#ccfbf1" />
+          <Rect x="13" y="13" width="10" height="15" rx="2" fill="#0d9488" />
+          <Rect x="15" y="9" width="6" height="4" fill="#115e59" />
+          <Path d="M15 18h6" stroke="#ffffff" strokeWidth="1.5" />
+        </Svg>
+      );
+    case "soap_bar":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#e0e7ff" />
+          <Rect x="9" y="12" width="18" height="12" rx="4" fill="#6366f1" />
+          <Circle cx="15" cy="18" r="1.5" fill="#ffffff" />
+          <Circle cx="21" cy="18" r="1.5" fill="#ffffff" />
+        </Svg>
+      );
+    case "toilet_paper":
+    case "tissue":
+    case "wet_wipes":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#f1f5f9" />
+          <Circle cx="16" cy="18" r="7" fill="#ffffff" stroke="#94a3b8" strokeWidth="2" />
+          <Circle cx="16" cy="18" r="2.5" fill="#94a3b8" />
+          <Path d="M16 25h9a3 3 0 003-3v-4" stroke="#94a3b8" strokeWidth="1.8" />
+        </Svg>
+      );
+    case "beer":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#fef3c7" />
+          <Rect x="13" y="9" width="10" height="18" rx="2" fill="#d97706" />
+          <Path d="M13 14h10" stroke="#ffffff" strokeWidth="1.5" />
+          <Path d="M15 18h6" stroke="#ffffff" strokeWidth="1" />
+        </Svg>
+      );
+    case "soda":
+    case "water":
+    case "energy_drink":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#fee2e2" />
+          <Rect x="13" y="10" width="10" height="17" rx="2" fill="#ef4444" />
+          <Path d="M15 15h6M15 19h4" stroke="#ffffff" strokeWidth="1.5" />
+        </Svg>
+      );
+    case "pork":
+    case "beef":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#ffe4e6" />
+          <Path d="M11 18c0-4 4-7 9-7s7 3 7 7-4 7-9 7-7-3-7-7z" fill="#e11d48" />
+          <Circle cx="18" cy="18" r="3" fill="#ffffff" />
+        </Svg>
+      );
+    case "veggies":
+    case "fruits":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#dcfce7" />
+          <Circle cx="18" cy="19" r="7" fill="#16a34a" />
+          <Path d="M18 12c0-3 3-4 4-4" stroke="#15803d" strokeWidth="2" strokeLinecap="round" />
+        </Svg>
+      );
+    case "fish":
+    case "salmon":
+    case "shrimp":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#e0f2fe" />
+          <Path d="M10 18c4-4 12-4 16 0-4 4-12 4-16 0z" fill="#0284c7" />
+          <Circle cx="14" cy="18" r="1.5" fill="#ffffff" />
+        </Svg>
+      );
+    case "cooking_oil":
+    case "fish_sauce":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#fef9c3" />
+          <Rect x="14" y="13" width="8" height="15" rx="2" fill="#ca8a04" />
+          <Rect x="16" y="9" width="4" height="4" fill="#a16207" />
+        </Svg>
+      );
+    case "rice":
+    case "noodles":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#fef08a" />
+          <Path d="M10 20c0 5 3.5 8 8 8s8-3 8-8H10z" fill="#eab308" />
+          <Path d="M13 16l10 4M15 14l8 4" stroke="#ca8a04" strokeWidth="1.5" strokeLinecap="round" />
+        </Svg>
+      );
+    default:
+      return (
+        <Svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+          <Rect width="36" height="36" rx="8" fill="#f1f5f9" />
+          <Circle cx="18" cy="18" r="6" fill="#008848" />
+          <Path d="M15 18h6" stroke="#ffffff" strokeWidth="1.5" />
+        </Svg>
+      );
+  }
+}
+
 // Map helper lấy icon cho từng ngành hàng
 export function getCategoryIcon(categoryName, size = 36) {
   const norm = (categoryName || "").toLowerCase();
@@ -348,7 +512,7 @@ export function getCategoryIcon(categoryName, size = 36) {
   if (norm.includes("gia vị") || norm.includes("dầu ăn") || norm.includes("mắm")) {
     return <CategorySpices size={size} />;
   }
-  if (norm.includes("gia dụng") || norm.includes("bếp") || norm.includes("nhà cửa")) {
+  if (norm.includes("gia dụng") || norm.includes("bếp") || norm.includes("nhà cửa") || norm.includes("vệ sinh")) {
     return <CategoryHousehold size={size} />;
   }
   if (norm.includes("mỹ phẩm") || norm.includes("chăm sóc") || norm.includes("gội")) {
@@ -365,3 +529,4 @@ export function getCategoryIcon(categoryName, size = 36) {
   }
   return <CategorySnacks size={size} />;
 }
+

@@ -126,10 +126,20 @@ export default function Sidebar({ collapsed, onClose }) {
         </NavLink>
 
         {user?.role === "admin" && (
-          <NavLink to="/users" className={linkClass}>
-            <span className="w-5 h-5">👨‍💼</span>
-            <span className="text-sm">Quản lý Nhân Viên</span>
-          </NavLink>
+          <>
+            <NavLink to="/employees" className={linkClass}>
+              <span className="w-5 h-5">👨‍💼</span>
+              <span className="text-sm">Quản lý Nhân Viên</span>
+            </NavLink>
+            <NavLink to="/users" className={linkClass}>
+              <span className="w-5 h-5">👤</span>
+              <span className="text-sm">Quản lý tài khoản</span>
+            </NavLink>
+            <NavLink to="/roles" className={linkClass}>
+              <span className="w-5 h-5">🔐</span>
+              <span className="text-sm">Phân quyền role</span>
+            </NavLink>
+          </>
         )}
 
         {/* Customers */}

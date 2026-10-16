@@ -7,6 +7,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
     email: "",
     phone: "",
     address: "",
+    dateOfBirth: "",
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -81,6 +82,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
           email: data.email || "",
           phone: data.phone || "",
           address: data.address || "",
+          dateOfBirth: data.dateOfBirth ? data.dateOfBirth.slice(0, 10) : "",
         });
       } catch (err) {
         setError(err.message || "Error loading customer details");
@@ -199,6 +201,10 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
               )}
 
               {/* Full Name */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Ngày sinh</label>
+                <input type="date" name="dateOfBirth" value={formData.dateOfBirth} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg" />
+              </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Tên Khách Hàng <span className="text-red-500">*</span>

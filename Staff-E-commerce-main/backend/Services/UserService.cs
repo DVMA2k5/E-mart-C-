@@ -69,14 +69,42 @@ namespace backend.Services
             if (string.IsNullOrWhiteSpace(request.Password))
                 throw new ArgumentException("Password is required", nameof(request.Password));
 
+            var roleName = NormalizeRole(request.Role);
+            var role = await _userRepository.GetRoleByNameAsync(roleName);
+            if (role == null || !role.IsActive)
+                throw new ArgumentException($"Role '{roleName}' does not exist or is inactive.", nameof(request.Role));
+            if (request.EmployeeId.HasValue && roleName != "staff")
+                throw new ArgumentException("Tài khoản nhân viên phải có role staff.", nameof(request.EmployeeId));
+            if (request.CustomerId.HasValue && roleName != "customer")
+                throw new ArgumentException("Tài khoản khách hàng phải có role customer.", nameof(request.CustomerId));
+            if (request.EmployeeId.HasValue && await _userRepository.EmployeeHasAccountAsync(request.EmployeeId.Value))
+                throw new ArgumentException("Hồ sơ nhân viên này đã được cấp tài khoản.", nameof(request.EmployeeId));
+            if (request.CustomerId.HasValue && await _userRepository.CustomerHasAccountAsync(request.CustomerId.Value))
+                throw new ArgumentException("Hồ sơ khách hàng này đã được cấp tài khoản.", nameof(request.CustomerId));
+
+            var employee = request.EmployeeId.HasValue
+                ? await _userRepository.GetEmployeeAsync(request.EmployeeId.Value)
+                : null;
+            var customer = request.CustomerId.HasValue
+                ? await _userRepository.GetCustomerAsync(request.CustomerId.Value)
+                : null;
+            if (request.EmployeeId.HasValue && employee == null)
+                throw new ArgumentException("Hồ sơ nhân viên không tồn tại.", nameof(request.EmployeeId));
+            if (request.CustomerId.HasValue && customer == null)
+                throw new ArgumentException("Hồ sơ khách hàng không tồn tại.", nameof(request.CustomerId));
+
             var now = DateTime.UtcNow;
 
             var user = new User
             {
                 Username = request.Username.Trim(),
-                Email = request.Email.Trim(),
-                FullName = string.IsNullOrWhiteSpace(request.FullName) ? null : request.FullName.Trim(),
-                Role = NormalizeRole(request.Role),
+                Email = employee?.Email ?? customer?.Email ?? request.Email?.Trim(),
+                FullName = employee?.FullName ?? customer?.FullName ??
+                    (string.IsNullOrWhiteSpace(request.FullName) ? request.Username.Trim() : request.FullName.Trim()),
+                RoleId = role.Id,
+                RoleEntity = role,
+                EmployeeId = request.EmployeeId,
+                CustomerId = request.CustomerId,
                 IsActive = request.IsActive,
                 IsLocked = !request.IsActive,
                 CreatedAt = now,
@@ -94,9 +122,32 @@ namespace backend.Services
             if (existingUser == null) return null;
 
             existingUser.Username = request.Username.Trim();
-            existingUser.Email = request.Email.Trim();
-            existingUser.FullName = string.IsNullOrWhiteSpace(request.FullName) ? null : request.FullName.Trim();
-            existingUser.Role = NormalizeRole(request.Role);
+            var role = await _userRepository.GetRoleByNameAsync(NormalizeRole(request.Role));
+            if (role == null || !role.IsActive)
+                throw new ArgumentException($"Role '{request.Role}' does not exist or is inactive.", nameof(request.Role));
+
+            var employee = request.EmployeeId.HasValue
+                ? await _userRepository.GetEmployeeAsync(request.EmployeeId.Value)
+                : null;
+            var customer = request.CustomerId.HasValue
+                ? await _userRepository.GetCustomerAsync(request.CustomerId.Value)
+                : null;
+            if (request.EmployeeId.HasValue && employee == null)
+                throw new ArgumentException("Hồ sơ nhân viên không tồn tại.", nameof(request.EmployeeId));
+            if (request.CustomerId.HasValue && customer == null)
+                throw new ArgumentException("Hồ sơ khách hàng không tồn tại.", nameof(request.CustomerId));
+
+            existingUser.Email = employee?.Email ?? customer?.Email ?? request.Email?.Trim();
+            existingUser.FullName = employee?.FullName ?? customer?.FullName ??
+                (string.IsNullOrWhiteSpace(request.FullName) ? existingUser.FullName : request.FullName.Trim());
+            existingUser.RoleId = role.Id;
+            existingUser.RoleEntity = role;
+            existingUser.EmployeeId = request.EmployeeId;
+            existingUser.CustomerId = request.CustomerId;
+            if (request.EmployeeId.HasValue && await _userRepository.EmployeeHasAccountAsync(request.EmployeeId.Value, id))
+                throw new ArgumentException("Hồ sơ nhân viên này đã được cấp tài khoản.", nameof(request.EmployeeId));
+            if (request.CustomerId.HasValue && await _userRepository.CustomerHasAccountAsync(request.CustomerId.Value, id))
+                throw new ArgumentException("Hồ sơ khách hàng này đã được cấp tài khoản.", nameof(request.CustomerId));
             existingUser.IsActive = request.IsActive;
             existingUser.IsLocked = !request.IsActive;
             existingUser.UpdatedAt = DateTime.UtcNow;
@@ -116,8 +167,8 @@ namespace backend.Services
             if (existingUser == null) return null;
 
             existingUser.Username = request.Username.Trim();
-            existingUser.Email = request.Email.Trim();
-            existingUser.FullName = string.IsNullOrWhiteSpace(request.FullName) ? null : request.FullName.Trim();
+            existingUser.Email = request.Email?.Trim();
+            existingUser.FullName = request.FullName?.Trim() ?? existingUser.FullName;
             existingUser.UpdatedAt = DateTime.UtcNow;
 
             var updatedUser = await _userRepository.UpdateAsync(existingUser);
@@ -182,10 +233,14 @@ namespace backend.Services
             return new UserDTO
             {
                 Id = user.Id,
+                EmployeeId = user.EmployeeId,
+                CustomerId = user.CustomerId,
+                EmployeeName = user.Employee?.FullName,
+                CustomerName = user.Customer?.FullName,
                 Username = user.Username,
                 Email = user.Email,
                 FullName = user.FullName,
-                Role = user.Role,
+                Role = user.RoleEntity?.Name ?? string.Empty,
                 IsActive = user.IsActive,
                 IsLocked = user.IsLocked,
                 UpdatedAt = user.UpdatedAt,
@@ -199,7 +254,7 @@ namespace backend.Services
                 ? "staff"
                 : role.Trim().ToLowerInvariant();
 
-            return normalized == "admin" ? "admin" : "staff";
+            return normalized;
         }
 
         private const int BcryptWorkFactor = 11;

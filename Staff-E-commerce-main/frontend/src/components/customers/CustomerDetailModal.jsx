@@ -91,6 +91,14 @@ export default function CustomerDetailModal({ onClose, customerId }) {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-600 mb-1">
+                    Ngày Sinh
+                  </label>
+                  <p className="text-lg text-gray-800">
+                    {customer.dateOfBirth ? new Date(customer.dateOfBirth).toLocaleDateString("vi-VN") : "-"}
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-600 mb-1">
                     Trạng Thái
                   </label>
                   <span

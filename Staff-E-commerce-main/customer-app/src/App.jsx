@@ -20,7 +20,9 @@ import {
 const defaultHost = typeof window !== "undefined" && window.location?.hostname
   ? `http://${window.location.hostname}:5099/api`
   : "http://10.0.2.2:5099/api";
-const API_URL = (process.env.EXPO_PUBLIC_API_URL || defaultHost).replace(/\/$/, "");
+const API_URL = (typeof window !== "undefined" && window.location?.hostname
+  ? defaultHost
+  : process.env.EXPO_PUBLIC_API_URL || defaultHost).replace(/\/$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
 const CART_KEY = "e-mart-mobile-cart";
 const CUSTOMER_KEY = "e-mart-mobile-customer";
@@ -119,8 +121,16 @@ export default function App() {
   const [customer, setCustomer] = useState(null);
   const [customerToken, setCustomerToken] = useState("");
   const [accountReady, setAccountReady] = useState(false);
-  const [loginPhone, setLoginPhone] = useState("");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [registerMode, setRegisterMode] = useState(false);
+  const [registerFullName, setRegisterFullName] = useState("");
+  const [registerPhone, setRegisterPhone] = useState("");
   const [accountName, setAccountName] = useState("");
+  const [accountEmail, setAccountEmail] = useState("");
+  const [accountAddress, setAccountAddress] = useState("");
+  const [accountDateOfBirth, setAccountDateOfBirth] = useState("");
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountError, setAccountError] = useState("");
   const [accountMessage, setAccountMessage] = useState("");
@@ -194,6 +204,9 @@ export default function App() {
         setCustomer(profile);
         setCustomerToken(token);
         setAccountName(profile.fullName || "");
+        setAccountEmail(profile.email || "");
+        setAccountAddress(profile.address || "");
+        setAccountDateOfBirth(profile.dateOfBirth ? profile.dateOfBirth.slice(0, 10) : "");
         setCheckoutForm((form) => ({ ...form, fullName: profile.fullName || "", phone: profile.phone || "" }));
       } catch {
         await AsyncStorage.multiRemove([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY]).catch(() => { });
@@ -223,10 +236,10 @@ export default function App() {
     return () => { active = false; };
   }, [tab, customerToken, ordersRefreshKey]);
 
-  const loginWithPhone = async () => {
-    const phone = loginPhone.trim();
-    if (!/^(0|\+84)[35789]\d{8}$/.test(phone)) {
-      setAccountError("Số điện thoại Việt Nam chưa đúng định dạng.");
+  const loginCustomer = async () => {
+    const username = loginUsername.trim();
+    if (username.length < 3 || loginPassword.length < 6) {
+      setAccountError("Vui lòng nhập tên đăng nhập và mật khẩu hợp lệ.");
       return;
     }
 
@@ -237,7 +250,7 @@ export default function App() {
       const response = await fetch(`${API_URL}/storefront/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ username, password: loginPassword }),
       });
       if (!response.ok) throw new Error(await readError(response));
       const result = await response.json();
@@ -248,10 +261,53 @@ export default function App() {
       setCustomerToken(result.token);
       setCustomer(result.customer);
       setAccountName(result.customer.fullName || "");
+      setAccountEmail(result.customer.email || "");
+      setAccountAddress(result.customer.address || "");
+      setAccountDateOfBirth(result.customer.dateOfBirth ? result.customer.dateOfBirth.slice(0, 10) : "");
       setCheckoutForm((form) => ({ ...form, fullName: result.customer.fullName || "", phone: result.customer.phone }));
-      setAccountMessage(result.customer.fullName ? "Đăng nhập thành công." : "Tài khoản đã tạo. Bạn có thể thêm họ tên bên dưới.");
+      setAccountMessage("Đăng nhập thành công.");
     } catch (error) {
       setAccountError(error.message || "Không thể đăng nhập.");
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const registerCustomer = async () => {
+    const username = loginUsername.trim();
+    const fullName = registerFullName.trim();
+    const phone = registerPhone.trim();
+    if (username.length < 3 || loginPassword.length < 6 || fullName.length < 2) {
+      setAccountError("Vui lòng nhập tên đăng nhập, mật khẩu và họ tên hợp lệ.");
+      return;
+    }
+    if (!/^(0|\+84)[35789]\d{8}$/.test(phone)) {
+      setAccountError("Số điện thoại Việt Nam chưa đúng định dạng.");
+      return;
+    }
+
+    setAccountBusy(true);
+    setAccountError("");
+    setAccountMessage("");
+    try {
+      const response = await fetch(`${API_URL}/storefront/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password: loginPassword, fullName, phone }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      const result = await response.json();
+      await AsyncStorage.multiSet([
+        [CUSTOMER_TOKEN_KEY, result.token],
+        [CUSTOMER_KEY, JSON.stringify(result.customer)],
+      ]);
+      setCustomerToken(result.token);
+      setCustomer(result.customer);
+      setAccountName(result.customer.fullName || "");
+      setCheckoutForm((form) => ({ ...form, fullName: result.customer.fullName || "", phone: result.customer.phone || "" }));
+      setAccountMessage("Tạo tài khoản thành công.");
+    } catch (error) {
+      setAccountError(error.message || "Không thể tạo tài khoản.");
     } finally {
       setAccountBusy(false);
     }
@@ -274,12 +330,20 @@ export default function App() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${customerToken}`,
         },
-        body: JSON.stringify({ fullName }),
+        body: JSON.stringify({
+          fullName,
+          email: accountEmail.trim() || null,
+          address: accountAddress.trim() || null,
+          dateOfBirth: accountDateOfBirth || null,
+        }),
       });
       if (!response.ok) throw new Error(await readError(response));
       const profile = await response.json();
       await AsyncStorage.setItem(CUSTOMER_KEY, JSON.stringify(profile));
       setCustomer(profile);
+      setAccountEmail(profile.email || "");
+      setAccountAddress(profile.address || "");
+      setAccountDateOfBirth(profile.dateOfBirth ? profile.dateOfBirth.slice(0, 10) : "");
       setCheckoutForm((form) => ({ ...form, fullName: profile.fullName }));
       setAccountMessage("Đã cập nhật họ tên.");
     } catch (error) {
@@ -312,7 +376,13 @@ export default function App() {
           setCustomer(null);
           setCustomerToken("");
           setAccountName("");
-          setLoginPhone("");
+          setAccountEmail("");
+          setAccountAddress("");
+          setAccountDateOfBirth("");
+          setLoginUsername("");
+          setLoginPassword("");
+          setRegisterFullName("");
+          setRegisterPhone("");
           setAccountError("");
           setAccountMessage("");
           setCheckoutForm((form) => ({ ...form, fullName: "", phone: "" }));
@@ -619,6 +689,23 @@ export default function App() {
         <View style={styles.accountPageHeading}><Pressable style={styles.accountBackButton} onPress={() => { setProfilePage(""); setAccountError(""); setAccountMessage(""); setAddressMessage(""); }}><Text style={styles.accountBack}>‹</Text></Pressable><Text style={styles.accountPageTitle}>{profilePage === "personal" ? "Thông tin tài khoản" : "Địa chỉ nhận hàng"}</Text></View>
         {profilePage === "personal" ? <View style={styles.infoCard}>
           <TextInput value={accountName} onChangeText={setAccountName} placeholder="Họ và tên *" style={styles.accountInput} maxLength={150} autoCapitalize="words" />
+          <TextInput value={accountEmail} onChangeText={setAccountEmail} placeholder="Email" style={styles.accountInput} keyboardType="email-address" autoCapitalize="none" />
+          {Platform.OS === "web" ? (
+            <input
+              type="date"
+              value={accountDateOfBirth}
+              onChange={(event) => setAccountDateOfBirth(event.target.value)}
+              style={styles.webDateInput}
+              aria-label="Ngày sinh"
+            />
+          ) : (
+            <Pressable style={styles.accountInput} onPress={() => setDatePickerOpen(true)}>
+              <Text style={accountDateOfBirth ? styles.dateValue : styles.datePlaceholder}>
+                {accountDateOfBirth || "Chọn ngày sinh"}
+              </Text>
+            </Pressable>
+          )}
+          <TextInput value={accountAddress} onChangeText={setAccountAddress} placeholder="Địa chỉ" style={styles.accountInput} />
           <Text style={[styles.accountInput, styles.phoneReadonly]}><Text style={styles.phoneHint}>Số điện thoại *</Text>{"\n"}{customer?.phone}</Text>
           {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
           {accountMessage ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
@@ -664,13 +751,38 @@ export default function App() {
           </View>
         </> : <>
           <View style={styles.infoCard}>
-            <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI</Text>
-            <TextInput value={loginPhone} onChangeText={setLoginPhone} placeholder="0912345678" style={styles.formInput} keyboardType="phone-pad" maxLength={13} autoComplete="tel" />
+            <Text style={styles.inputLabel}>{registerMode ? "TẠO TÀI KHOẢN KHÁCH HÀNG" : "ĐĂNG NHẬP KHÁCH HÀNG"}</Text>
+            {registerMode ? <TextInput value={registerFullName} onChangeText={setRegisterFullName} placeholder="Họ và tên" style={styles.formInput} autoCapitalize="words" /> : null}
+            {registerMode ? <TextInput value={registerPhone} onChangeText={setRegisterPhone} placeholder="Số điện thoại" style={styles.formInput} keyboardType="phone-pad" maxLength={13} autoComplete="tel" /> : null}
+            <TextInput value={loginUsername} onChangeText={setLoginUsername} placeholder="Tên đăng nhập" style={styles.formInput} autoCapitalize="none" autoComplete="username" />
+            <TextInput value={loginPassword} onChangeText={setLoginPassword} placeholder="Mật khẩu" style={styles.formInput} secureTextEntry autoCapitalize="none" autoComplete="password" />
             {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
-            <AppButton title={accountBusy ? "Đang đăng nhập..." : "Đăng nhập / Tạo tài khoản"} onPress={loginWithPhone} disabled={accountBusy} />
+            <AppButton title={accountBusy ? (registerMode ? "Đang tạo tài khoản..." : "Đang đăng nhập...") : (registerMode ? "Tạo tài khoản" : "Đăng nhập")} onPress={registerMode ? registerCustomer : loginCustomer} disabled={accountBusy} />
+            <Pressable onPress={() => { setRegisterMode((mode) => !mode); setAccountError(""); setAccountMessage(""); }}>
+              <Text style={styles.accountLink}>{registerMode ? "Đã có tài khoản? Đăng nhập" : "Chưa có tài khoản? Đăng ký ngay"}</Text>
+            </Pressable>
             {accountMessage ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
           </View>
         </>}
+        <Modal visible={datePickerOpen} transparent animationType="fade" onRequestClose={() => setDatePickerOpen(false)}>
+          <View style={styles.dateModalBackdrop}>
+            <View style={styles.dateModalCard}>
+              <Text style={styles.infoTitle}>Chọn ngày sinh</Text>
+              <TextInput
+                value={accountDateOfBirth}
+                onChangeText={setAccountDateOfBirth}
+                placeholder="YYYY-MM-DD"
+                style={styles.accountInput}
+                keyboardType="numbers-and-punctuation"
+                maxLength={10}
+              />
+              <View style={styles.dateModalActions}>
+                <AppButton title="Hủy" secondary onPress={() => setDatePickerOpen(false)} />
+                <AppButton title="Chọn ngày" onPress={() => setDatePickerOpen(false)} />
+              </View>
+            </View>
+          </View>
+        </Modal>
         <View style={styles.infoCard}><Text style={styles.infoTitle}>Hỗ trợ khách hàng</Text><Text style={styles.stateText}>Đơn hàng hiện thanh toán khi nhận hàng.</Text></View>
       </>}
     </ScrollView>
@@ -1183,6 +1295,13 @@ const styles = StyleSheet.create({
   noteInput: { minHeight: 48, textAlignVertical: "top", paddingTop: 9 },
   orderError: { color: "#a33e36", fontSize: 11, backgroundColor: "#fff1ef", borderRadius: 8, padding: 10, marginTop: 10 },
   accountMessage: { color: GREEN, fontSize: 11, marginTop: 10, textAlign: "center" },
+  accountLink: { color: GREEN, fontSize: 13, fontWeight: "700", textAlign: "center", marginTop: 14 },
+  webDateInput: { width: "100%", minHeight: 53, borderWidth: 1, borderColor: "#dce3e9", borderRadius: 10, paddingLeft: 14, paddingRight: 14, color: DARK, fontSize: 16, marginBottom: 12, backgroundColor: "#fff" },
+  dateValue: { color: DARK, fontSize: 16 },
+  datePlaceholder: { color: "#78857c", fontSize: 16 },
+  dateModalBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#14221988", padding: 20 },
+  dateModalCard: { width: "100%", maxWidth: 380, backgroundColor: "#fff", borderRadius: 14, padding: 18 },
+  dateModalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 4 },
   checkoutTotal: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: "#edf0ec", paddingTop: 13, marginTop: 15 },
   cancelCheckout: { alignItems: "center", paddingVertical: 12 },
   cancelText: { color: MUTED, fontSize: 11, fontWeight: "700" },

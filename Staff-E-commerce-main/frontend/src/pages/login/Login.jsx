@@ -44,6 +44,11 @@ export default function LoginPage() {
       const data = await login(trimmedUsername, trimmedPassword);
       console.log("✅ Login successful:", data);
 
+      if (String(data.role || "").toLowerCase() === "customer") {
+        logout();
+        throw new Error("Tài khoản khách hàng chỉ đăng nhập trên ứng dụng khách hàng.");
+      }
+
       // Token đã được set tự động trong apiClient.login()
 
       // Lưu thông tin bổ sung

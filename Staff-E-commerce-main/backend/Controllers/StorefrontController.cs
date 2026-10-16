@@ -57,15 +57,25 @@ namespace backend.Controllers
             return Ok(result);
         }
 
-        [HttpPost("login")]
+        [HttpPost("register")]
         [AllowAnonymous]
-        public async Task<IActionResult> Login([FromBody] StorefrontPhoneLoginRequest request)
+        public async Task<IActionResult> RegisterCustomer([FromBody] StorefrontCustomerRegisterRequest request)
         {
             var phone = NormalizePhone(request.Phone);
             if (!Regex.IsMatch(phone, "^0[35789]\\d{8}$"))
                 return BadRequest(new { message = "Số điện thoại Việt Nam chưa đúng định dạng." });
+            if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Trim().Length < 3)
+                return BadRequest(new { message = "Tên đăng nhập phải có ít nhất 3 ký tự." });
+            if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 6)
+                return BadRequest(new { message = "Mật khẩu phải có ít nhất 6 ký tự." });
+            if (string.IsNullOrWhiteSpace(request.FullName) || request.FullName.Trim().Length < 2)
+                return BadRequest(new { message = "Họ tên phải có ít nhất 2 ký tự." });
 
             var internationalPhone = $"+84{phone[1..]}";
+            var username = request.Username.Trim();
+            if (await _db.Users.AnyAsync(user => user.Username == username))
+                return Conflict(new { message = "Tên đăng nhập đã tồn tại." });
+
             var customer = await _db.Customers.FirstOrDefaultAsync(item =>
                 item.Phone == phone || item.Phone == internationalPhone);
 
@@ -73,36 +83,73 @@ namespace backend.Controllers
             {
                 customer = new Customer
                 {
-                    FullName = string.Empty,
+                    FullName = request.FullName.Trim(),
                     Phone = phone,
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
                 _db.Customers.Add(customer);
-                try
-                {
-                    await _db.SaveChangesAsync();
-                }
-                catch (DbUpdateException)
-                {
-                    _db.Entry(customer).State = EntityState.Detached;
-                    customer = await _db.Customers.FirstOrDefaultAsync(item =>
-                        item.Phone == phone || item.Phone == internationalPhone);
-                    if (customer == null) throw;
-                }
             }
+            else if (await _db.Users.AnyAsync(user => user.CustomerId == customer.Id))
+                return Conflict(new { message = "Số điện thoại này đã được đăng ký." });
 
-            if (!customer.IsActive)
+            customer.FullName = request.FullName.Trim();
+            customer.UpdatedAt = DateTime.UtcNow;
+            var role = await _db.Roles.FirstOrDefaultAsync(item => item.Name == "customer" && item.IsActive);
+            if (role == null)
+                return StatusCode(500, new { message = "Vai trò khách hàng chưa được cấu hình." });
+
+            var user = new User
+            {
+                Username = username,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password, 11),
+                FullName = customer.FullName,
+                Email = customer.Email,
+                RoleId = role.Id,
+                RoleEntity = role,
+                Customer = customer,
+                IsActive = true,
+                IsLocked = false,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            _db.Users.Add(user);
+            await _db.SaveChangesAsync();
+
+            var (token, expiresIn) = _jwt.GenerateToken(user);
+            return Ok(new { token, tokenType = "Bearer", expiresIn, customer = ToCustomerProfile(customer) });
+        }
+
+        [HttpPost("login")]
+        [AllowAnonymous]
+        public async Task<IActionResult> Login([FromBody] StorefrontCustomerLoginRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+                return BadRequest(new { message = "Vui lòng nhập tên đăng nhập và mật khẩu." });
+
+            var user = await _db.Users
+                .Include(item => item.RoleEntity)
+                .Include(item => item.Customer)
+                .FirstOrDefaultAsync(item => item.Username == request.Username.Trim());
+
+            if (user?.Customer == null || !string.Equals(user.RoleEntity?.Name, "customer", StringComparison.OrdinalIgnoreCase) ||
+                !user.IsActive || user.IsLocked ||
+                !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+                return Unauthorized(new { message = "Tên đăng nhập hoặc mật khẩu không đúng." });
+
+            if (!user.Customer.IsActive)
                 return Unauthorized(new { message = "Tài khoản khách hàng đã bị khóa." });
 
-            var (token, expiresIn) = _jwt.GenerateCustomerToken(customer);
+            user.LastLogin = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            var (token, expiresIn) = _jwt.GenerateToken(user);
             return Ok(new
             {
                 token,
                 tokenType = "Bearer",
                 expiresIn,
-                customer = ToCustomerProfile(customer)
+                customer = ToCustomerProfile(user.Customer)
             });
         }
 
@@ -118,10 +165,13 @@ namespace backend.Controllers
 
         [HttpPut("account")]
         [Authorize(Roles = "customer")]
-        public async Task<IActionResult> UpdateAccount([FromBody] StorefrontAccountUpdateRequest request)
+        public async Task<IActionResult> UpdateAccount([FromBody] StorefrontAccountUpdateRequest? request)
         {
-            var fullName = request.FullName.Trim();
-            if (fullName.Length < 2)
+            if (request == null)
+                return BadRequest(new { message = "Thông tin cập nhật không được để trống." });
+
+            var fullName = request.FullName?.Trim();
+            if (string.IsNullOrWhiteSpace(fullName) || fullName.Length < 2)
                 return BadRequest(new { message = "Họ tên cần có ít nhất 2 ký tự." });
 
             var customer = await GetAuthenticatedCustomerAsync();
@@ -129,8 +179,28 @@ namespace backend.Controllers
                 return Unauthorized(new { message = "Phiên đăng nhập không hợp lệ." });
 
             customer.FullName = fullName;
+            customer.Email = request.Email?.Trim();
+            customer.Address = request.Address?.Trim();
+            customer.DateOfBirth = request.DateOfBirth;
+            if (!string.IsNullOrWhiteSpace(customer.Email) &&
+                await _db.Customers.AnyAsync(item => item.Id != customer.Id && item.Email == customer.Email))
+                return Conflict(new { message = "Email này đã được sử dụng cho khách hàng khác." });
             customer.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
+            var account = await _db.Users.FirstOrDefaultAsync(user => user.CustomerId == customer.Id);
+            if (account != null)
+            {
+                account.FullName = customer.FullName;
+                account.Email = customer.Email;
+                account.UpdatedAt = DateTime.UtcNow;
+            }
+            try
+            {
+                await _db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                return Conflict(new { message = "Không thể lưu thông tin. Email hoặc dữ liệu hồ sơ có thể bị trùng." });
+            }
             return Ok(ToCustomerProfile(customer));
         }
 
@@ -188,6 +258,9 @@ namespace backend.Controllers
             Id = customer.Id,
             FullName = customer.FullName,
             Phone = customer.Phone ?? string.Empty,
+            Email = customer.Email,
+            Address = customer.Address,
+            DateOfBirth = customer.DateOfBirth,
             RewardPoints = customer.RewardPoints
         };
 
@@ -587,8 +660,20 @@ namespace backend.Controllers
         public string Name { get; set; } = string.Empty;
     }
 
-    public class StorefrontPhoneLoginRequest
+    public class StorefrontCustomerLoginRequest
     {
+        [Required, StringLength(150)]
+        public string Username { get; set; } = string.Empty;
+
+        [Required, StringLength(128, MinimumLength = 6)]
+        public string Password { get; set; } = string.Empty;
+    }
+
+    public class StorefrontCustomerRegisterRequest : StorefrontCustomerLoginRequest
+    {
+        [Required, StringLength(150, MinimumLength = 2)]
+        public string FullName { get; set; } = string.Empty;
+
         [Required, StringLength(20)]
         public string Phone { get; set; } = string.Empty;
     }
@@ -597,6 +682,9 @@ namespace backend.Controllers
     {
         [Required, StringLength(150)]
         public string FullName { get; set; } = string.Empty;
+        public string? Email { get; set; }
+        public string? Address { get; set; }
+        public DateTime? DateOfBirth { get; set; }
     }
 
     public class StorefrontCustomerProfile
@@ -604,6 +692,9 @@ namespace backend.Controllers
         public int Id { get; set; }
         public string FullName { get; set; } = string.Empty;
         public string Phone { get; set; } = string.Empty;
+        public string? Email { get; set; }
+        public string? Address { get; set; }
+        public DateTime? DateOfBirth { get; set; }
         public int RewardPoints { get; set; } = 0;
     }
 

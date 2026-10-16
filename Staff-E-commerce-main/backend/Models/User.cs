@@ -35,10 +35,20 @@ namespace backend.Models
         [StringLength(255)]
         public string FullName { get; set; } = string.Empty;
 
-        // The current schema accepts "admin" or "staff".
-        [Column("role")]
-        [StringLength(50)]
-        public string Role { get; set; } = "staff";
+        [Required]
+        [Column("role_id")]
+        public int RoleId { get; set; }
+
+        public virtual Role RoleEntity { get; set; } = null!;
+
+        [Column("employee_id")]
+        public int? EmployeeId { get; set; }
+
+        [Column("customer_id")]
+        public int? CustomerId { get; set; }
+
+        public virtual Employee? Employee { get; set; }
+        public virtual Customer? Customer { get; set; }
 
         [Column("is_active")]
         public bool IsActive { get; set; } = true;

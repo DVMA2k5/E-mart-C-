@@ -18,6 +18,9 @@ namespace backend.Repository
         {
             return await _context.Users
                 .AsNoTracking()
+                .Include(u => u.RoleEntity)
+                .Include(u => u.Employee)
+                .Include(u => u.Customer)
                 .OrderBy(u => u.Username)
                 .ToListAsync();
         }
@@ -27,7 +30,7 @@ namespace backend.Repository
             if (page < 1) page = 1;
             if (pageSize <= 0) pageSize = 20;
 
-            var query = _context.Users.AsNoTracking();
+            var query = _context.Users.AsNoTracking().Include(u => u.RoleEntity).Include(u => u.Employee).Include(u => u.Customer);
             var totalItems = await query.CountAsync();
             var items = await query
                 .OrderByDescending(u => u.CreatedAt)
@@ -57,7 +60,10 @@ namespace backend.Repository
 
             var query = _context.Users
                 .AsNoTracking()
-                .Where(u => u.Role != "admin");
+                .Include(u => u.RoleEntity)
+                .Include(u => u.Employee)
+                .Include(u => u.Customer)
+                .Where(u => u.RoleEntity.Name != "admin");
 
             var totalItems = await query.CountAsync();
             var items = await query
@@ -85,6 +91,9 @@ namespace backend.Repository
         public async Task<User?> GetByIdAsync(int id)
         {
             return await _context.Users
+                .Include(u => u.RoleEntity)
+                .Include(u => u.Employee)
+                .Include(u => u.Customer)
                 .FirstOrDefaultAsync(u => u.Id == id);
         }
 
@@ -102,6 +111,34 @@ namespace backend.Repository
             return await _context.Users
                 .AsNoTracking()
                 .FirstOrDefaultAsync(u => u.Email == email);
+        }
+
+        public async Task<Role?> GetRoleByNameAsync(string name)
+        {
+            return await _context.Roles
+                .FirstOrDefaultAsync(r => r.Name == name);
+        }
+
+        public async Task<Employee?> GetEmployeeAsync(int id)
+        {
+            return await _context.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id);
+        }
+
+        public async Task<Customer?> GetCustomerAsync(int id)
+        {
+            return await _context.Customers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id);
+        }
+
+        public async Task<bool> EmployeeHasAccountAsync(int employeeId, int? excludeUserId = null)
+        {
+            return await _context.Users.AnyAsync(u => u.EmployeeId == employeeId &&
+                (!excludeUserId.HasValue || u.Id != excludeUserId.Value));
+        }
+
+        public async Task<bool> CustomerHasAccountAsync(int customerId, int? excludeUserId = null)
+        {
+            return await _context.Users.AnyAsync(u => u.CustomerId == customerId &&
+                (!excludeUserId.HasValue || u.Id != excludeUserId.Value));
         }
 
         // Thêm user mới

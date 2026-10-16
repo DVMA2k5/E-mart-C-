@@ -7,6 +7,7 @@ namespace backend.DTO
         public string? Phone { get; set; }
         public string? Email { get; set; }
         public string? Address { get; set; }
+        public DateTime? DateOfBirth { get; set; }
         public int RewardPoints { get; set; } = 0;
     }
 }

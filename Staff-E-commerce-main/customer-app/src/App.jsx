@@ -15,8 +15,34 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
+import {
+  IconMenu,
+  IconSearch,
+  IconCart,
+  IconLocation,
+  IconChevronRight,
+  IconClose,
+  IconCloseCircle,
+  IconHome,
+  IconCategoryGrid,
+  IconReceipt,
+  IconUser,
+  IconPlus,
+  IconMinus,
+  IconCheck,
+  IconFlash,
+  IconShield,
+  IconStar,
+  IconSort,
+  CategoryAll,
+  getCategoryIcon,
+  getSubCategoryIcon,
+} from "./components/Icons";
+import { BHX_CATEGORIES } from "./constants/bhxData";
+
 const defaultHost = typeof window !== "undefined" && window.location?.hostname
   ? `http://${window.location.hostname}:5099/api`
   : "http://10.0.2.2:5099/api";
@@ -28,32 +54,83 @@ const CART_KEY = "e-mart-mobile-cart";
 const CUSTOMER_KEY = "e-mart-mobile-customer";
 const CUSTOMER_TOKEN_KEY = "e-mart-mobile-customer-token";
 const ADDRESS_KEY = "e-mart-mobile-delivery-address";
-const GREEN = "#126a43";
-const DARK = "#1f3027";
-const MUTED = "#78857c";
+
+// Bảng màu chuẩn Bách Hóa Xanh
+const BHX_GREEN = "#008848";
+const BHX_DARK_GREEN = "#006837";
+const BHX_YELLOW = "#ffd400";
+const BHX_RED = "#d32f2f";
+const BHX_ORANGE = "#f57c00";
+const TEXT_DARK = "#1a202c";
+const TEXT_MUTED = "#64748b";
+const BORDER_COLOR = "#e2e8f0";
+const BG_PAGE = "#f1f5f9";
 
 const imageUrl = (path) => !path ? null : path.startsWith("http") ? path : `${API_ORIGIN}${path.startsWith("/") ? "" : "/"}${path}`;
 const money = (value) => new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(value || 0);
 
-function ProductImage({ imagePath, productId, style }) {
-  const candidates = [
-    imageUrl(imagePath),
-    productId ? `${API_ORIGIN}/assets/images/products/product-${productId}.jpg` : null,
-    `${API_ORIGIN}/assets/images/products/default.jpg`,
-  ].filter((uri, index, all) => uri && all.indexOf(uri) === index);
+const QUICK_TAGS = ["Thịt tươi", "Rau sạch", "Cá hồi", "Bia Tiger", "Dầu ăn", "Mì Hảo Hảo", "Nước ngọt"];
+
+const BANNERS = [
+  {
+    id: 1,
+    tag: "GIÁ SỐC HÔM NAY",
+    title: "Thực Phẩm Tươi Sống Mỗi Ngày",
+    subtitle: "Giảm đến 30% thịt heo, thịt bò & rau củ sạch",
+    code: "CHOTUOI30",
+    bg: BHX_DARK_GREEN,
+  },
+  {
+    id: 2,
+    tag: "GIAO NHANH 2H",
+    title: "Miễn Phí Vận Chuyển Toàn Thành Phố",
+    subtitle: "Áp dụng cho mọi đơn từ 150.000đ",
+    code: "FREESHIP150",
+    bg: "#006699",
+  },
+  {
+    id: 3,
+    tag: "ĐẶC QUYỀN THÀNH VIÊN",
+    title: "Tích Điểm Đổi Quà Thả Ga",
+    subtitle: "Tích lũy 1 điểm = 1.000đ trừ trực tiếp vào đơn hàng",
+    code: "EMART20",
+    bg: "#b74700",
+  },
+];
+
+function ProductImage({ imagePath, productId, categoryName, style }) {
+  // Loại bỏ hoàn toàn fallback default.jpg và các ảnh anime placeholder
+  const isWaifuOrPlaceholder = (path) => {
+    if (!path) return true;
+    const lower = String(path).toLowerCase();
+    return lower.includes("default.jpg") || lower.includes("temp-") || lower.includes("product-81") || lower.includes("product-82") || lower.includes("product-83");
+  };
+
+  const validPath = isWaifuOrPlaceholder(imagePath) ? null : imageUrl(imagePath);
+  const candidateProductImg = productId && productId !== 81 && productId !== 82 && productId !== 83 
+    ? `${API_ORIGIN}/assets/images/products/product-${productId}.jpg` 
+    : null;
+
+  const candidates = [validPath, candidateProductImg].filter((uri, index, all) => uri && all.indexOf(uri) === index);
   const [candidateIndex, setCandidateIndex] = useState(0);
 
   useEffect(() => setCandidateIndex(0), [imagePath, productId]);
 
   const uri = candidates[candidateIndex];
-  if (!uri) return <Text style={styles.productEmoji}>🥬</Text>;
+  if (!uri || candidateIndex >= candidates.length) {
+    return (
+      <View style={[style, { backgroundColor: "#f0fdf4", alignItems: "center", justifyContent: "center" }]}>
+        {getCategoryIcon(categoryName, 36)}
+      </View>
+    );
+  }
 
   return (
     <Image
       source={{ uri }}
       style={style}
       resizeMode="contain"
-      onError={() => setCandidateIndex((index) => Math.min(index + 1, candidates.length))}
+      onError={() => setCandidateIndex((index) => index + 1)}
     />
   );
 }
@@ -71,33 +148,91 @@ function AppButton({ title, onPress, secondary = false, disabled = false, style 
   );
 }
 
-const hasProductPromotion = (product) => Number(product?.discountAmount) > 0 && Number(product?.originalPrice) > Number(product?.price);
-const productDiscountAmount = (product) => Math.max(
-  0,
-  Number(product?.discountAmount) || Number(product?.originalPrice || 0) - Number(product?.price || 0),
-);
+function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, cardWidthStyle }) {
+  const originalPrice = Math.round((product.price * 1.15) / 1000) * 1000;
+  const isHot = (product.id % 2 === 0);
+  const discountPercent = Math.max(10, Math.round(((originalPrice - product.price) / originalPrice) * 100));
 
-function ProductCard({ product, onAdd, onOpen }) {
-  const onSale = hasProductPromotion(product);
   return (
-    <View style={styles.productCard}>
-      <Pressable onPress={() => onOpen(product)} style={styles.productImageBox} accessibilityLabel={`Xem chi tiết ${product.productName}`}>
-        <ProductImage imagePath={product.imageUrl} productId={product.id} style={styles.productImage} />
-      </Pressable>
-      <Pressable onPress={() => onOpen(product)}>
-        <Text style={styles.productCategory} numberOfLines={1}>{product.categoryName || "HÀNG TIÊU DÙNG"}</Text>
+    <View style={[styles.productCard, cardWidthStyle, cartQty > 0 && styles.productCardActive]}>
+      <View style={styles.productImageBox}>
+        <ProductImage
+          imagePath={product.imageUrl}
+          productId={product.id}
+          categoryName={product.categoryName}
+          style={styles.productImage}
+        />
+        <View style={styles.badgeRow}>
+          {discountPercent > 0 && (
+            <View style={styles.discountBadge}>
+              <Text style={styles.discountBadgeText}>-{discountPercent}%</Text>
+            </View>
+          )}
+          {isHot && (
+            <View style={styles.hotBadge}>
+              <Text style={styles.hotBadgeText}>HOT</Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.productBody}>
+        <Text style={styles.productCategory} numberOfLines={1}>{product.categoryName || "BÁCH HÓA"}</Text>
         <Text style={styles.productName} numberOfLines={2}>{product.productName}</Text>
-      </Pressable>
-      <Text style={styles.stockLabel}>●  Còn hàng</Text>
-      <View style={styles.productFooter}>
-        {onSale ? <View><Text style={styles.originalPrice}>{money(product.originalPrice)}</Text><Text style={styles.productPrice}>{money(product.price)}</Text><Text style={styles.productSaving}>Giảm {money(productDiscountAmount(product))}</Text></View> : <Text style={styles.productPrice}>{money(product.price)}</Text>}
-        <Pressable accessibilityLabel={`Thêm ${product.productName} vào giỏ`} onPress={() => onAdd(product)} style={styles.addButton}><Text style={styles.addButtonText}>＋</Text></Pressable>
+
+        <View style={styles.fastDeliveryTag}>
+          <IconFlash size={10} color={BHX_ORANGE} />
+          <Text style={styles.fastDeliveryText}>Giao nhanh 2h</Text>
+        </View>
+
+        <View style={styles.priceContainer}>
+          <Text style={styles.productPrice}>{money(product.price)}</Text>
+          {originalPrice > product.price && (
+            <Text style={styles.originalPrice}>{money(originalPrice)}</Text>
+          )}
+        </View>
+
+        {/* Smart Stepper Control */}
+        <View style={styles.stepperContainer}>
+          {cartQty === 0 ? (
+            <Pressable
+              accessibilityLabel={`Thêm ${product.productName} vào giỏ`}
+              onPress={() => onAdd(product)}
+              style={styles.addCartBtn}
+            >
+              <IconCart size={13} color="#ffffff" />
+              <Text style={styles.addCartBtnText}>CHỌN MUA</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.stepperBox}>
+              <Pressable
+                accessibilityLabel={`Bớt ${product.productName}`}
+                onPress={() => onQuantityChange(product.id, -1)}
+                style={styles.stepperBtn}
+              >
+                <IconMinus size={12} color={BHX_GREEN} />
+              </Pressable>
+              <Text style={styles.stepperQtyText}>{cartQty}</Text>
+              <Pressable
+                accessibilityLabel={`Thêm ${product.productName}`}
+                onPress={() => onQuantityChange(product.id, 1)}
+                style={[styles.stepperBtn, styles.stepperBtnPlus]}
+              >
+                <IconPlus size={12} color="#ffffff" />
+              </Pressable>
+            </View>
+          )}
+        </View>
       </View>
     </View>
   );
 }
 
 export default function App() {
+  const { width: windowWidth } = useWindowDimensions();
+  const isDesktop = windowWidth >= 768;
+  const isWide = windowWidth >= 1024;
+
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [cart, setCart] = useState([]);
@@ -107,17 +242,27 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [categoryId, setCategoryId] = useState("all");
   const [tab, setTab] = useState("home");
+  const [bannerIndex, setBannerIndex] = useState(0);
+
+  // Bộ lọc & Sắp xếp
+  const [sortOption, setSortOption] = useState("default");
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [selectedDrawerCatId, setSelectedDrawerCatId] = useState(5);
+  const [drawerSearchText, setDrawerSearchText] = useState("");
+
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutForm, setCheckoutForm] = useState({ fullName: "", phone: "", address: "", note: "" });
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderError, setOrderError] = useState("");
   const [completedOrder, setCompletedOrder] = useState(null);
+
   const [customerOrders, setCustomerOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState("");
   const [ordersRefreshKey, setOrdersRefreshKey] = useState(0);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [orderFilter, setOrderFilter] = useState("all");
+
   const [customer, setCustomer] = useState(null);
   const [customerToken, setCustomerToken] = useState("");
   const [accountReady, setAccountReady] = useState(false);
@@ -137,15 +282,25 @@ export default function App() {
   const [profilePage, setProfilePage] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState({ city: "", ward: "", street: "", otherReceiver: false });
   const [addressMessage, setAddressMessage] = useState("");
+
   const [voucherOpen, setVoucherOpen] = useState(false);
   const [voucherCode, setVoucherCode] = useState("");
   const [voucherList, setVoucherList] = useState([]);
   const [voucherBusy, setVoucherBusy] = useState(false);
   const [voucherMessage, setVoucherMessage] = useState("");
   const [appliedVoucher, setAppliedVoucher] = useState(null);
+
   const [paymentMethod, setPaymentMethod] = useState("cod");
   const [useRewardPoints, setUseRewardPoints] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+
+  // Auto scroll banner
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setBannerIndex((prev) => (prev + 1) % BANNERS.length);
+    }, 4500);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     AsyncStorage.getItem(ADDRESS_KEY).then((stored) => {
@@ -177,15 +332,18 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadStore(); }, [loadStore]);
+
   useEffect(() => {
     AsyncStorage.getItem(CART_KEY)
       .then((stored) => setCart(stored ? JSON.parse(stored) : []))
       .catch(() => setCart([]))
       .finally(() => setCartLoaded(true));
   }, []);
+
   useEffect(() => {
     if (cartLoaded) AsyncStorage.setItem(CART_KEY, JSON.stringify(cart)).catch(() => { });
   }, [cart, cartLoaded]);
+
   useEffect(() => {
     let active = true;
     const restoreAccount = async () => {
@@ -391,12 +549,48 @@ export default function App() {
     ]);
   };
 
-  const visibleProducts = useMemo(() => products.filter((product) => {
-    const matchesSearch = product.productName?.toLowerCase().includes(query.trim().toLowerCase());
-    const matchesCategory = categoryId === "all" || String(product.categoryId) === String(categoryId);
-    return matchesSearch && matchesCategory;
-  }), [products, query, categoryId]);
-  const productCount = cart.length;
+  // Lọc và Sắp xếp danh sách sản phẩm
+  const visibleProducts = useMemo(() => {
+    let result = products.filter((product) => {
+      const matchesSearch = product.productName?.toLowerCase().includes(query.trim().toLowerCase());
+      const matchesCategory = categoryId === "all" || String(product.categoryId) === String(categoryId);
+      return matchesSearch && matchesCategory;
+    });
+
+    if (sortOption === "price_asc") {
+      result = [...result].sort((a, b) => a.price - b.price);
+    } else if (sortOption === "price_desc") {
+      result = [...result].sort((a, b) => b.price - a.price);
+    } else if (sortOption === "hot") {
+      result = [...result].sort((a, b) => (a.id % 2 === 0 ? -1 : 1));
+    }
+    return result;
+  }, [products, query, categoryId, sortOption]);
+
+  // Danh mục BHX đang chọn trong Drawer
+  const activeBhxCategory = useMemo(() => {
+    return BHX_CATEGORIES.find((c) => c.id === selectedDrawerCatId) || BHX_CATEGORIES[0];
+  }, [selectedDrawerCatId]);
+
+  // Các nhóm hàng con Sub-categories được lọc theo từ khóa tìm kiếm trong Drawer
+  const filteredSubCategories = useMemo(() => {
+    if (!activeBhxCategory?.subCategories) return [];
+    if (!drawerSearchText.trim()) return activeBhxCategory.subCategories;
+    const kw = drawerSearchText.trim().toLowerCase();
+    return activeBhxCategory.subCategories.filter((sub) =>
+      sub.name.toLowerCase().includes(kw) || (sub.keyword && sub.keyword.toLowerCase().includes(kw))
+    );
+  }, [activeBhxCategory, drawerSearchText]);
+
+  const cartItemMap = useMemo(() => {
+    const map = {};
+    for (const item of cart) {
+      map[item.id] = item.quantity;
+    }
+    return map;
+  }, [cart]);
+
+  const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const productDiscount = cart.reduce((sum, item) => sum + productDiscountAmount(item) * item.quantity, 0);
   const originalSubtotal = subtotal + productDiscount;
@@ -548,46 +742,293 @@ export default function App() {
     }
   };
 
+  const currentBanner = BANNERS[bannerIndex];
+
+  // Dynamic responsive card styles
+  const cardWidthStyle = useMemo(() => {
+    if (isWide) return { width: "18.8%" };
+    if (isDesktop) return { width: "23.5%" };
+    return { width: "48.5%" }; // 2 cột trên điện thoại
+  }, [isDesktop, isWide]);
+
+  const categoryItemWidthStyle = useMemo(() => {
+    if (isWide) return { width: "9.2%" };
+    if (isDesktop) return { width: "15%" };
+    return { width: "19%" }; // 5 ô mỗi hàng trên mobile
+  }, [isDesktop, isWide]);
+
   const renderHome = () => (
-    <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-      <View style={styles.hero}>
-        <Text style={styles.heroKicker}>TƯƠI NGON MỖI NGÀY</Text>
-        <Text style={styles.heroTitle}>Đi chợ tiện lợi,</Text>
-        <Text style={styles.heroTitleAccent}>vui khỏe cả nhà.</Text>
-        <Text style={styles.heroCaption}>Thực phẩm tươi ngon và hàng thiết yếu, giao tận cửa.</Text>
-        <View style={styles.heroDecoration}><Text style={styles.heroBag}>🛍️</Text></View>
+    <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <View style={styles.responsiveContainer}>
+        {/* 1. HERO BANNER BÁCH HÓA XANH */}
+        <View style={[styles.heroBanner, { backgroundColor: currentBanner.bg }]}>
+          <View style={styles.bannerInfo}>
+            <View style={styles.bannerBadgePill}>
+              <IconFlash size={11} color={BHX_YELLOW} />
+              <Text style={styles.bannerBadgeText}>{currentBanner.tag}</Text>
+            </View>
+            <Text style={styles.bannerTitle} numberOfLines={1}>{currentBanner.title}</Text>
+            <Text style={styles.bannerSubtitle} numberOfLines={2}>{currentBanner.subtitle}</Text>
+
+            <Pressable
+              onPress={() => {
+                if (currentBanner.code) {
+                  applyVoucher(currentBanner.code);
+                }
+              }}
+              style={styles.bannerCtaBtn}
+            >
+              <Text style={styles.bannerCtaText}>Nhận mã ngay  ›</Text>
+            </Pressable>
+          </View>
+
+          {/* Carousel Pagination Dots */}
+          <View style={styles.bannerDots}>
+            {BANNERS.map((banner, i) => (
+              <Pressable
+                key={banner.id}
+                onPress={() => setBannerIndex(i)}
+                style={[styles.bannerDot, i === bannerIndex && styles.bannerDotActive]}
+              />
+            ))}
+          </View>
+        </View>
+
+        {/* 2. DẢI CAM KẾT VÀNG SIÊU THỊ */}
+        <View style={styles.trustBar}>
+          <View style={styles.trustItem}>
+            <IconFlash size={16} color={BHX_ORANGE} />
+            <Text style={styles.trustLabel}>Giao siêu tốc 2h</Text>
+          </View>
+          <View style={styles.trustDivider} />
+          <View style={styles.trustItem}>
+            <IconCheck size={16} color={BHX_GREEN} />
+            <Text style={styles.trustLabel}>100% Chính hãng</Text>
+          </View>
+          <View style={styles.trustDivider} />
+          <View style={styles.trustItem}>
+            <IconStar size={16} color="#f59e0b" />
+            <Text style={styles.trustLabel}>Tích điểm đổi quà</Text>
+          </View>
+          <View style={styles.trustDivider} />
+          <View style={styles.trustItem}>
+            <IconShield size={16} color={BHX_GREEN} />
+            <Text style={styles.trustLabel}>Đổi trả tận nơi</Text>
+          </View>
+        </View>
+
+        {/* 3. MENU PHÂN LOẠI NGÀNH HÀNG GRID 10 Ô */}
+        <View style={styles.categorySectionHeader}>
+          <View style={styles.categorySectionTitleRow}>
+            <View style={styles.greenBar} />
+            <Text style={styles.categorySectionTitle}>DANH MỤC NGÀNH HÀNG</Text>
+          </View>
+          <Pressable onPress={() => { setSelectedDrawerCatId("all"); setCategoryModalOpen(true); }} style={styles.openCategoryDrawerBtn}>
+            <Text style={styles.openCategoryDrawerText}>Xem phân loại</Text>
+            <IconChevronRight size={14} color={BHX_GREEN} />
+          </Pressable>
+        </View>
+
+        <View style={styles.categoryGridContainer}>
+          {/* Nút Xem tất cả */}
+          <Pressable
+            onPress={() => setCategoryId("all")}
+            style={[styles.categoryGridItem, categoryItemWidthStyle, categoryId === "all" && styles.categoryGridItemActive]}
+          >
+            <View style={styles.categoryIconWrap}>
+              <CategoryAll size={32} />
+            </View>
+            <Text style={[styles.categoryGridText, categoryId === "all" && styles.categoryGridTextActive]} numberOfLines={2}>
+              Tất cả
+            </Text>
+          </Pressable>
+
+          {/* 10 Ngành hàng thực tế từ CSDL */}
+          {categories.map((cat) => {
+            const isSelected = String(categoryId) === String(cat.id);
+            return (
+              <Pressable
+                key={cat.id}
+                onPress={() => setCategoryId(String(cat.id))}
+                style={[styles.categoryGridItem, categoryItemWidthStyle, isSelected && styles.categoryGridItemActive]}
+              >
+                <View style={styles.categoryIconWrap}>
+                  {getCategoryIcon(cat.name, 32)}
+                </View>
+                <Text style={[styles.categoryGridText, isSelected && styles.categoryGridTextActive]} numberOfLines={2}>
+                  {cat.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* 4. THANH TOOLBAR PHÂN LOẠI & SẮP XẾP SẢN PHẨM */}
+        <View style={styles.filterToolbar}>
+          <View style={styles.filterLeft}>
+            <Text style={styles.filterResultCount} numberOfLines={1}>
+              {categoryId === "all" ? "Tất cả sản phẩm" : (categories.find((c) => String(c.id) === String(categoryId))?.name || "Ngành hàng")}
+              <Text style={styles.filterNumber}> ({visibleProducts.length})</Text>
+            </Text>
+          </View>
+
+          {/* Các nút sắp xếp chuẩn siêu thị */}
+          <View style={styles.sortPillsRow}>
+            <Pressable
+              onPress={() => setSortOption("default")}
+              style={[styles.sortPill, sortOption === "default" && styles.sortPillActive]}
+            >
+              <Text style={[styles.sortPillText, sortOption === "default" && styles.sortPillTextActive]}>Phổ biến</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setSortOption("hot")}
+              style={[styles.sortPill, sortOption === "hot" && styles.sortPillActive]}
+            >
+              <Text style={[styles.sortPillText, sortOption === "hot" && styles.sortPillTextActive]}>Bán chạy</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setSortOption(sortOption === "price_asc" ? "price_desc" : "price_asc")}
+              style={[styles.sortPill, (sortOption === "price_asc" || sortOption === "price_desc") && styles.sortPillActive]}
+            >
+              <IconSort size={11} color={sortOption.startsWith("price") ? "#ffffff" : TEXT_MUTED} />
+              <Text style={[styles.sortPillText, (sortOption === "price_asc" || sortOption === "price_desc") && styles.sortPillTextActive]}>
+                {sortOption === "price_desc" ? "Giá giảm" : "Giá tăng"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* 5. DANH SÁCH SẢN PHẨM (PRODUCT GRID RESPONSIVE) */}
+        {loading ? (
+          <View style={styles.centerState}>
+            <ActivityIndicator size="large" color={BHX_GREEN} />
+            <Text style={styles.stateText}>Đang cập nhật thực phẩm tươi ngon...</Text>
+          </View>
+        ) : loadError ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorTitle}>Chưa kết nối được cửa hàng</Text>
+            <Text style={styles.errorText}>{loadError}</Text>
+            <Text style={styles.apiHint}>API: {API_URL}</Text>
+            <AppButton title="Thử kết nối lại" onPress={loadStore} />
+          </View>
+        ) : visibleProducts.length === 0 ? (
+          <View style={styles.emptyState}>
+            <IconCart size={50} color="#cbd5e1" />
+            <Text style={styles.emptyTitle}>Chưa có sản phẩm phù hợp</Text>
+            <Text style={styles.stateText}>Hãy chọn ngành hàng khác hoặc bấm xem tất cả.</Text>
+            <AppButton title="Xem tất cả sản phẩm" onPress={() => { setQuery(""); setCategoryId("all"); }} style={styles.emptyCta} />
+          </View>
+        ) : (
+          <View style={styles.productGrid}>
+            {visibleProducts.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                cartQty={cartItemMap[product.id] || 0}
+                onAdd={addToCart}
+                onQuantityChange={changeQuantity}
+                cardWidthStyle={cardWidthStyle}
+              />
+            ))}
+          </View>
+        )}
+
+        <View style={{ height: 35 }} />
       </View>
-
-      <View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>KHÁM PHÁ</Text><Text style={styles.sectionTitle}>Mua theo danh mục</Text></View></View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
-        <Pressable onPress={() => setCategoryId("all")} style={[styles.categoryChip, categoryId === "all" && styles.categoryChipActive]}><Text style={styles.categoryEmoji}>🛒</Text><Text style={styles.categoryName}>Tất cả</Text></Pressable>
-        {categories.map((category, index) => <Pressable key={category.id} onPress={() => setCategoryId(String(category.id))} style={[styles.categoryChip, String(categoryId) === String(category.id) && styles.categoryChipActive]}><Text style={styles.categoryEmoji}>{["🥬", "🥩", "🥤", "🍞", "🧴", "🧹", "🍼"][index % 7]}</Text><Text style={styles.categoryName} numberOfLines={2}>{category.name}</Text></Pressable>)}
-      </ScrollView>
-
-      <View style={styles.sectionHeading}><View><Text style={styles.eyebrow}>{query ? "TÌM KIẾM" : "TƯƠI NGON, GIÁ TỐT"}</Text><Text style={styles.sectionTitle}>{query ? "Kết quả tìm kiếm" : "Sản phẩm đang có"}</Text></View><Pressable onPress={loadStore} style={styles.refreshButton}><Text style={styles.refreshText}>Làm mới</Text></Pressable></View>
-      {loading ? <View style={styles.centerState}><ActivityIndicator size="large" color={GREEN} /><Text style={styles.stateText}>Đang tải sản phẩm...</Text></View> : loadError ? <View style={styles.errorCard}><Text style={styles.errorTitle}>Chưa kết nối được cửa hàng</Text><Text style={styles.errorText}>{loadError}</Text><Text style={styles.apiHint}>API: {API_URL}</Text><AppButton title="Thử kết nối lại" onPress={loadStore} /></View> : visibleProducts.length === 0 ? <View style={styles.emptyState}><Text style={styles.stateText}>Chưa có sản phẩm phù hợp.</Text></View> : <View style={styles.productGrid}>{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={addToCart} onOpen={setSelectedProduct} />)}</View>}
-      <View style={{ height: 22 }} />
     </ScrollView>
   );
 
   const renderCart = () => (
-    <ScrollView contentContainerStyle={styles.pageContent}>
-      <Text style={styles.eyebrow}>GIỎ HÀNG CỦA BẠN</Text>
-      <Text style={styles.pageTitle}>{productCount} sản phẩm</Text>
-      {!cart.length ? <View style={styles.emptyState}><Text style={styles.emptyEmoji}>🛍️</Text><Text style={styles.emptyTitle}>Giỏ hàng đang trống</Text><Text style={styles.stateText}>Chọn vài món ngon cho hôm nay nhé.</Text><AppButton title="Tiếp tục mua sắm" onPress={() => setTab("home")} style={styles.emptyCta} /></View> : <>
-        {cart.map((item) => <View key={item.id} style={styles.cartRow}><View style={styles.cartThumb}><ProductImage imagePath={item.image} productId={item.id} style={styles.cartImage} /></View><View style={styles.cartInfo}><Text style={styles.cartName} numberOfLines={2}>{item.name}</Text><Text style={styles.cartPrice}>{money(item.price)}</Text>{productDiscountAmount(item) > 0 ? <Text style={styles.cartSaving}>Giảm {money(productDiscountAmount(item))}/sản phẩm</Text> : null}<View style={styles.quantityControl}><Pressable onPress={() => changeQuantity(item.id, -1)} style={styles.quantityButton}><Text style={styles.quantityText}>−</Text></Pressable><Text style={styles.quantityValue}>{item.quantity}</Text><Pressable onPress={() => changeQuantity(item.id, 1)} style={styles.quantityButton}><Text style={styles.quantityText}>＋</Text></Pressable></View></View></View>)}
-        <View style={styles.summaryCard}><View style={styles.summaryLine}><Text style={styles.summaryLabel}>Tạm tính</Text><Text style={styles.summaryValue}>{money(originalSubtotal)}</Text></View>{productDiscount > 0 ? <View style={styles.summaryLine}><Text style={styles.summaryLabel}>Giảm giá sản phẩm</Text><Text style={styles.summaryDiscount}>-{money(productDiscount)}</Text></View> : null}<View style={styles.summaryLine}><Text style={styles.summaryLabel}>Thanh toán</Text><Text style={styles.freeShipping}>Khi nhận hàng</Text></View><Pressable style={styles.voucherRow} onPress={openVouchers}><Text style={styles.voucherLabel}>Phiếu mua hàng</Text><Text style={styles.voucherAction}>{appliedVoucher ? `-${money(appliedVoucher.discountAmount)} · Đổi` : "Sử dụng  ›"}</Text></Pressable>{appliedVoucher ? <Pressable onPress={() => setAppliedVoucher(null)}><Text style={styles.voucherRemove}>Bỏ phiếu mua hàng</Text></Pressable> : null}<View style={styles.summaryTotal}><Text style={styles.summaryTotalLabel}>Tổng cộng</Text><Text style={styles.summaryTotalValue}>{money(payable)}</Text></View><AppButton title="Tiến hành đặt hàng  →" onPress={() => { if (!requireAuthenticatedCustomer()) return; setOrderError(""); setCompletedOrder(null); setCheckoutOpen(true); }} /><AppButton title="Xóa hết sản phẩm" secondary onPress={() => Alert.alert("Xóa giỏ hàng", "Bạn có chắc muốn xóa tất cả sản phẩm khỏi giỏ hàng?", [{ text: "Hủy", style: "cancel" }, { text: "Xóa hết", style: "destructive", onPress: () => { setCart([]); setAppliedVoucher(null); } }])} /></View>
-      </>}
+    <ScrollView contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.responsiveContainer}>
+        <Text style={styles.eyebrow}>GIỎ HÀNG BÁCH HÓA XANH</Text>
+        <Text style={styles.pageTitle}>{itemCount} mặt hàng trong giỏ</Text>
+
+        {!cart.length ? (
+          <View style={styles.emptyState}>
+            <IconCart size={54} color="#cbd5e1" />
+            <Text style={styles.emptyTitle}>Giỏ hàng đang trống</Text>
+            <Text style={styles.stateText}>Hàng ngàn thực phẩm tươi ngon đang chờ bạn!</Text>
+            <AppButton title="Đi chợ ngay" onPress={() => setTab("home")} style={styles.emptyCta} />
+          </View>
+        ) : (
+          <View style={isDesktop ? styles.cartDesktopLayout : null}>
+            <View style={isDesktop ? styles.cartItemListCol : null}>
+              {cart.map((item) => (
+                <View key={item.id} style={styles.cartRow}>
+                  <View style={styles.cartThumb}>
+                    <ProductImage imagePath={item.image} productId={item.id} style={styles.cartImage} />
+                  </View>
+                  <View style={styles.cartInfo}>
+                    <Text style={styles.cartName} numberOfLines={2}>{item.name}</Text>
+                    <Text style={styles.cartPrice}>{money(item.price)}</Text>
+                    <View style={styles.cartStepperRow}>
+                      <Pressable onPress={() => changeQuantity(item.id, -1)} style={styles.cartStepperBtn}>
+                        <IconMinus size={12} color="#334155" />
+                      </Pressable>
+                      <Text style={styles.cartStepperQty}>{item.quantity}</Text>
+                      <Pressable onPress={() => changeQuantity(item.id, 1)} style={[styles.cartStepperBtn, styles.cartStepperBtnPlus]}>
+                        <IconPlus size={12} color="#ffffff" />
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
+
+            <View style={[styles.summaryCard, isDesktop ? styles.cartSummaryCol : null]}>
+              <View style={styles.summaryLine}>
+                <Text style={styles.summaryLabel}>Tiền hàng</Text>
+                <Text style={styles.summaryValue}>{money(subtotal)}</Text>
+              </View>
+              <View style={styles.summaryLine}>
+                <Text style={styles.summaryLabel}>Phí giao nhanh 2h</Text>
+                <Text style={styles.freeShipping}>Miễn phí (0đ)</Text>
+              </View>
+
+              <Pressable style={styles.voucherRow} onPress={openVouchers}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <IconStar size={16} color={BHX_ORANGE} />
+                  <Text style={styles.voucherLabel}>Phiếu giảm giá (Voucher)</Text>
+                </View>
+                <Text style={styles.voucherAction}>
+                  {appliedVoucher ? `-${money(appliedVoucher.discountAmount)} · Đổi` : "Chọn mã  ›"}
+                </Text>
+              </Pressable>
+              {appliedVoucher && (
+                <Pressable onPress={() => setAppliedVoucher(null)}>
+                  <Text style={styles.voucherRemove}>✕ Bỏ phiếu mua hàng</Text>
+                </Pressable>
+              )}
+
+              <View style={styles.summaryTotal}>
+                <Text style={styles.summaryTotalLabel}>Tổng thanh toán</Text>
+                <Text style={styles.summaryTotalValue}>{money(payable)}</Text>
+              </View>
+
+              <AppButton title="Tiến hành đặt hàng  →" onPress={() => { setOrderError(""); setCompletedOrder(null); setCheckoutOpen(true); }} />
+              <AppButton
+                title="Xóa hết giỏ hàng"
+                secondary
+                onPress={() => Alert.alert("Xóa giỏ hàng", "Bạn có chắc muốn xóa tất cả sản phẩm khỏi giỏ?", [
+                  { text: "Hủy", style: "cancel" },
+                  { text: "Xóa hết", style: "destructive", onPress: () => { setCart([]); setAppliedVoucher(null); } }
+                ])}
+              />
+            </View>
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 
   const orderStatusLabel = (status) => ({
     pending: "Chờ xác nhận",
-    processing: "Đang giao",
+    processing: "Đang giao hàng",
     completed: "Giao thành công",
     cancelled: "Đã hủy",
     canceled: "Đã hủy",
-  }[String(status || "").toLowerCase()] || status || "Đang cập nhật");
+  }[String(status || "").toLowerCase()] || status || "Đang xử lý");
 
   const orderAddress = (order) => {
     const match = (order.note || "").match(/Địa chỉ giao hàng:\s*([\s\S]*?)(?:\nGhi chú:|$)/i);
@@ -617,66 +1058,133 @@ export default function App() {
       return (
         <View style={styles.ordersScreen}>
           <View style={styles.orderDetailHeading}>
-            <Pressable onPress={() => setSelectedOrder(null)} style={styles.orderBack}><Text style={styles.orderBackText}>‹</Text></Pressable>
+            <Pressable onPress={() => setSelectedOrder(null)} style={styles.orderBack}>
+              <Text style={styles.orderBackText}>‹</Text>
+            </Pressable>
             <Text style={styles.orderDetailTitle} numberOfLines={1}>Đơn hàng #{selectedOrder.orderNumber}</Text>
           </View>
-          <ScrollView contentContainerStyle={styles.orderDetailContent}>
-            <View style={styles.orderInfoCard}>
-              <View style={styles.orderInfoTop}><Text style={styles.orderInfoLabel}>Địa chỉ nhận hàng</Text><Text style={styles.orderInfoDate}>Mua lúc: {purchasedAt}</Text></View>
-              <Text style={styles.orderAddress}>{address}</Text>
-              <Text style={styles.orderStatusText}>Trạng thái: {orderStatusLabel(selectedOrder.status)}</Text>
-            </View>
-            <View style={styles.orderItemsCard}>
-              {orderItems.map((item, index) => (
-                <View key={`${item.productId}-${index}`} style={styles.orderItemRow}>
-                  <View style={styles.orderItemImageBox}><ProductImage imagePath={item.imageUrl} productId={item.productId} style={styles.orderItemImage} /></View>
-                  <View style={styles.orderItemInfo}><Text style={styles.orderItemName}>{item.productName}</Text><Text style={styles.orderItemQuantity}>SL: {item.quantity}</Text></View>
-                  <View style={styles.orderItemAmount}><Text style={styles.orderItemPrice}>{money(item.totalPrice ?? item.unitPrice * item.quantity)}</Text><Text style={styles.orderItemUnitPrice}>{money(item.unitPrice)}</Text></View>
+          <ScrollView contentContainerStyle={styles.orderDetailContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.responsiveContainer}>
+              <View style={styles.orderInfoCard}>
+                <View style={styles.orderInfoTop}>
+                  <Text style={styles.orderInfoLabel}>Địa chỉ nhận hàng</Text>
+                  <Text style={styles.orderInfoDate}>{purchasedAt}</Text>
                 </View>
-              ))}
-              <View style={styles.orderTotals}>
-                <View style={styles.summaryLine}><Text style={styles.summaryLabel}>Tổng đơn hàng</Text><Text style={styles.summaryValue}>{money(selectedOrder.totalAmount)}</Text></View>
-                <View style={styles.summaryLine}><Text style={styles.summaryLabel}>{paidAmount > 0 ? "Đã thanh toán" : "Thanh toán khi nhận"}</Text><Text style={styles.summaryValue}>{money(paidAmount || selectedOrder.totalAmount)}</Text></View>
+                <Text style={styles.orderAddress}>{address}</Text>
+                <Text style={styles.orderStatusText}>Trạng thái: {orderStatusLabel(selectedOrder.status)}</Text>
+              </View>
+
+              <View style={styles.orderItemsCard}>
+                {orderItems.map((item, index) => (
+                  <View key={`${item.productId}-${index}`} style={styles.orderItemRow}>
+                    <View style={styles.orderItemImageBox}>
+                      <ProductImage imagePath={item.imageUrl} productId={item.productId} style={styles.orderItemImage} />
+                    </View>
+                    <View style={styles.orderItemInfo}>
+                      <Text style={styles.orderItemName}>{item.productName}</Text>
+                      <Text style={styles.orderItemQuantity}>Số lượng: x{item.quantity}</Text>
+                    </View>
+                    <View style={styles.orderItemAmount}>
+                      <Text style={styles.orderItemPrice}>{money(item.totalPrice ?? item.unitPrice * item.quantity)}</Text>
+                      <Text style={styles.orderItemUnitPrice}>{money(item.unitPrice)}</Text>
+                    </View>
+                  </View>
+                ))}
+                <View style={styles.orderTotals}>
+                  <View style={styles.summaryLine}>
+                    <Text style={styles.summaryLabel}>Tổng đơn hàng</Text>
+                    <Text style={styles.summaryValue}>{money(selectedOrder.totalAmount)}</Text>
+                  </View>
+                  <View style={styles.summaryLine}>
+                    <Text style={styles.summaryLabel}>{paidAmount > 0 ? "Đã thanh toán" : "Thanh toán khi nhận"}</Text>
+                    <Text style={styles.summaryValue}>{money(paidAmount || selectedOrder.totalAmount)}</Text>
+                  </View>
+                </View>
               </View>
             </View>
-            <View style={styles.orderInfoCard}>
-              <Text style={styles.orderInfoLabel}>Thông tin thanh toán</Text>
-              <View style={styles.summaryLine}><Text style={styles.summaryLabel}>Phương thức</Text><Text style={styles.summaryValue}>{selectedOrder.paymentMethod || "Tiền mặt khi nhận hàng"}</Text></View>
-              <View style={styles.summaryLine}><Text style={styles.summaryLabel}>Trạng thái thanh toán</Text><Text style={styles.summaryValue}>{paidAmount > 0 ? "Đã thanh toán" : "Chưa thanh toán"}</Text></View>
-            </View>
           </ScrollView>
-          <View style={styles.orderDetailActions}>
-            <Pressable style={styles.orderActionSecondary} onPress={() => Alert.alert("Liên hệ", "Cửa hàng sẽ liên hệ với bạn để hỗ trợ đơn hàng.")}><Text style={styles.orderActionSecondaryText}>Liên hệ</Text></Pressable>
-            <Pressable style={styles.orderActionPrimary} onPress={() => Alert.alert("Hóa đơn", `Đơn hàng ${selectedOrder.orderNumber}\nTổng tiền: ${money(selectedOrder.totalAmount)}`)}><Text style={styles.orderActionPrimaryText}>Xem hóa đơn</Text></Pressable>
-          </View>
         </View>
       );
     }
 
-    const filters = [["all", "Tất cả"], ["pending", "Chờ giao"], ["store", "Mua tại cửa hàng"], ["completed", "Giao thành công"], ["cancelled", "Đã hủy"]];
+    const filters = [["all", "Tất cả"], ["pending", "Chờ giao"], ["completed", "Giao thành công"], ["cancelled", "Đã hủy"]];
     return (
       <View style={styles.ordersScreen}>
-        <Text style={styles.ordersTitle}>Đơn hàng từng mua</Text>
+        <Text style={styles.ordersTitle}>Lịch sử đơn hàng</Text>
         <ScrollView horizontal style={styles.orderFilterScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.orderFilterRow}>
-          {filters.map(([key, label]) => <Pressable key={key} onPress={() => setOrderFilter(key)} style={[styles.orderFilterChip, orderFilter === key && styles.orderFilterChipActive]}><Text style={[styles.orderFilterText, orderFilter === key && styles.orderFilterTextActive]}>{label}</Text></Pressable>)}
+          {filters.map(([key, label]) => (
+            <Pressable
+              key={key}
+              onPress={() => setOrderFilter(key)}
+              style={[styles.orderFilterChip, orderFilter === key && styles.orderFilterChipActive]}
+            >
+              <Text style={[styles.orderFilterText, orderFilter === key && styles.orderFilterTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
         </ScrollView>
-        {ordersLoading ? <View style={styles.centerState}><ActivityIndicator color={GREEN} /><Text style={styles.stateText}>Đang tải đơn hàng...</Text></View> : ordersError ? <View style={styles.errorCard}><Text style={styles.errorText}>{ordersError}</Text><AppButton title="Thử lại" onPress={() => setOrdersRefreshKey((key) => key + 1)} /></View> : !customer && customerOrders.length === 0 ? <View style={styles.emptyState}><Text style={styles.emptyEmoji}>📦</Text><Text style={styles.emptyTitle}>Đăng nhập để xem đơn hàng</Text><Text style={styles.stateText}>Đơn hàng cũ được lưu theo số điện thoại của tài khoản.</Text><AppButton title="Đăng nhập" onPress={() => setTab("profile")} style={styles.emptyCta} /></View> : visibleOrders.length === 0 ? <View style={styles.emptyState}><Text style={styles.emptyEmoji}>📦</Text><Text style={styles.emptyTitle}>Chưa có đơn hàng</Text><Text style={styles.stateText}>Đơn đặt hàng sẽ xuất hiện ở đây.</Text><AppButton title="Bắt đầu mua sắm" onPress={() => setTab("home")} style={styles.emptyCta} /></View> : (
-          <ScrollView contentContainerStyle={styles.orderListContent}>
-            {visibleOrders.map((order) => {
-              const items = order.items || [];
-              return (
-                <View key={order.id || order.orderNumber} style={styles.orderListCard}>
-                  <View style={styles.orderListHeader}><Text style={styles.orderListNumber} numberOfLines={1}>Đơn hàng  #{order.orderNumber}</Text><Pressable onPress={() => setSelectedOrder(order)}><Text style={styles.orderViewLink}>Xem chi tiết  ›</Text></Pressable></View>
-                  <View style={styles.orderPickup}><Text style={styles.orderPickupIcon}>⌂</Text><Text style={styles.orderPickupText} numberOfLines={1}>{orderAddress(order)}</Text></View>
-                  <Pressable onPress={() => setSelectedOrder(order)} style={styles.orderThumbnailRow}>
-                    {items.slice(0, 4).map((item, index) => <View key={`${item.productId}-${index}`} style={styles.orderThumbnailBox}><ProductImage imagePath={item.imageUrl} productId={item.productId} style={styles.orderThumbnail} />{index === 3 && items.length > 4 ? <View style={styles.orderMoreOverlay}><Text style={styles.orderMoreText}>+{items.length - 4}</Text></View> : null}</View>)}
-                    {!items.length ? <Text style={styles.orderItemQuantity}>Không có sản phẩm</Text> : null}
-                  </Pressable>
-                  <View style={styles.orderListTotals}><Text style={styles.orderListStatus}>{orderStatusLabel(order.status)}</Text><Text style={styles.orderListTotal}>Tổng đơn hàng: {money(order.totalAmount)}</Text></View>
-                  <View style={styles.orderListActions}><Pressable onPress={() => Alert.alert("Yêu cầu đổi trả", "Vui lòng liên hệ cửa hàng để được hỗ trợ đổi trả.")} style={styles.orderListAction}><Text style={styles.orderListActionText}>Yêu cầu đổi trả</Text></Pressable><Pressable onPress={() => setSelectedOrder(order)} style={styles.orderListAction}><Text style={styles.orderListActionText}>Liên hệ</Text></Pressable></View>
-                </View>
-              );
-            })}
+
+        {ordersLoading ? (
+          <View style={styles.centerState}>
+            <ActivityIndicator color={BHX_GREEN} />
+            <Text style={styles.stateText}>Đang tải lịch sử đơn hàng...</Text>
+          </View>
+        ) : ordersError ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorText}>{ordersError}</Text>
+            <AppButton title="Thử lại" onPress={() => setOrdersRefreshKey((key) => key + 1)} />
+          </View>
+        ) : !customer && customerOrders.length === 0 ? (
+          <View style={styles.emptyState}>
+            <IconReceipt size={48} color="#cbd5e1" />
+            <Text style={styles.emptyTitle}>Đăng nhập để xem đơn</Text>
+            <Text style={styles.stateText}>Đơn hàng được lưu giữ an toàn theo số điện thoại của bạn.</Text>
+            <AppButton title="Đăng nhập ngay" onPress={() => setTab("profile")} style={styles.emptyCta} />
+          </View>
+        ) : visibleOrders.length === 0 ? (
+          <View style={styles.emptyState}>
+            <IconReceipt size={48} color="#cbd5e1" />
+            <Text style={styles.emptyTitle}>Chưa có đơn hàng nào</Text>
+            <Text style={styles.stateText}>Các đơn bạn vừa đặt sẽ hiển thị đầy đủ tại đây.</Text>
+            <AppButton title="Bắt đầu mua sắm" onPress={() => setTab("home")} style={styles.emptyCta} />
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.orderListContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.responsiveContainer}>
+              {visibleOrders.map((order) => {
+                const items = order.items || [];
+                return (
+                  <View key={order.id || order.orderNumber} style={styles.orderListCard}>
+                    <View style={styles.orderListHeader}>
+                      <Text style={styles.orderListNumber} numberOfLines={1}>Đơn hàng #{order.orderNumber}</Text>
+                      <Pressable onPress={() => setSelectedOrder(order)}>
+                        <Text style={styles.orderViewLink}>Chi tiết  ›</Text>
+                      </Pressable>
+                    </View>
+                    <View style={styles.orderPickup}>
+                      <IconLocation size={14} color={BHX_GREEN} />
+                      <Text style={styles.orderPickupText} numberOfLines={1}>{orderAddress(order)}</Text>
+                    </View>
+                    <Pressable onPress={() => setSelectedOrder(order)} style={styles.orderThumbnailRow}>
+                      {items.slice(0, 6).map((item, index) => (
+                        <View key={`${item.productId}-${index}`} style={styles.orderThumbnailBox}>
+                          <ProductImage imagePath={item.imageUrl} productId={item.productId} style={styles.orderThumbnail} />
+                          {index === 5 && items.length > 6 && (
+                            <View style={styles.orderMoreOverlay}>
+                              <Text style={styles.orderMoreText}>+{items.length - 6}</Text>
+                            </View>
+                          )}
+                        </View>
+                      ))}
+                      {!items.length && <Text style={styles.orderItemQuantity}>Không có sản phẩm</Text>}
+                    </Pressable>
+                    <View style={styles.orderListTotals}>
+                      <Text style={styles.orderListStatus}>{orderStatusLabel(order.status)}</Text>
+                      <Text style={styles.orderListTotal}>Tổng tiền: {money(order.totalAmount)}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
           </ScrollView>
         )}
       </View>
@@ -790,263 +1298,581 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      <StatusBar barStyle="light-content" backgroundColor={BHX_GREEN} />
+
+      {/* 1. TOP HEADER PHONG CÁCH BÁCH HÓA XANH (TÁCH 2 TẦNG TRÊN MOBILE ĐẢM BẢO KHÔNG BỊ TRÀN) */}
       <View style={styles.header}>
-        <View style={styles.searchBar}>
-          <Text style={styles.searchIcon}>⌕</Text>
-          <TextInput value={query} onChangeText={setQuery} placeholder="Tìm sản phẩm bạn cần..." placeholderTextColor="#929c95" style={styles.searchInput} returnKeyType="search" />
-        </View>
-      </View>
+        <View style={styles.headerResponsiveInner}>
+          {/* Thanh Giao Tại */}
+          <Pressable
+            style={styles.locationBar}
+            onPress={() => { setTab("profile"); setProfilePage("address"); }}
+          >
+            <View style={styles.locationLeft}>
+              <IconLocation size={13} color={BHX_YELLOW} />
+              <Text style={styles.locationLabel}>Giao tại: </Text>
+              <Text style={styles.locationAddress} numberOfLines={1}>
+                {deliveryAddress?.street ? `${deliveryAddress.street}, ${deliveryAddress.ward || ""}` : "Chọn địa chỉ nhận hàng"}
+              </Text>
+            </View>
+            <View style={styles.locationRight}>
+              <IconFlash size={10} color={BHX_YELLOW} />
+              <Text style={styles.speedText}>Giao 2h</Text>
+            </View>
+          </Pressable>
 
-      <View style={styles.screen}>{tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}</View>
+          {/* Dòng 1: Logo + Nút Danh Mục + Giỏ Hàng */}
+          <View style={styles.headerTopLine}>
+            {/* Logo Bách Hóa Xanh E-Mart */}
+            <Pressable onPress={() => { setCategoryId("all"); setTab("home"); }} style={styles.brandRow}>
+              <Text style={styles.brandTextE}>E-MART</Text>
+              <View style={styles.brandTagBox}>
+                <Text style={styles.brandTextXanh}>XANH</Text>
+              </View>
+            </Pressable>
 
-      <View style={styles.bottomNav}>{[["home", "⌂", "Trang chủ"], ["orders", "▤", "Đơn hàng"], ["cart", "🛒", "Giỏ hàng"], ["profile", "○", "Tài khoản"]].map(([key, icon, label]) => <Pressable key={key} onPress={() => setTab(key)} style={styles.navItem}><Text style={[styles.navIcon, tab === key && styles.navActive]}>{icon}{key === "cart" && productCount > 0 ? <Text style={styles.navBadge}> {productCount > 99 ? "99+" : productCount}</Text> : null}</Text><Text style={[styles.navLabel, tab === key && styles.navActive]}>{label}</Text></Pressable>)}</View>
-
-      <Modal visible={Boolean(selectedProduct)} animationType="slide" onRequestClose={() => setSelectedProduct(null)}>
-        {selectedProduct ? <SafeAreaView style={styles.productDetailScreen}>
-          <View style={styles.productDetailTopBar}>
-            <View style={styles.productDetailSearchBar}>
-              <Text style={styles.searchIcon}>⌕</Text>
-              <TextInput
-                value={query}
-                onChangeText={setQuery}
-                placeholder="Tìm sản phẩm bạn cần..."
-                placeholderTextColor="#929c95"
-                style={styles.searchInput}
-                returnKeyType="search"
-              />
+            {/* Cụm Action: Danh mục + Giỏ hàng */}
+            <View style={styles.headerRightGroup}>
               <Pressable
-                accessibilityLabel="Mở giỏ hàng"
-                onPress={() => { setSelectedProduct(null); setTab("cart"); }}
-                style={styles.headerCart}
+                onPress={() => {
+                  setSelectedDrawerCatId(categoryId === "all" ? "all" : categoryId);
+                  setCategoryModalOpen(true);
+                }}
+                style={styles.categoryMenuBtn}
               >
-                <Text style={styles.headerCartIcon}>🛒</Text>
-                {productCount > 0 ? <View style={styles.cartBadge}><Text style={styles.cartBadgeText}>{productCount > 99 ? "99+" : productCount}</Text></View> : null}
+                <IconMenu size={15} color="#ffffff" />
+                <Text style={styles.categoryMenuBtnText}>Danh mục</Text>
+              </Pressable>
+
+              <Pressable onPress={() => setTab("cart")} style={styles.headerCart}>
+                <IconCart size={20} color="#ffffff" />
+                {itemCount > 0 && (
+                  <View style={styles.cartBadge}>
+                    <Text style={styles.cartBadgeText}>{itemCount > 99 ? "99+" : itemCount}</Text>
+                  </View>
+                )}
               </Pressable>
             </View>
           </View>
-          <View style={styles.productDetailHeader}><Pressable onPress={() => setSelectedProduct(null)} style={styles.productDetailBack}><Text style={styles.productDetailBackText}>‹</Text></Pressable><Text style={styles.productDetailHeaderTitle} numberOfLines={1}>Chi tiết sản phẩm</Text></View>
-          <ScrollView contentContainerStyle={styles.productDetailContent}>
-            <View style={styles.productDetailImageBox}><ProductImage imagePath={selectedProduct.imageUrl} productId={selectedProduct.id} style={styles.productDetailImage} /></View>
-            {hasProductPromotion(selectedProduct) ? <View style={styles.flashSaleBanner}>
-              <Text style={styles.flashSaleTitle}>⚡ FLASH SALE</Text>
-              <Text style={styles.flashSaleText}>{selectedProduct.promotionName || "Ưu đãi đang áp dụng"}{selectedProduct.promotionEndsAt ? ` · Kết thúc ${new Date(selectedProduct.promotionEndsAt).toLocaleDateString("vi-VN")}` : ""}</Text>
-            </View> : null}
-            <View style={styles.productDetailInfo}>
-              <Text style={styles.productCategory}>{selectedProduct.categoryName || "HÀNG TIÊU DÙNG"}</Text>
-              <Text style={styles.productDetailName}>{selectedProduct.productName}</Text>
-              {hasProductPromotion(selectedProduct) ? <View style={styles.productDetailPriceBlock}><Text style={styles.productDetailOriginalPrice}>{money(selectedProduct.originalPrice)}</Text><View style={styles.productDetailPriceRow}><Text style={styles.productDetailPrice}>{money(selectedProduct.price)}</Text><Text style={styles.discountBadge}>-{selectedProduct.discountPercent || Math.round(selectedProduct.discountAmount / selectedProduct.originalPrice * 100)}%</Text></View><Text style={styles.productDetailSaving}>Bạn tiết kiệm {money(productDiscountAmount(selectedProduct))}</Text></View> : <Text style={styles.productDetailPrice}>{money(selectedProduct.price)}</Text>}
-              <Text style={styles.productDetailStock}>● Còn hàng</Text>
-            </View>
-          </ScrollView>
-          <View style={styles.productDetailAction}>
-            {getCartQuantity(selectedProduct.id) > 0 ? (
-              <View style={styles.productDetailQuantityControl}>
-                <Pressable
-                  accessibilityLabel={`Giảm số lượng ${selectedProduct.productName}`}
-                  onPress={() => changeQuantity(selectedProduct.id, -1)}
-                  style={styles.productDetailQuantityButton}
-                >
-                  <Text style={styles.productDetailQuantityButtonText}>−</Text>
-                </Pressable>
-                <Text style={styles.productDetailQuantityValue}>{getCartQuantity(selectedProduct.id)}</Text>
-                <Pressable
-                  accessibilityLabel={`Tăng số lượng ${selectedProduct.productName}`}
-                  onPress={() => changeQuantity(selectedProduct.id, 1)}
-                  style={styles.productDetailQuantityButton}
-                >
-                  <Text style={styles.productDetailQuantityButtonText}>＋</Text>
-                </Pressable>
-              </View>
+
+          {/* Dòng 2: Thanh Tìm Kiếm 100% Full Width Không Bao Giờ Bị Tràn */}
+          <View style={styles.searchBar}>
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Bạn tìm thịt cá, rau củ, mì gói, nước giặt..."
+              placeholderTextColor="#64748b"
+              style={styles.searchInput}
+              returnKeyType="search"
+            />
+            {query.length > 0 ? (
+              <Pressable onPress={() => setQuery("")} style={styles.clearSearchBtn}>
+                <IconClose size={14} color="#64748b" />
+              </Pressable>
             ) : (
-              <AppButton title="Thêm vào giỏ hàng" onPress={() => addToCart(selectedProduct)} />
+              <Pressable style={styles.searchSubmitBtn}>
+                <IconSearch size={16} color="#ffffff" />
+              </Pressable>
             )}
           </View>
-        </SafeAreaView> : null}
+
+          {/* Quick Search Tags */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow}>
+            {QUICK_TAGS.map((tag) => (
+              <Pressable
+                key={tag}
+                onPress={() => setQuery(query === tag ? "" : tag)}
+                style={[styles.quickTagChip, query === tag && styles.quickTagChipActive]}
+              >
+                <Text style={[styles.quickTagText, query === tag && styles.quickTagTextActive]}>
+                  {tag}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+
+      {/* NỘI DUNG MÀN HÌNH CHÍNH */}
+      <View style={styles.screen}>
+        {tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
+      </View>
+
+      {/* BOTTOM NAVIGATION CHUẨN APP (5 TABS ĐẦY ĐỦ CÓ GIỎ HÀNG KÈM BADGE ĐỎ CHỐNG MẤT GIỎ) */}
+      <View style={styles.bottomNav}>
+        <View style={styles.bottomNavInner}>
+          {[
+            { key: "home", label: "Trang chủ", icon: (active) => <IconHome size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
+            { key: "categories", label: "Danh mục", icon: (active) => <IconCategoryGrid size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
+            { 
+              key: "cart", 
+              label: "Giỏ hàng", 
+              badge: itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
+              icon: (active) => <IconCart size={20} color={active ? BHX_GREEN : "#64748b"} /> 
+            },
+            { key: "orders", label: "Đơn hàng", icon: (active) => <IconReceipt size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
+            { key: "profile", label: "Tài khoản", icon: (active) => <IconUser size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
+          ].map((item) => {
+            const isActive = tab === item.key;
+            return (
+              <Pressable
+                key={item.key}
+                onPress={() => {
+                  if (item.key === "categories") {
+                    setCategoryModalOpen(true);
+                  } else {
+                    setTab(item.key);
+                  }
+                }}
+                style={styles.navItem}
+              >
+                <View style={styles.navIconWrapper}>
+                  {item.icon(isActive)}
+                  {item.badge && (
+                    <View style={styles.bottomNavBadge}>
+                      <Text style={styles.bottomNavBadgeText}>{item.badge}</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>{item.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* THANH GIỎ HÀNG NỔI Ở ĐÁY KHI CÓ MẶT HÀNG TRONG GIỎ */}
+      {itemCount > 0 && tab === "home" && (
+        <Pressable
+          onPress={() => setTab("cart")}
+          style={styles.floatingHomeCartBar}
+        >
+          <View style={styles.floatingCartLeft}>
+            <View style={styles.floatingCartIconCircle}>
+              <IconCart size={18} color="#ffffff" />
+              <View style={styles.floatingCartBadge}>
+                <Text style={styles.floatingCartBadgeText}>{itemCount}</Text>
+              </View>
+            </View>
+            <View style={styles.floatingCartInfo}>
+              <Text style={styles.floatingCartQtyText}>Giỏ hàng • {itemCount} sản phẩm</Text>
+              <Text style={styles.floatingCartPriceText}>{money(payable)}</Text>
+            </View>
+          </View>
+          <View style={styles.floatingCartRight}>
+            <Text style={styles.floatingCartCtaText}>Xem giỏ hàng</Text>
+            <IconChevronRight size={14} color="#ffffff" />
+          </View>
+        </Pressable>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL MENU PHÂN LOẠI CHUẨN 100% BÁCH HÓA XANH (LƯỚI SUB-CATEGORIES 3 CỘT) */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={categoryModalOpen}
+        animationType="fade"
+        transparent={isDesktop}
+        onRequestClose={() => setCategoryModalOpen(false)}
+      >
+        <SafeAreaView style={isDesktop ? styles.drawerDesktopBackdrop : styles.drawerSafeArea}>
+          <View style={isDesktop ? styles.drawerDesktopDialog : styles.drawerMobileContainer}>
+            {/* Header màu xanh lá cây chuẩn Bách Hóa Xanh: [Đóng] [Trang chủ] + [Ô tìm kiếm bo tròn] */}
+            <View style={styles.bhxModalHeader}>
+              <View style={styles.bhxHeaderActionGroup}>
+                <Pressable
+                  onPress={() => setCategoryModalOpen(false)}
+                  style={styles.bhxHeaderCircleBtn}
+                >
+                  <IconCloseCircle size={22} color="#ffffff" />
+                  <Text style={styles.bhxHeaderBtnLabel}>Đóng</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setCategoryModalOpen(false);
+                    setTab("home");
+                  }}
+                  style={styles.bhxHeaderCircleBtn}
+                >
+                  <IconHome size={22} color="#ffffff" active={true} />
+                  <Text style={styles.bhxHeaderBtnLabel}>Trang chủ</Text>
+                </Pressable>
+              </View>
+
+              {/* Ô tìm kiếm bo tròn chuẩn Bách Hóa Xanh */}
+              <View style={styles.bhxModalSearchBox}>
+                <IconSearch size={16} color="#64748b" />
+                <TextInput
+                  value={drawerSearchText}
+                  onChangeText={setDrawerSearchText}
+                  placeholder="Tìm nhanh trong nhóm hàng"
+                  placeholderTextColor="#94a3b8"
+                  style={styles.bhxModalSearchInput}
+                  returnKeyType="search"
+                />
+                {drawerSearchText.length > 0 && (
+                  <Pressable onPress={() => setDrawerSearchText("")} style={{ padding: 4 }}>
+                    <IconClose size={14} color="#64748b" />
+                  </Pressable>
+                )}
+              </View>
+            </View>
+
+            {/* Layout 2 Cột chuẩn ảnh: Cột Trái 105px (Sidebar Ngành), Cột Phải (Lưới Sub-Categories 3 Cột) */}
+            <View style={styles.drawerBody}>
+              {/* CỘT TRÁI: SIDEBAR CÁC NGÀNH HÀNG */}
+              <View style={[styles.drawerSidebarWrapper, isDesktop ? { width: 200, maxWidth: 200 } : { width: 105, maxWidth: 105, flexBasis: 105 }]}>
+                <ScrollView style={styles.drawerSidebar} showsVerticalScrollIndicator={false}>
+                  {BHX_CATEGORIES.map((cat) => {
+                    const isCur = selectedDrawerCatId === cat.id;
+                    return (
+                      <Pressable
+                        key={cat.id}
+                        onPress={() => {
+                          setSelectedDrawerCatId(cat.id);
+                          setDrawerSearchText("");
+                        }}
+                        style={[styles.bhxSidebarItem, isCur && styles.bhxSidebarItemActive]}
+                      >
+                        <View style={[styles.bhxSidebarIconBox, isCur && styles.bhxSidebarIconBoxActive]}>
+                          {getCategoryIcon(cat.name, 28)}
+                        </View>
+                        <Text
+                          style={[styles.bhxSidebarName, isCur && styles.bhxSidebarNameActive]}
+                          numberOfLines={2}
+                        >
+                          {cat.shortName || cat.name}
+                        </Text>
+                        {isCur && <View style={styles.bhxSidebarActiveBar} />}
+                      </Pressable>
+                    );
+                  })}
+                  <View style={{ height: 60 }} />
+                </ScrollView>
+              </View>
+
+              {/* CỘT PHẢI: LƯỚI SUB-CATEGORIES 3 CỘT (CHUẨN ẢNH BÁCH HÓA XANH) */}
+              <View style={styles.drawerContentCol}>
+                {/* Header nhóm ngành & Nút xem tất cả */}
+                <View style={styles.bhxSubHeaderRow}>
+                  <Text style={styles.bhxSubHeaderTitle} numberOfLines={1}>
+                    {activeBhxCategory?.name || "Nhóm hàng"}
+                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      setCategoryId(String(activeBhxCategory?.dbCategoryId || "all"));
+                      setQuery("");
+                      setCategoryModalOpen(false);
+                      setTab("home");
+                    }}
+                    style={styles.bhxViewAllCategoryBtn}
+                  >
+                    <Text style={styles.bhxViewAllCategoryText}>Xem tất cả ›</Text>
+                  </Pressable>
+                </View>
+
+                {/* Lưới Grid 3 Cột nhóm hàng con */}
+                <ScrollView contentContainerStyle={styles.bhxSubGridContainer} showsVerticalScrollIndicator={false}>
+                  {filteredSubCategories.map((sub) => (
+                    <Pressable
+                      key={sub.id}
+                      onPress={() => {
+                        setCategoryId(String(activeBhxCategory?.dbCategoryId || "all"));
+                        setQuery(sub.keyword || sub.name);
+                        setCategoryModalOpen(false);
+                        setTab("home");
+                      }}
+                      style={styles.bhxSubGridItem}
+                    >
+                      <View style={styles.bhxSubImageBox}>
+                        {getSubCategoryIcon(sub.iconType, 36)}
+                        {sub.tag && (
+                          <View style={styles.bhxSubTagBadge}>
+                            <Text style={styles.bhxSubTagText}>{sub.tag}</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.bhxSubName} numberOfLines={2}>
+                        {sub.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+
+                  {filteredSubCategories.length === 0 && (
+                    <View style={styles.bhxEmptySubState}>
+                      <IconCart size={40} color="#cbd5e1" />
+                      <Text style={styles.stateText}>Không tìm thấy nhóm hàng phù hợp.</Text>
+                    </View>
+                  )}
+                  <View style={{ height: 90 }} />
+                </ScrollView>
+              </View>
+            </View>
+
+            {/* DƯỚI ĐÁY MODAL: THANH GIỎ HÀNG NỔI (STICKY BOTTOM CART) CHỐNG MẤT GIỎ */}
+            {itemCount > 0 && (
+              <Pressable
+                onPress={() => {
+                  setCategoryModalOpen(false);
+                  setTab("cart");
+                }}
+                style={styles.drawerFloatingCart}
+              >
+                <View style={styles.floatingCartLeft}>
+                  <View style={styles.floatingCartIconCircle}>
+                    <IconCart size={18} color="#ffffff" />
+                    <View style={styles.floatingCartBadge}>
+                      <Text style={styles.floatingCartBadgeText}>{itemCount}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.floatingCartInfo}>
+                    <Text style={styles.floatingCartQtyText}>Giỏ hàng • {itemCount} sản phẩm</Text>
+                    <Text style={styles.floatingCartPriceText}>{money(payable)}</Text>
+                  </View>
+                </View>
+                <View style={styles.floatingCartRight}>
+                  <Text style={styles.floatingCartCtaText}>Xem giỏ hàng</Text>
+                  <IconChevronRight size={14} color="#ffffff" />
+                </View>
+              </Pressable>
+            )}
+          </View>
+        </SafeAreaView>
       </Modal>
 
+      {/* MODAL CHECKOUT & THANH TOÁN */}
       <Modal visible={checkoutOpen} transparent animationType="slide" onRequestClose={() => !orderSubmitting && setCheckoutOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <View style={styles.checkoutSheet}>
+          <View style={[styles.checkoutSheet, isDesktop ? styles.checkoutSheetDesktop : null]}>
             <View style={styles.sheetHandle} />
+
             {completedOrder ? (
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.successContent}>
-                <Text style={styles.successIcon}>✓</Text>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.successContent} showsVerticalScrollIndicator={false}>
+                <View style={styles.successBadgeCircle}>
+                  <IconCheck size={26} color="#ffffff" />
+                </View>
                 <Text style={styles.eyebrow}>ĐẶT HÀNG THÀNH CÔNG</Text>
-                <Text style={styles.successTitle}>Cảm ơn bạn đã mua hàng!</Text>
+                <Text style={styles.successTitle}>Cảm ơn bạn đã mua sắm tại Bách Hóa Xanh!</Text>
+
                 <Text style={styles.inputLabel}>MÃ ĐƠN HÀNG</Text>
                 <Text selectable style={styles.successCode}>{completedOrder.orderNumber}</Text>
 
-                {/* Khối thanh toán MoMo */}
+                {/* Thanh toán MoMo */}
                 {completedOrder.paymentMethod === "momo" && (
-                  <View style={{ marginTop: 14, padding: 14, borderRadius: 12, backgroundColor: "#fff0f6", borderWidth: 1, borderColor: "#ffadd2", alignItems: "center" }}>
-                    <Text style={{ fontSize: 14, fontWeight: "900", color: "#a50064", marginBottom: 6 }}>
-                      🟣 Thanh toán qua Ví MoMo
-                    </Text>
-                    <Text style={{ fontSize: 11, color: "#595959", textAlign: "center", marginBottom: 12 }}>
-                      Nhấn nút bên dưới để mở ứng dụng MoMo và thanh toán số tiền {money(completedOrder.totalAmount)}.
+                  <View style={styles.paymentBoxMomo}>
+                    <Text style={styles.paymentBoxMomoTitle}>Thanh toán qua Ví MoMo</Text>
+                    <Text style={styles.paymentBoxMomoDesc}>
+                      Nhấn nút bên dưới để chuyển tiếp sang Ví MoMo và thanh toán {money(completedOrder.totalAmount)}.
                     </Text>
                     {completedOrder.momoPayUrl ? (
-                      <Pressable
-                        onPress={() => Linking.openURL(completedOrder.momoPayUrl)}
-                        style={{ backgroundColor: "#a50064", paddingVertical: 12, paddingHorizontal: 20, borderRadius: 10, alignSelf: "stretch", alignItems: "center" }}
-                      >
-                        <Text style={{ color: "#fff", fontWeight: "900", fontSize: 13 }}>
-                          Mở Ví MoMo để thanh toán ngay →
-                        </Text>
+                      <Pressable onPress={() => Linking.openURL(completedOrder.momoPayUrl)} style={styles.momoActionBtn}>
+                        <Text style={styles.momoActionText}>Mở App MoMo thanh toán ngay  →</Text>
                       </Pressable>
                     ) : (
-                      <Text style={{ fontSize: 11, color: MUTED }}>Liên kết thanh toán MoMo đang được tạo...</Text>
+                      <Text style={styles.paymentWaitText}>Đang tạo liên kết ví MoMo...</Text>
                     )}
                   </View>
                 )}
 
-                {/* Khối quét mã VietQR */}
+                {/* Quét mã VietQR */}
                 {completedOrder.paymentMethod === "bank" && (
-                  <View style={{ marginTop: 14, padding: 14, borderRadius: 12, backgroundColor: "#f0f5ff", borderWidth: 1, borderColor: "#adc6ff", alignItems: "center" }}>
-                    <Text style={{ fontSize: 14, fontWeight: "900", color: "#1d39c4", marginBottom: 6 }}>
-                      🏦 Quét mã QR chuyển khoản ngân hàng
-                    </Text>
-                    <Text style={{ fontSize: 11, color: "#595959", textAlign: "center", marginBottom: 10 }}>
-                      Dùng app ngân hàng bất kỳ để quét mã VietQR chuyển khoản nhanh:
-                    </Text>
+                  <View style={styles.paymentBoxBank}>
+                    <Text style={styles.paymentBoxBankTitle}>Quét mã QR ngân hàng (VietQR)</Text>
+                    <Text style={styles.paymentBoxBankDesc}>Mở app ngân hàng bất kỳ để quét mã và chuyển khoản siêu tốc:</Text>
                     {completedOrder.vietQrUrl && (
-                      <Image
-                        source={{ uri: completedOrder.vietQrUrl }}
-                        style={{ width: 210, height: 210, borderRadius: 10, marginVertical: 6, backgroundColor: "#fff" }}
-                        resizeMode="contain"
-                      />
+                      <Image source={{ uri: completedOrder.vietQrUrl }} style={styles.vietQrImage} resizeMode="contain" />
                     )}
-                    <View style={{ width: "100%", backgroundColor: "#fff", padding: 10, borderRadius: 8, marginTop: 8 }}>
-                      <Text style={{ fontSize: 11, color: DARK }}>• Ngân hàng: <Text style={{ fontWeight: "700" }}>MBBank (Quân Đội)</Text></Text>
-                      <Text style={{ fontSize: 11, color: DARK }}>• STK: <Text style={{ fontWeight: "700" }}>0987654321</Text></Text>
-                      <Text style={{ fontSize: 11, color: DARK }}>• Chủ TK: <Text style={{ fontWeight: "700" }}>EMART STORE</Text></Text>
-                      <Text style={{ fontSize: 11, color: DARK }}>• Số tiền: <Text style={{ fontWeight: "700", color: "#1d39c4" }}>{money(completedOrder.totalAmount)}</Text></Text>
-                      <Text style={{ fontSize: 11, color: DARK }}>• Nội dung: <Text style={{ fontWeight: "700", color: "#d4380d" }}>EMART_{completedOrder.orderNumber}</Text></Text>
+                    <View style={styles.bankDetailCard}>
+                      <Text style={styles.bankDetailLine}>• Ngân hàng: <Text style={styles.bankBold}>MBBank (Quân Đội)</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Số tài khoản: <Text style={styles.bankBold}>0987654321</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Chủ tài khoản: <Text style={styles.bankBold}>EMART STORE</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Số tiền: <Text style={styles.bankMoney}>{money(completedOrder.totalAmount)}</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Nội dung: <Text style={styles.bankContent}>EMART_{completedOrder.orderNumber}</Text></Text>
                     </View>
                   </View>
                 )}
 
-                <View style={[styles.summaryTotal, { marginTop: 14 }]}>
+                <View style={styles.summaryTotal}>
                   <Text style={styles.summaryTotalLabel}>
-                    {completedOrder.paymentMethod === "cod" ? "Thanh toán khi nhận hàng" : "Tổng tiền đơn hàng"}
+                    {completedOrder.paymentMethod === "cod" ? "Thanh toán khi nhận hàng" : "Tổng đơn hàng"}
                   </Text>
                   <Text style={styles.summaryTotalValue}>{money(completedOrder.totalAmount)}</Text>
                 </View>
-                <AppButton title="Xong" onPress={() => { setCheckoutOpen(false); setTab("orders"); }} />
+
+                <AppButton title="Hoàn tất & Xem đơn hàng" onPress={() => { setCheckoutOpen(false); setTab("orders"); }} />
               </ScrollView>
             ) : (
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.checkoutContent}>
-                <Text style={styles.eyebrow}>GIAO HÀNG TẬN NHÀ</Text>
-                <Text style={styles.checkoutTitle}>Thông tin đặt hàng</Text>
-                <Text style={styles.checkoutDescription}>Chọn phương thức thanh toán thuận tiện nhất cho bạn.</Text>
-                <Text style={styles.inputLabel}>HỌ VÀ TÊN</Text>
-                <TextInput value={customer?.fullName || checkoutForm.fullName} onChangeText={(value) => setCheckoutForm((form) => ({ ...form, fullName: value }))} placeholder="Nguyễn Văn An" style={styles.formInput} maxLength={150} autoCapitalize="words" editable={!customer?.fullName} />
-                <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI</Text>
-                <TextInput value={customer?.phone || checkoutForm.phone} onChangeText={(value) => setCheckoutForm((form) => ({ ...form, phone: value }))} placeholder="0912345678" style={styles.formInput} keyboardType="phone-pad" maxLength={13} editable={!customer} />
-                <Text style={styles.inputLabel}>ĐỊA CHỈ GIAO HÀNG</Text>
-                <TextInput value={checkoutForm.address} onChangeText={(value) => setCheckoutForm((form) => ({ ...form, address: value }))} placeholder="Số nhà, đường, phường/xã, quận/huyện" style={[styles.formInput, styles.addressInput]} multiline maxLength={500} />
-                <Text style={styles.inputLabel}>GHI CHÚ (KHÔNG BẮT BUỘC)</Text>
-                <TextInput value={checkoutForm.note} onChangeText={(value) => setCheckoutForm((form) => ({ ...form, note: value }))} placeholder="Ví dụ: gọi trước khi giao" style={[styles.formInput, styles.noteInput]} multiline maxLength={500} />
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.checkoutContent} showsVerticalScrollIndicator={false}>
+                <Text style={styles.eyebrow}>GIAO HÀNG TẬN CỬA TRONG 2H</Text>
+                <Text style={styles.checkoutTitle}>Thông tin người nhận</Text>
 
-                {/* Lựa chọn phương thức thanh toán */}
+                <Text style={styles.inputLabel}>HỌ VÀ TÊN</Text>
+                <TextInput
+                  value={customer?.fullName || checkoutForm.fullName}
+                  onChangeText={(value) => setCheckoutForm((form) => ({ ...form, fullName: value }))}
+                  placeholder="Ví dụ: Nguyễn Văn An"
+                  style={styles.formInput}
+                  maxLength={150}
+                  autoCapitalize="words"
+                  editable={!customer?.fullName}
+                />
+
+                <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI</Text>
+                <TextInput
+                  value={customer?.phone || checkoutForm.phone}
+                  onChangeText={(value) => setCheckoutForm((form) => ({ ...form, phone: value }))}
+                  placeholder="Ví dụ: 0912345678"
+                  style={styles.formInput}
+                  keyboardType="phone-pad"
+                  maxLength={13}
+                  editable={!customer}
+                />
+
+                <Text style={styles.inputLabel}>ĐỊA CHỈ NHẬN HÀNG</Text>
+                <TextInput
+                  value={checkoutForm.address}
+                  onChangeText={(value) => setCheckoutForm((form) => ({ ...form, address: value }))}
+                  placeholder="Số nhà, tên đường, phường/xã, quận/huyện..."
+                  style={[styles.formInput, styles.addressInput]}
+                  multiline
+                  maxLength={500}
+                />
+
+                <Text style={styles.inputLabel}>GHI CHÚ GIAO HÀNG (NẾU CÓ)</Text>
+                <TextInput
+                  value={checkoutForm.note}
+                  onChangeText={(value) => setCheckoutForm((form) => ({ ...form, note: value }))}
+                  placeholder="Ví dụ: Gọi trước khi đến 15 phút..."
+                  style={[styles.formInput, styles.noteInput]}
+                  multiline
+                  maxLength={500}
+                />
+
+                {/* PHƯƠNG THỨC THANH TOÁN */}
                 <Text style={styles.inputLabel}>PHƯƠNG THỨC THANH TOÁN</Text>
                 <View style={{ gap: 8, marginTop: 4, marginBottom: 8 }}>
                   {[
-                    { key: "cod", icon: "💵", label: "Tiền mặt khi nhận (COD)", desc: "Nhận hàng rồi thanh toán tiền mặt" },
-                    { key: "momo", icon: "🟣", label: "Ví điện tử MoMo", desc: "Thanh toán online qua ví MoMo" },
-                    { key: "bank", icon: "🏦", label: "Chuyển khoản QR ngân hàng", desc: "Quét mã VietQR chuyển khoản nhanh" },
+                    { key: "cod", label: "Tiền mặt khi nhận hàng (COD)", desc: "Nhận hàng kiểm tra rồi trả tiền mặt" },
+                    { key: "momo", label: "Ví điện tử MoMo", desc: "Thanh toán online qua ứng dụng MoMo" },
+                    { key: "bank", label: "Chuyển khoản QR ngân hàng", desc: "Quét mã VietQR chuyển khoản siêu tốc" },
                   ].map((m) => (
                     <Pressable
                       key={m.key}
                       onPress={() => setPaymentMethod(m.key)}
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        padding: 10,
-                        borderRadius: 10,
-                        borderWidth: 1.5,
-                        borderColor: paymentMethod === m.key ? GREEN : "#e6ebe5",
-                        backgroundColor: paymentMethod === m.key ? "#f0f8f2" : "#fff",
-                      }}
+                      style={[styles.paymentMethodOption, paymentMethod === m.key && styles.paymentMethodOptionActive]}
                     >
-                      <Text style={{ fontSize: 20, marginRight: 10 }}>{m.icon}</Text>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 13, fontWeight: "800", color: paymentMethod === m.key ? GREEN : DARK }}>
+                        <Text style={[styles.paymentMethodLabel, paymentMethod === m.key && styles.paymentMethodLabelActive]}>
                           {m.label}
                         </Text>
-                        <Text style={{ fontSize: 10, color: MUTED }}>{m.desc}</Text>
+                        <Text style={styles.paymentMethodDesc}>{m.desc}</Text>
                       </View>
-                      <View style={{
-                        width: 18, height: 18, borderRadius: 9, borderWidth: 2,
-                        borderColor: paymentMethod === m.key ? GREEN : "#c7d1c6",
-                        alignItems: "center", justifyContent: "center"
-                      }}>
-                        {paymentMethod === m.key ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: GREEN }} /> : null}
+                      <View style={[styles.radioCircle, paymentMethod === m.key && styles.radioCircleActive]}>
+                        {paymentMethod === m.key && <View style={styles.radioDot} />}
                       </View>
                     </Pressable>
                   ))}
                 </View>
 
-                {/* Điểm thưởng khách hàng */}
+                {/* ĐIỂM THƯỞNG KHÁCH HÀNG */}
                 {customer && (customer.rewardPoints || 0) > 0 && maxPointsUsable > 0 && (
                   <Pressable
                     onPress={() => setUseRewardPoints(!useRewardPoints)}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      padding: 10,
-                      borderRadius: 10,
-                      borderWidth: 1,
-                      borderColor: useRewardPoints ? "#e0a133" : "#e6ebe5",
-                      backgroundColor: useRewardPoints ? "#fff9ed" : "#fafcfa",
-                      marginTop: 6,
-                      marginBottom: 8,
-                    }}
+                    style={[styles.rewardPointsCard, useRewardPoints && styles.rewardPointsCardActive]}
                   >
-                    <Text style={{ fontSize: 18, marginRight: 8 }}>⭐</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 12, fontWeight: "800", color: "#8a5814" }}>
-                        Dùng {maxPointsUsable} điểm thưởng (-{money(maxPointsUsable * 1000)})
+                    <IconStar size={18} color="#d97706" />
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      <Text style={styles.rewardPointsTitle}>
+                        Dùng {maxPointsUsable} điểm tích lũy (-{money(maxPointsUsable * 1000)})
                       </Text>
-                      <Text style={{ fontSize: 10, color: MUTED }}>
-                        Bạn có {customer.rewardPoints} điểm tích lũy (1 điểm = 1.000đ)
+                      <Text style={styles.rewardPointsDesc}>
+                        Bạn đang có {customer.rewardPoints} điểm (1 điểm = 1.000đ)
                       </Text>
                     </View>
-                    <Text style={{ fontSize: 18, color: useRewardPoints ? "#d48806" : "#a1aba3" }}>
-                      {useRewardPoints ? "☑" : "□"}
-                    </Text>
+                    <View style={[styles.checkSquare, useRewardPoints && styles.checkSquareActive]}>
+                      {useRewardPoints && <IconCheck size={13} color="#ffffff" />}
+                    </View>
                   </Pressable>
                 )}
 
                 {orderError ? <Text style={styles.orderError}>{orderError}</Text> : null}
+
                 <View style={styles.checkoutTotal}>
                   <Text style={styles.summaryLabel}>
-                    {productCount} sản phẩm{useRewardPoints ? ` · giảm ${money(pointsDiscount)} điểm` : ""}
+                    {itemCount} món{useRewardPoints ? ` · giảm ${money(pointsDiscount)} điểm` : ""}
                   </Text>
                   <Text style={styles.summaryTotalValue}>{money(payable)}</Text>
                 </View>
-                <AppButton title={orderSubmitting ? "Đang gửi đơn hàng..." : "Xác nhận đặt hàng"} disabled={orderSubmitting} onPress={submitOrder} />
+
+                <AppButton
+                  title={orderSubmitting ? "Đang gửi đơn hàng..." : "Xác nhận đặt hàng ngay"}
+                  disabled={orderSubmitting}
+                  onPress={submitOrder}
+                />
                 <Pressable disabled={orderSubmitting} onPress={() => setCheckoutOpen(false)} style={styles.cancelCheckout}>
-                  <Text style={styles.cancelText}>Quay lại giỏ hàng</Text>
+                  <Text style={styles.cancelText}>Quay lại xem giỏ</Text>
                 </Pressable>
               </ScrollView>
             )}
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* MODAL PHIẾU GIẢM GIÁ (VOUCHER) */}
       <Modal visible={voucherOpen} transparent animationType="slide" onRequestClose={() => setVoucherOpen(false)}>
         <View style={styles.voucherBackdrop}>
-          <View style={styles.voucherSheet}>
-            <View style={styles.voucherHeading}><Text style={styles.voucherTitle}>Phiếu mua hàng</Text><Pressable style={styles.voucherCloseButton} onPress={() => setVoucherOpen(false)}><Text style={styles.voucherClose}>×</Text></Pressable></View>
-            <View style={styles.voucherCodeRow}><TextInput value={voucherCode} onChangeText={setVoucherCode} placeholder="Nhập mã phiếu" autoCapitalize="characters" style={styles.voucherInput} /><Pressable disabled={voucherBusy} onPress={() => applyVoucher()} style={[styles.voucherAdd, voucherBusy && styles.buttonDisabled]}><Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Thêm"}</Text></Pressable></View>
-            <Text style={styles.voucherSubheading}>Phiếu mua hàng khả dụng</Text>
-            <ScrollView style={styles.voucherList} keyboardShouldPersistTaps="handled">
-              {voucherList.map((voucher) => <View key={voucher.id} style={styles.voucherCard}><View style={styles.voucherCardTop}><View style={styles.voucherBadge}><Text style={styles.voucherBadgeText}>{voucher.discountType === "percent" ? `${voucher.value}%` : money(voucher.value)}</Text></View><View style={styles.voucherInfo}><Text style={styles.voucherName}>{voucher.name || "Phiếu mua hàng"}</Text><Text style={styles.voucherExpiry}>{voucher.code}{voucher.endDate ? ` · Hạn ${new Date(voucher.endDate).toLocaleDateString("vi-VN")}` : ""}</Text></View><Pressable onPress={() => applyVoucher(voucher.code)}><Text style={styles.voucherUse}>Dùng</Text></Pressable></View>{voucher.description ? <Text style={styles.voucherDescription}>{voucher.description}</Text> : null}{voucher.minOrderAmount > 0 ? <Text style={styles.voucherExpiry}>Đơn tối thiểu {money(voucher.minOrderAmount)}</Text> : null}</View>)}
-              {!voucherList.length && !voucherMessage ? <View style={styles.centerState}><Text style={styles.stateText}>Chưa có phiếu mua hàng khả dụng.</Text></View> : null}
+          <View style={[styles.voucherSheet, isDesktop ? styles.voucherSheetDesktop : null]}>
+            <View style={styles.voucherHeading}>
+              <Text style={styles.voucherTitle}>Phiếu mua hàng & Ưu đãi</Text>
+              <Pressable style={styles.voucherCloseButton} onPress={() => setVoucherOpen(false)}>
+                <IconClose size={18} color="#64748b" />
+              </Pressable>
+            </View>
+
+            <View style={styles.voucherCodeRow}>
+              <TextInput
+                value={voucherCode}
+                onChangeText={setVoucherCode}
+                placeholder="Nhập mã ưu đãi..."
+                autoCapitalize="characters"
+                style={styles.voucherInput}
+              />
+              <Pressable disabled={voucherBusy} onPress={() => applyVoucher()} style={[styles.voucherAdd, voucherBusy && styles.buttonDisabled]}>
+                <Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Áp dụng"}</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.voucherSubheading}>Mã ưu đãi đang có sẵn</Text>
+            <ScrollView style={styles.voucherList} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {voucherList.map((voucher) => (
+                <View key={voucher.id} style={styles.voucherCard}>
+                  <View style={styles.voucherCardTop}>
+                    <View style={styles.voucherBadge}>
+                      <Text style={styles.voucherBadgeText}>{voucher.discountType === "percent" ? `${voucher.value}%` : money(voucher.value)}</Text>
+                    </View>
+                    <View style={styles.voucherInfo}>
+                      <Text style={styles.voucherName}>{voucher.name || "Phiếu mua hàng"}</Text>
+                      <Text style={styles.voucherExpiry}>{voucher.code}{voucher.endDate ? ` · Hạn ${new Date(voucher.endDate).toLocaleDateString("vi-VN")}` : ""}</Text>
+                    </View>
+                    <Pressable onPress={() => applyVoucher(voucher.code)} style={styles.voucherUseBtn}>
+                      <Text style={styles.voucherUseText}>Dùng</Text>
+                    </Pressable>
+                  </View>
+                  {voucher.description && <Text style={styles.voucherDescription}>{voucher.description}</Text>}
+                  {voucher.minOrderAmount > 0 && <Text style={styles.voucherExpiry}>Đơn tối thiểu {money(voucher.minOrderAmount)}</Text>}
+                </View>
+              ))}
+              {!voucherList.length && !voucherMessage && (
+                <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có mã công khai nào khác.</Text></View>
+              )}
               {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
             </ScrollView>
-            <AppButton title={appliedVoucher ? `Đang dùng · giảm ${money(appliedVoucher.discountAmount)}` : "Chọn phiếu mua hàng"} disabled={!appliedVoucher} onPress={() => setVoucherOpen(false)} />
+
+            <AppButton
+              title={appliedVoucher ? `Đang dùng · Giảm ${money(appliedVoucher.discountAmount)}` : "Đóng"}
+              onPress={() => setVoucherOpen(false)}
+            />
           </View>
         </View>
       </Modal>

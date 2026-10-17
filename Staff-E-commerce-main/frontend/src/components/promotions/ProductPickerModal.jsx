@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { getProductSelectionLocks } from "../../api/promotionApi";
 
-export default function ProductPickerModal({ selectedIds, onChange, onClose }) {
+export default function ProductPickerModal({ selectedIds, onChange, onClose, startDate, endDate, excludePromotionId }) {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState("");
@@ -10,6 +11,7 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose }) {
   const pageSize = 8;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectionLocks, setSelectionLocks] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -17,9 +19,10 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose }) {
       setLoading(true);
       setError("");
       try {
-        const [firstProductsResponse, categoryResponse] = await Promise.all([
+        const [firstProductsResponse, categoryResponse, locks] = await Promise.all([
           fetch("/api/products/available?page=1&pageSize=100"),
           fetch("/api/categories/all"),
+          getProductSelectionLocks({ startDate, endDate, excludePromotionId }),
         ]);
         if (!firstProductsResponse.ok || !categoryResponse.ok) throw new Error("Không tải được sản phẩm hoặc danh mục.");
         const [firstPage, categoryData] = await Promise.all([firstProductsResponse.json(), categoryResponse.json()]);
@@ -33,6 +36,7 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose }) {
         if (!cancelled) {
           setProducts(allProducts);
           setCategories(categoryData || []);
+          setSelectionLocks(Object.fromEntries((locks || []).map((lock) => [Number(lock.productId), lock])));
         }
       } catch (loadError) {
         if (!cancelled) setError(loadError.message || "Không tải được dữ liệu.");
@@ -42,7 +46,7 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose }) {
     };
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [startDate, endDate, excludePromotionId]);
 
   const filteredProducts = useMemo(() => {
     const term = appliedSearch.trim().toLocaleLowerCase();
@@ -59,6 +63,7 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose }) {
 
   const toggleProduct = (id) => {
     const normalizedId = Number(id);
+    if (selectionLocks[normalizedId] && !selectedIds.includes(normalizedId)) return;
     onChange(selectedIds.includes(normalizedId)
       ? selectedIds.filter((selectedId) => selectedId !== normalizedId)
       : [...selectedIds, normalizedId]);
@@ -95,12 +100,20 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose }) {
                 {visibleProducts.map((product) => {
               const id = Number(product.id);
               const checked = selectedIds.includes(id);
+              const lock = selectionLocks[id];
+              const disabled = Boolean(lock) && !checked;
               const name = product.productName || product.name || `Sản phẩm #${id}`;
-              return <tr key={id} className={checked ? "bg-blue-50/60" : "hover:bg-gray-50"}>
+              const lockDescription = lock
+                ? `Đang áp dụng: ${lock.promotionName} · Hết hạn: ${lock.endDate ? new Date(lock.endDate).toLocaleDateString("vi-VN") : "Không xác định"}`
+                : "";
+              return <tr key={id} className={disabled ? "bg-gray-50 text-gray-400" : checked ? "bg-blue-50/60" : "hover:bg-gray-50"}>
                 <td className="truncate px-4 py-3 text-gray-700">{product.sku || id}</td>
-                <td className="truncate px-4 py-3 font-medium text-gray-900" title={name}>{name}</td>
+                <td className="px-4 py-3" title={name}>
+                  <div className={`truncate font-medium ${disabled ? "text-gray-500" : "text-gray-900"}`}>{name}</div>
+                  {lock && <div className="mt-1 text-xs leading-4 text-amber-700">{lockDescription}</div>}
+                </td>
                 <td className="px-4 py-3 text-right font-bold text-gray-900">{Number(product.price || 0).toLocaleString("vi-VN")}đ</td>
-                <td className="px-4 py-3 text-center"><input type="checkbox" aria-label={`Chọn ${name}`} checked={checked} onChange={() => toggleProduct(id)} className="h-4 w-4 accent-blue-600" /></td>
+                <td className="px-4 py-3 text-center"><input type="checkbox" aria-label={disabled ? `${name}: ${lockDescription}` : `Chọn ${name}`} checked={checked} disabled={disabled} onChange={() => toggleProduct(id)} className="h-4 w-4 accent-blue-600 disabled:cursor-not-allowed disabled:opacity-45" /></td>
               </tr>;
             })}
                 {!visibleProducts.length && <tr><td colSpan="4" className="px-4 py-10 text-center text-gray-500">Không tìm thấy sản phẩm phù hợp.</td></tr>}

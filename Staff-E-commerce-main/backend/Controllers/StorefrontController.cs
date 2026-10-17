@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using backend.Hubs;
+using backend.Helpers;
 
 namespace backend.Controllers
 {
@@ -213,11 +214,55 @@ namespace backend.Controllers
                     CategoryId = product.CategoryId,
                     CategoryName = product.Category != null ? product.Category.Name : null,
                     Price = product.Price,
+                    OriginalPrice = product.Price,
                     ImageUrl = product.ImageUrl
                 })
                 .ToListAsync();
 
+            var productIds = products.Select(product => product.Id).ToList();
+            var today = DateTimeHelper.VietnamToday;
+            var activePromotions = await (
+                from link in _db.ProductPromotions.AsNoTracking()
+                join promotion in _db.Promotions.AsNoTracking() on link.PromotionId equals promotion.Id
+                where productIds.Contains(link.ProductId)
+                      && !promotion.IsDeleted
+                      && promotion.Status == "active"
+                      && promotion.Type == "product"
+                      && (!promotion.StartDate.HasValue || promotion.StartDate.Value.Date <= today)
+                      && (!promotion.EndDate.HasValue || promotion.EndDate.Value.Date >= today)
+                      && (!promotion.UsageLimit.HasValue || promotion.UsedCount < promotion.UsageLimit)
+                select new { link.ProductId, promotion.Name, promotion.DiscountType, promotion.Value, promotion.MaxDiscount, promotion.EndDate }
+            ).ToListAsync();
+
+            foreach (var product in products)
+            {
+                var bestPromotion = activePromotions
+                    .Where(promotion => promotion.ProductId == product.Id)
+                    .Select(promotion => new
+                    {
+                        Promotion = promotion,
+                        Discount = CalculateProductDiscount(product.OriginalPrice, promotion.DiscountType, promotion.Value, promotion.MaxDiscount)
+                    })
+                    .OrderByDescending(item => item.Discount)
+                    .FirstOrDefault();
+
+                if (bestPromotion == null || bestPromotion.Discount <= 0) continue;
+
+                product.Price = Math.Max(0, product.OriginalPrice - bestPromotion.Discount);
+                product.PromotionName = bestPromotion.Promotion.Name;
+                product.DiscountAmount = bestPromotion.Discount;
+                product.DiscountPercent = product.OriginalPrice == 0 ? 0 : Math.Round(bestPromotion.Discount / product.OriginalPrice * 100, 0);
+                product.PromotionEndsAt = bestPromotion.Promotion.EndDate;
+            }
+
             return Ok(products);
+        }
+
+        private static decimal CalculateProductDiscount(decimal price, string discountType, decimal value, decimal? maxDiscount)
+        {
+            var discount = discountType == "percent" ? price * value / 100m : value;
+            if (maxDiscount.HasValue) discount = Math.Min(discount, maxDiscount.Value);
+            return Math.Min(price, discount);
         }
 
         [HttpGet("categories")]
@@ -261,6 +306,20 @@ namespace backend.Controllers
                 if (products.Count != productIds.Count)
                     return BadRequest(new { message = "Một hoặc nhiều sản phẩm không còn bán. Hãy tải lại giỏ hàng." });
 
+                var today = DateTimeHelper.VietnamToday;
+                var productPromotions = await (
+                    from link in _db.ProductPromotions.AsNoTracking()
+                    join promotion in _db.Promotions.AsNoTracking() on link.PromotionId equals promotion.Id
+                    where productIds.Contains(link.ProductId)
+                          && !promotion.IsDeleted
+                          && promotion.Status == "active"
+                          && promotion.Type == "product"
+                          && (!promotion.StartDate.HasValue || promotion.StartDate.Value.Date <= today)
+                          && (!promotion.EndDate.HasValue || promotion.EndDate.Value.Date >= today)
+                          && (!promotion.UsageLimit.HasValue || promotion.UsedCount < promotion.UsageLimit)
+                    select new { link.ProductId, promotion.DiscountType, promotion.Value, promotion.MaxDiscount }
+                ).ToListAsync();
+
                 var customer = await _db.Customers.FirstOrDefaultAsync(item => item.Phone == request.Phone.Trim());
                 if (customer != null && !customer.IsActive)
                     return Conflict(new { message = "Không thể sử dụng số điện thoại này để đặt hàng." });
@@ -284,12 +343,18 @@ namespace backend.Controllers
                 var items = requestedLines.Select(line =>
                 {
                     var product = products[line.ProductId];
+                    var productDiscount = productPromotions
+                        .Where(promotion => promotion.ProductId == product.Id)
+                        .Select(promotion => CalculateProductDiscount(product.Price, promotion.DiscountType, promotion.Value, promotion.MaxDiscount))
+                        .DefaultIfEmpty(0m)
+                        .Max();
+                    var unitPrice = Math.Max(0, product.Price - productDiscount);
                     return new OrderItem
                     {
                         ProductId = product.Id,
                         Quantity = line.Quantity,
-                        UnitPrice = product.Price,
-                        TotalPrice = product.Price * line.Quantity,
+                        UnitPrice = unitPrice,
+                        TotalPrice = unitPrice * line.Quantity,
                         CreatedAt = now
                     };
                 }).ToList();
@@ -508,6 +573,11 @@ namespace backend.Controllers
         public int? CategoryId { get; set; }
         public string? CategoryName { get; set; }
         public decimal Price { get; set; }
+        public decimal OriginalPrice { get; set; }
+        public decimal DiscountAmount { get; set; }
+        public decimal DiscountPercent { get; set; }
+        public string? PromotionName { get; set; }
+        public DateTime? PromotionEndsAt { get; set; }
         public string? ImageUrl { get; set; }
     }
 

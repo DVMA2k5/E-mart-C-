@@ -6,6 +6,8 @@ import ProductModal from "../../components/products/ProductModal";
 import ImportModal from "../../components/import/ImportModal";
 import { getAllCategories } from "../../api/categoryApi";
 import { useAuth } from "../../hook/useAuth";
+import { adjustInventory, getInventoryStats } from "../../api/inventoryApi";
+import InventoryHistory from "../inventory/InventoryHistory";
 
 export default function ProductList() {
   // Get current user and role
@@ -34,6 +36,10 @@ export default function ProductList() {
   const [maxPrice, setMaxPrice] = useState("");
   const [sortBy, setSortBy] = useState("id");
   const [status, setStatus] = useState("");
+  const [stockStatus, setStockStatus] = useState("");
+  const [activeTab, setActiveTab] = useState("products");
+  const [stats, setStats] = useState({ total: 0, outOfStock: 0, lowStock: 0, inStock: 0 });
+  const [adjustModal, setAdjustModal] = useState({ open: false, product: null, newQuantity: "", reason: "" });
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -114,7 +120,8 @@ export default function ProductList() {
           minPrice || null,
           maxPrice || null,
           sortBy,
-          status || null
+          status || null,
+          stockStatus
         );
         const itemsArr = data.items ?? data.Items ?? [];
         setItems(itemsArr);
@@ -143,6 +150,7 @@ export default function ProductList() {
       maxPrice,
       sortBy,
       status,
+      stockStatus,
     ]
   );
 
@@ -154,6 +162,17 @@ export default function ProductList() {
     fetchUnits(); // Load units khi component mount
   }, [page, pageSize, debouncedSearch, fetchProducts]);
 
+  const fetchStats = useCallback(async () => {
+    try {
+      const data = await getInventoryStats();
+      setStats({ total: data.total || 0, outOfStock: data.outOfStock || 0, lowStock: data.lowStock || 0, inStock: data.inStock || 0 });
+    } catch (err) {
+      console.error("Lỗi khi tải thống kê số lượng sản phẩm:", err);
+    }
+  }, []);
+
+  useEffect(() => { fetchStats(); }, [fetchStats]);
+
   const resetFilters = () => {
     setSearch("");
     setSelectedCategory("");
@@ -162,6 +181,7 @@ export default function ProductList() {
     setMaxPrice("");
     setSortBy("newest");
     setStatus("");
+    setStockStatus("");
     setPage(1);
   };
 
@@ -300,7 +320,37 @@ export default function ProductList() {
   // --- helpers
   const getName = (p) => p.productName ?? p.product_name ?? p.model ?? "—";
   const getPrice = (p) => p.price ?? p.Price ?? 0;
+  const getDiscountPrice = (p) => p.discountPrice ?? p.DiscountPrice ?? null;
   const getQty = (p) => p.inventory?.quantity ?? p.Quantity ?? 0;
+  const getInventoryId = (p) => p.inventory?.id ?? p.Inventory?.id;
+  const getQuantityBadge = (quantity) => {
+    if (quantity === 0) return <span className="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">Hết hàng</span>;
+    if (quantity < 10) return <span className="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800">Sắp hết</span>;
+    return <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Còn hàng</span>;
+  };
+  const openAdjustModal = (product) => setAdjustModal({ open: true, product, newQuantity: String(getQty(product)), reason: "" });
+  const closeAdjustModal = () => setAdjustModal({ open: false, product: null, newQuantity: "", reason: "" });
+  const handleAdjustInventory = async () => {
+    const quantity = Number.parseInt(adjustModal.newQuantity, 10);
+    const inventoryId = getInventoryId(adjustModal.product);
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      setNotification({ type: "error", message: "Số lượng phải là số nguyên không âm." });
+      return;
+    }
+    if (!inventoryId) {
+      setNotification({ type: "error", message: "Sản phẩm chưa có bản ghi số lượng để điều chỉnh." });
+      return;
+    }
+    setSaving(true);
+    try {
+      await adjustInventory(inventoryId, quantity, adjustModal.reason);
+      closeAdjustModal();
+      setNotification({ type: "success", message: "Cập nhật số lượng sản phẩm thành công." });
+      await Promise.all([fetchProducts(page, pageSize, debouncedSearch), fetchStats()]);
+    } catch (err) {
+      setNotification({ type: "error", message: err.message || "Không thể cập nhật số lượng sản phẩm." });
+    } finally { setSaving(false); }
+  };
 
   return (
     <div className="p-6">
@@ -344,6 +394,20 @@ export default function ProductList() {
               </>
             )}
           </div>
+        </div>
+
+        <div className="flex gap-1 mb-5 bg-gray-100 rounded-xl p-1 w-fit">
+          <button onClick={() => setActiveTab("products")} className={`px-5 py-2 rounded-lg text-sm font-semibold ${activeTab === "products" ? "bg-white text-indigo-700 shadow-sm" : "text-gray-600"}`}>📦 Danh sách sản phẩm</button>
+          <button onClick={() => setActiveTab("history")} className={`px-5 py-2 rounded-lg text-sm font-semibold ${activeTab === "history" ? "bg-white text-indigo-700 shadow-sm" : "text-gray-600"}`}>📋 Lịch sử biến động</button>
+        </div>
+
+        {activeTab === "history" ? <InventoryHistory /> : <>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-blue-500"><div className="text-sm text-gray-600">Tổng sản phẩm</div><div className="text-2xl font-bold text-gray-800">{stats.total}</div></div>
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-red-500"><div className="text-sm text-gray-600">Hết hàng</div><div className="text-2xl font-bold text-red-600">{stats.outOfStock}</div></div>
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-orange-500"><div className="text-sm text-gray-600">Sắp hết hàng</div><div className="text-2xl font-bold text-orange-600">{stats.lowStock}</div></div>
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-green-500"><div className="text-sm text-gray-600">Còn hàng</div><div className="text-2xl font-bold text-green-600">{stats.inStock}</div></div>
         </div>
 
         {/* BỘ LỌC */}
@@ -448,6 +512,9 @@ export default function ProductList() {
                 <option value="featured">Nổi bật</option>
                 <option value="bestsellers">Bán chạy</option>
                 <option value="budget">Giá thấp</option>
+                <option value="quantity_asc">Số lượng thấp → cao</option>
+                <option value="quantity_desc">Số lượng cao → thấp</option>
+                <option value="updated_at_desc">Số lượng cập nhật mới nhất</option>
               </select>
             </div>
 
@@ -470,11 +537,18 @@ export default function ProductList() {
               </select>
             </div>
 
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Số lượng</label>
+              <select value={stockStatus} onChange={(e) => { setStockStatus(e.target.value); setPage(1); }} className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm">
+                <option value="">Tất cả</option><option value="out_of_stock">Hết hàng</option><option value="low_stock">Sắp hết (&lt; 10)</option><option value="in_stock">Còn hàng (≥ 10)</option>
+              </select>
+            </div>
+
             {/* Nút reset filters */}
-            <div className="flex justify-end mt-3">
+            <div className="flex items-end">
               <button
                 onClick={resetFilters}
-                className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50"
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
               >
                 Xóa bộ lọc
               </button>
@@ -505,7 +579,7 @@ export default function ProductList() {
                   Tên
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">
-                  Giá
+                  Giá / Giá giảm
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">
                   ĐVT
@@ -556,14 +630,19 @@ export default function ProductList() {
                     <td className="px-4 py-3 text-sm text-gray-800">
                       {getName(p)}
                     </td>
-                    <td className="px-4 py-3 text-sm text-right text-indigo-600 font-semibold">
-                      {formatPrice(getPrice(p))}
+                    <td className="px-4 py-3 text-sm text-right">
+                      <div className="text-indigo-600 font-semibold">{formatPrice(getPrice(p))}</div>
+                      {getDiscountPrice(p) != null && getDiscountPrice(p) < getPrice(p) && (
+                        <div className="mt-1 text-rose-600 font-semibold">
+                          Giảm: {formatPrice(getDiscountPrice(p))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-center text-gray-600">
                       {p.unitName || p.unitCode || "—"}
                     </td>
                     <td className="px-4 py-3 text-sm text-center">
-                      {getQty(p) ?? "—"}
+                      <div className="flex flex-col items-center gap-1"><span className={getQty(p) === 0 ? "text-red-600 font-semibold" : getQty(p) < 10 ? "text-orange-600 font-semibold" : "text-green-600 font-semibold"}>{getQty(p)}</span>{getQuantityBadge(getQty(p))}</div>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {p.supplier?.name}
@@ -588,6 +667,7 @@ export default function ProductList() {
                         </button>
                         {!isStaff && (
                           <>
+                            <button onClick={() => openAdjustModal(p)} className="px-2 py-1 bg-indigo-100 rounded text-indigo-800 hover:bg-indigo-200">Số lượng</button>
                             <button
                               onClick={() => openModal("edit", p)}
                               className="px-2 py-1 bg-yellow-100 rounded text-yellow-800 hover:bg-yellow-200"
@@ -664,6 +744,7 @@ export default function ProductList() {
             </button>
           </div>
         </div>
+        </>}
       </div>
 
       {/* Universal Modal */}
@@ -701,6 +782,20 @@ export default function ProductList() {
           }}
           type="products"
         />
+      )}
+
+      {adjustModal.open && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h2 className="text-xl font-semibold mb-4">Điều chỉnh số lượng sản phẩm</h2>
+            <p className="text-sm text-gray-600 mb-4"><strong>{getName(adjustModal.product)}</strong> — hiện có {getQty(adjustModal.product)}</p>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Số lượng mới</label>
+            <input type="number" min="0" value={adjustModal.newQuantity} onChange={(e) => setAdjustModal({ ...adjustModal, newQuantity: e.target.value })} className="w-full px-3 py-2 border rounded-md mb-4" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Lý do điều chỉnh</label>
+            <textarea value={adjustModal.reason} onChange={(e) => setAdjustModal({ ...adjustModal, reason: e.target.value })} className="w-full px-3 py-2 border rounded-md mb-4" rows="3" placeholder="Nhập lý do (tùy chọn)" />
+            <div className="flex gap-3 justify-end"><button onClick={closeAdjustModal} disabled={saving} className="px-4 py-2 rounded-md bg-gray-100">Hủy</button><button onClick={handleAdjustInventory} disabled={saving} className="px-4 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-50">{saving ? "Đang lưu..." : "Cập nhật"}</button></div>
+          </div>
+        </div>
       )}
     </div>
   );

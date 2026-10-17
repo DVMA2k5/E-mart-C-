@@ -282,6 +282,7 @@ export default function App() {
 
   const [paymentMethod, setPaymentMethod] = useState("cod");
   const [useRewardPoints, setUseRewardPoints] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
 
   // Auto scroll banner
   useEffect(() => {
@@ -297,7 +298,7 @@ export default function App() {
       const address = JSON.parse(stored);
       setDeliveryAddress(address);
       setCheckoutForm((form) => ({ ...form, address: [address.street, address.ward, address.city].filter(Boolean).join(", ") }));
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const loadStore = useCallback(async () => {
@@ -521,6 +522,8 @@ export default function App() {
 
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const productDiscount = cart.reduce((sum, item) => sum + productDiscountAmount(item) * item.quantity, 0);
+  const originalSubtotal = subtotal + productDiscount;
   const voucherDiscount = appliedVoucher?.discountAmount || 0;
   const afterVoucher = Math.max(0, subtotal - voucherDiscount);
   const maxPointsUsable = Math.min(customer?.rewardPoints || 0, Math.floor(afterVoucher / 1000));
@@ -565,11 +568,32 @@ export default function App() {
     }
   };
 
+  const requireAuthenticatedCustomer = () => {
+    if (customer && customerToken) return true;
+    setProfilePage("");
+    setTab("profile");
+    return false;
+  };
+
   const addToCart = (product) => {
     setCart((current) => {
       const found = current.find((item) => item.id === product.id);
-      if (found) return current.map((item) => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
-      return [...current, { id: product.id, name: product.productName, price: product.price, image: product.imageUrl, quantity: 1 }];
+      if (found) return current.map((item) => item.id === product.id ? {
+        ...item,
+        price: product.price,
+        originalPrice: product.originalPrice,
+        discountAmount: productDiscountAmount(product),
+        quantity: item.quantity + 1,
+      } : item);
+      return [...current, {
+        id: product.id,
+        name: product.productName,
+        price: product.price,
+        originalPrice: product.originalPrice,
+        discountAmount: productDiscountAmount(product),
+        image: product.imageUrl,
+        quantity: 1,
+      }];
     });
   };
 
@@ -577,7 +601,13 @@ export default function App() {
     .map((item) => item.id === id ? { ...item, quantity: item.quantity + amount } : item)
     .filter((item) => item.quantity > 0));
 
+  const getCartQuantity = (productId) => cart.find((item) => item.id === productId)?.quantity || 0;
+
   const submitOrder = async () => {
+    if (!requireAuthenticatedCustomer()) {
+      setCheckoutOpen(false);
+      return;
+    }
     if (!checkoutForm.fullName.trim() || !checkoutForm.phone.trim() || !checkoutForm.address.trim()) {
       setOrderError("Nhập họ tên, số điện thoại và địa chỉ nhận hàng.");
       return;
@@ -592,7 +622,10 @@ export default function App() {
     try {
       const response = await fetch(`${API_URL}/storefront/orders`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${customerToken}`,
+        },
         body: JSON.stringify({
           ...checkoutForm,
           fullName: customer?.fullName?.trim() || checkoutForm.fullName.trim(),

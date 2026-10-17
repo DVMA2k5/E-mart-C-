@@ -24,7 +24,7 @@ export default function OrdersForm({
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50"
+      className="fixed inset-0 z-40 flex justify-center items-center bg-black/50"
       onClick={onClose}
     >
       <div

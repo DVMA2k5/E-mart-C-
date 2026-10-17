@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using backend.Models;
 using backend.Repository;
 using backend.DTO;
-using backend.Services.AI.SemanticSearch;
 
 namespace backend.Services
 {
@@ -14,21 +13,15 @@ namespace backend.Services
         private readonly ProductRepository _productRepository;
         private readonly CategoryRepository _categoryRepository;
         private readonly SupplierRepository _supplierRepository;
-        private readonly IProductIndexingService? _indexingService;
-        private readonly ILogger<ProductService>? _logger;
 
         public ProductService(
             ProductRepository productRepository,
             CategoryRepository categoryRepository,
-            SupplierRepository supplierRepository,
-            IProductIndexingService? indexingService = null,
-            ILogger<ProductService>? logger = null)
+            SupplierRepository supplierRepository)
         {
             _productRepository = productRepository;
             _categoryRepository = categoryRepository;
             _supplierRepository = supplierRepository;
-            _indexingService = indexingService;
-            _logger = logger;
         }
 
 
@@ -42,13 +35,17 @@ namespace backend.Services
                    decimal? minPrice = null,
                    decimal? maxPrice = null,
                    string? sortBy = "",
-                   int? status = null)
+                   int? status = null,
+                   string? stockStatus = null)
         {
-            var result = await _productRepository.GetFilteredAsync(page, pageSize, supplierId, categoryId, minPrice, maxPrice, sortBy, search, status);
+            var result = await _productRepository.GetFilteredAsync(page, pageSize, supplierId, categoryId, minPrice, maxPrice, sortBy, search, status, stockStatus);
+
+            var products = result.Items.Select(MapToProductDto).ToList();
+            await AddDiscountPricesAsync(products);
 
             return new PaginationResult<ProductDTO>
             {
-                Items = result.Items.Select(MapToProductDto).ToList(),
+                Items = products,
                 TotalItems = result.TotalItems,
                 CurrentPage = result.CurrentPage,
                 PageSize = result.PageSize,
@@ -64,7 +61,11 @@ namespace backend.Services
                 throw new ArgumentException("Product ID must be greater than 0", nameof(id));
 
             var product = await _productRepository.GetByIdAsync(id);
-            return product != null ? MapToProductDto(product) : null;
+            if (product == null) return null;
+
+            var dto = MapToProductDto(product);
+            await AddDiscountPricesAsync(new List<ProductDTO> { dto });
+            return dto;
         }
 
         public async Task<ProductDTO> CreateProductAsync(Product product, IFormFile? imageFile = null)
@@ -77,9 +78,6 @@ namespace backend.Services
             product.UpdatedAt = DateTime.UtcNow;
 
             var created = await _productRepository.CreateAsync(product);
-
-            // Index to Qdrant for semantic search (fire-and-forget)
-            _ = IndexProductToQdrantAsync(created);
 
             return MapToProductDto(created);
         }
@@ -99,9 +97,6 @@ namespace backend.Services
 
             var updated = await _productRepository.UpdateAsync(product);
 
-            // Re-index to Qdrant for semantic search (fire-and-forget)
-            _ = IndexProductToQdrantAsync(updated);
-
             return MapToProductDto(updated);
         }
 
@@ -110,29 +105,7 @@ namespace backend.Services
             if (id <= 0) throw new ArgumentException("Product ID must be greater than 0", nameof(id));
             var result = await _productRepository.DeleteAsync(id);
 
-            // Update Qdrant index (product deactivated, re-index with is_active=false)
-            if (result)
-            {
-                var product = await _productRepository.GetByIdAsync(id);
-                if (product != null)
-                    _ = IndexProductToQdrantAsync(product);
-            }
-
             return result;
-        }
-
-        private async Task IndexProductToQdrantAsync(Product product)
-        {
-            if (_indexingService == null) return;
-
-            try
-            {
-                await _indexingService.IndexProductAsync(product);
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "Failed to index product {ProductId} to Qdrant", product.Id);
-            }
         }
 
 
@@ -261,6 +234,7 @@ namespace backend.Services
                 } : null,
                 Inventory = p.Inventory != null ? new InventoryDTO
                 {
+                    Id = p.Inventory.Id,
                     ProductId = p.Inventory.ProductId,
                     Quantity = p.Inventory.Quantity,
                     LastCheckedAt = p.Inventory.LastCheckedAt,
@@ -274,6 +248,19 @@ namespace backend.Services
 
 
             return dto;
+        }
+
+        private async Task AddDiscountPricesAsync(List<ProductDTO> products)
+        {
+            var discounts = await _productRepository.GetActiveProductDiscountsAsync(products);
+            foreach (var product in products)
+            {
+                if (!discounts.TryGetValue(product.Id, out var discount)) continue;
+
+                product.DiscountAmount = discount.Amount;
+                product.DiscountPrice = Math.Max(0, product.Price - discount.Amount);
+                product.PromotionName = discount.Name;
+            }
         }
 
 

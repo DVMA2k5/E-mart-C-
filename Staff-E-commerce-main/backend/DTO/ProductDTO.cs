@@ -20,6 +20,13 @@ namespace backend.DTO
         // Money values use decimal
         public decimal Price { get; set; }
 
+        // Calculated from the currently active product promotion. The base price
+        // remains unchanged so product promotions continue to be the single source
+        // of truth for sale pricing.
+        public decimal? DiscountPrice { get; set; }
+        public decimal? DiscountAmount { get; set; }
+        public string? PromotionName { get; set; }
+
         public decimal? Cost { get; set; }
 
         public int? UnitId { get; set; }

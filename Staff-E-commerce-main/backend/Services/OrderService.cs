@@ -2,6 +2,7 @@ using backend.Models;
 using backend.Repository;
 using backend.DTO;
 using backend.Data;
+using backend.Helpers;
 using System;
 using System.Threading.Tasks;
 using System.Security.Claims;
@@ -281,36 +282,40 @@ namespace backend.Services
                 .Take(pageSize)
                 .ToListAsync();
 
-            var dtos = orders.Select(o => new OnlineOrderDTO
+            var dtos = orders.Select(o =>
             {
-                Id = o.Id,
-                OrderNumber = o.OrderNumber,
-                CustomerId = o.CustomerId,
-                CustomerName = o.Customer?.FullName,
-                CustomerPhone = o.Customer?.Phone,
-                CustomerAddress = o.Customer?.Address,
-                Status = o.Status,
-                OrderType = o.OrderType,
-                Subtotal = o.Subtotal,
-                Discount = o.Discount,
-                TotalAmount = o.TotalAmount,
-                PaymentMethod = o.PaymentMethod,
-                PaymentStatus = o.PaymentStatus,
-                Note = o.Note,
-                PromotionCode = o.Promotion?.Code,
-                CreatedAt = o.CreatedAt,
-                UpdatedAt = o.UpdatedAt,
-                Items = o.OrderItems.Select(oi => new OnlineOrderItemDTO
+                var delivery = OrderDeliveryDetails.Parse(o.Note);
+                return new OnlineOrderDTO
                 {
-                    Id = oi.Id,
-                    ProductId = oi.ProductId,
-                    ProductName = oi.Product?.ProductName ?? "",
-                    Sku = oi.Product?.Sku,
-                    ImageUrl = oi.Product?.ImageUrl,
-                    Quantity = oi.Quantity,
-                    UnitPrice = oi.UnitPrice,
-                    TotalPrice = oi.TotalPrice
-                }).ToList()
+                    Id = o.Id,
+                    OrderNumber = o.OrderNumber,
+                    CustomerId = o.CustomerId,
+                    CustomerName = delivery.Name ?? o.Customer?.FullName,
+                    CustomerPhone = delivery.Phone ?? o.Customer?.Phone,
+                    CustomerAddress = delivery.Address ?? o.Customer?.Address,
+                    Status = o.Status,
+                    OrderType = o.OrderType,
+                    Subtotal = o.Subtotal,
+                    Discount = o.Discount,
+                    TotalAmount = o.TotalAmount,
+                    PaymentMethod = o.PaymentMethod,
+                    PaymentStatus = o.PaymentStatus,
+                    Note = delivery.Note,
+                    PromotionCode = o.Promotion?.Code,
+                    CreatedAt = o.CreatedAt,
+                    UpdatedAt = o.UpdatedAt,
+                    Items = o.OrderItems.Select(oi => new OnlineOrderItemDTO
+                    {
+                        Id = oi.Id,
+                        ProductId = oi.ProductId,
+                        ProductName = oi.Product?.ProductName ?? "",
+                        Sku = oi.Product?.Sku,
+                        ImageUrl = oi.Product?.ImageUrl,
+                        Quantity = oi.Quantity,
+                        UnitPrice = oi.UnitPrice,
+                        TotalPrice = oi.TotalPrice
+                    }).ToList()
+                };
             }).ToList();
 
             return new PagedResult<OnlineOrderDTO>

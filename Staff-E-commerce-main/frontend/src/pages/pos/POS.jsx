@@ -285,7 +285,7 @@ export default function POS() {
         } else {
           showToast(`Không tìm thấy sản phẩm có mã: ${code}`, "error");
         }
-      } catch (err) {
+      } catch {
         showToast(`Không tìm thấy mã vạch: ${code}`, "error");
       } finally {
         setBarcodeLoading(false);
@@ -1071,12 +1071,12 @@ export default function POS() {
               <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
                 <div><span className="text-gray-500">Khách hàng:</span> <strong>{detailOrder.customerName || "—"}</strong></div>
                 <div><span className="text-gray-500">SĐT:</span> {detailOrder.customerPhone || "—"}</div>
-                <div><span className="text-gray-500">Địa chỉ:</span> {detailOrder.customerAddress || "—"}</div>
+                <div className="whitespace-pre-line break-words"><span className="text-gray-500">Địa chỉ giao hàng:</span> {detailOrder.customerAddress || "—"}</div>
                 <div>
                   <span className="text-gray-500">Thanh toán:</span>{" "}
                   <strong>{detailOrder.paymentMethod === "e_wallet" ? "Ví MoMo" : detailOrder.paymentMethod === "card" ? "Chuyển khoản QR" : "COD (Tiền mặt)"}</strong>
                 </div>
-                {detailOrder.note && <div><span className="text-gray-500">Ghi chú:</span> {detailOrder.note}</div>}
+                {detailOrder.note?.trim() && <div className="whitespace-pre-line break-words"><span className="text-gray-500">Ghi chú:</span> {detailOrder.note}</div>}
               </div>
 
               {detailOrder.items && detailOrder.items.length > 0 && (

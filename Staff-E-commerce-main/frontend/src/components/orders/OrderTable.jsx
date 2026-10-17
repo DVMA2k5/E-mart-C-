@@ -58,7 +58,7 @@ export default function OrderTable(  {showOrder,listOrders,
                       </td>
 
                       {/* Khách */}
-                      <td className="px-6 py-4"> {item.customerName?.trim() ? item.customerName : "Khách vãng lai"}</td>
+                      <td className="px-6 py-4 whitespace-nowrap"> {item.customerName?.trim() ? item.customerName : "Khách vãng lai"}</td>
 
                       {/* NV */}
                       <td className="px-6 py-4">{item.userName}</td>
@@ -67,8 +67,8 @@ export default function OrderTable(  {showOrder,listOrders,
                       <td className="px-6 py-4 text-right font-bold text-green-700">{formattedAmount}</td>
 
                       {/* Trạng thái: màu riêng */}
-                      <td className="px-6 py-4 text-center">
-                        <span className={`px-3 py-1 text-sm font-bold rounded-full ${
+                      <td className="px-6 py-4 text-center whitespace-nowrap">
+                        <span className={`inline-flex items-center justify-center whitespace-nowrap px-3 py-1 text-sm font-bold rounded-full ${
                           item.status === 'pending' ? 'text-yellow-800 bg-yellow-100' :
                           item.status === 'paid' ? 'text-blue-600 bg-blue-100' :
                           item.status === 'processing' ? 'text-indigo-700 bg-indigo-100' :
@@ -85,7 +85,8 @@ export default function OrderTable(  {showOrder,listOrders,
 
 
                       {/* Thao tác */}
-                      <td className="px-6 py-4 text-center space-x-2">
+                      <td className="px-6 py-4 text-center whitespace-nowrap">
+                        <div className="inline-flex flex-nowrap items-center justify-center gap-2">
                         <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700"
                          onClick={() => showOrder(index)}
                         >
@@ -99,6 +100,7 @@ export default function OrderTable(  {showOrder,listOrders,
                             Hủy
                           </button>
                         )}
+                        </div>
                       </td>
                     </tr>
                   );

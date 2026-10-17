@@ -1,6 +1,7 @@
 // Updated ProductList.jsx with role-based access control
 import React, { useEffect, useState, useCallback } from "react";
-import { getProductsPaginated, request } from "../../api/apiClient";
+import { BASE_URL, getProductsPaginated, request } from "../../api/apiClient";
+import { ImageOff } from "lucide-react";
 import { formatPrice } from "../../utils/formatPrice";
 import ProductModal from "../../components/products/ProductModal";
 import ImportModal from "../../components/import/ImportModal";
@@ -8,6 +9,22 @@ import { getAllCategories } from "../../api/categoryApi";
 import { useAuth } from "../../hook/useAuth";
 import { adjustInventory, getInventoryStats } from "../../api/inventoryApi";
 import InventoryHistory from "../inventory/InventoryHistory";
+
+function ProductThumbnail({ imagePath, name }) {
+  const [failedSource, setFailedSource] = useState(null);
+  let source = "";
+  if (imagePath?.trim()) {
+    try { source = new URL(imagePath.trim(), `${new URL(BASE_URL).origin}/`).href; }
+    catch { source = ""; }
+  }
+  return (
+    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+      {source && failedSource !== source ? (
+        <img src={source} alt={name} loading="lazy" className="h-full w-full object-contain" onError={() => setFailedSource(source)} />
+      ) : <span title="Chưa có ảnh sản phẩm" role="img" aria-label="Chưa có ảnh sản phẩm"><ImageOff size={22} className="text-gray-400" /></span>}
+    </div>
+  );
+}
 
 export default function ProductList() {
   // Get current user and role
@@ -575,6 +592,9 @@ export default function ProductList() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">
                   Id
                 </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">
+                  Ảnh
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">
                   Tên
                 </th>
@@ -626,6 +646,11 @@ export default function ProductList() {
                   <tr key={p.id ?? idx}>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {(meta.currentPage - 1) * meta.pageSize + idx + 1}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button type="button" onClick={() => openModal("view", p)} aria-label={`Xem chi tiết ${getName(p)}`} className="block rounded-lg focus-visible:outline-2 focus-visible:outline-indigo-600">
+                        <ProductThumbnail imagePath={p.imageUrl || p.image_url || (p.id ? `/assets/images/products/product-${p.id}.jpg` : "")} name={getName(p)} />
+                      </button>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-800">
                       {getName(p)}

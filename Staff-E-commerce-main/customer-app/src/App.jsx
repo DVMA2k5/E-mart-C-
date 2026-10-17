@@ -1,8 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   Image,
   KeyboardAvoidingView,
   Linking,
@@ -303,6 +305,39 @@ function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQu
   );
 }
 
+function CategorySlideModal({ visible, onRequestClose, children }) {
+  const [rendered, setRendered] = useState(visible);
+  const progress = useRef(new Animated.Value(0)).current;
+  const { width } = useWindowDimensions();
+
+  useEffect(() => {
+    if (visible) setRendered(true);
+  }, [visible]);
+
+  useEffect(() => {
+    if (!rendered) return undefined;
+    const animation = Animated.timing(progress, {
+      toValue: visible ? 1 : 0,
+      duration: visible ? 250 : 200,
+      easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      useNativeDriver: Platform.OS !== "web",
+    });
+    animation.start(({ finished }) => {
+      if (finished && !visible) setRendered(false);
+    });
+    return () => animation.stop();
+  }, [visible, rendered, progress]);
+
+  if (!rendered) return null;
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onRequestClose}>
+      <Animated.View pointerEvents={visible ? "auto" : "none"} style={{ flex: 1, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] }) }] }}>
+        {children}
+      </Animated.View>
+    </Modal>
+  );
+}
+
 function CustomerInvoice({ order, token, onClose }) {
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -438,6 +473,7 @@ export default function App() {
   const [profilePage, setProfilePage] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState({ city: "", ward: "", street: "", otherReceiver: false });
   const [addressMessage, setAddressMessage] = useState("");
+  const [addressBusy, setAddressBusy] = useState(false);
 
   const [voucherOpen, setVoucherOpen] = useState(false);
   const [voucherCode, setVoucherCode] = useState("");
@@ -679,15 +715,44 @@ export default function App() {
   };
 
   const saveDeliveryAddress = async () => {
+    if (addressBusy) return;
+    if (!accountReady) { setAddressMessage("Đang tải tài khoản, vui lòng thử lại sau."); return; }
     if (!deliveryAddress.city.trim() || !deliveryAddress.ward.trim() || !deliveryAddress.street.trim()) {
       setAddressMessage("Vui lòng nhập tỉnh/thành phố, phường/xã và số nhà, tên đường.");
       return;
     }
     const address = { ...deliveryAddress, city: deliveryAddress.city.trim(), ward: deliveryAddress.ward.trim(), street: deliveryAddress.street.trim() };
-    await AsyncStorage.setItem(ADDRESS_KEY, JSON.stringify(address));
-    setDeliveryAddress(address);
-    setCheckoutForm((form) => ({ ...form, address: [address.street, address.ward, address.city].join(", ") }));
-    setAddressMessage("Đã lưu địa chỉ nhận hàng.");
+    const fullAddress = [address.street, address.ward, address.city].join(", ");
+    if (fullAddress.length > 500) { setAddressMessage("Địa chỉ không được vượt quá 500 ký tự."); return; }
+    setAddressBusy(true);
+    setAddressMessage("");
+    try {
+      if (customer || customerToken) {
+        if (!customer || !customerToken) throw new Error("Vui lòng đăng nhập lại để cập nhật địa chỉ tài khoản.");
+        const response = await fetch(`${API_URL}/storefront/account/address`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
+          body: JSON.stringify({ address: fullAddress }),
+        });
+        if (!response.ok) throw new Error(await readError(response));
+        const profile = await response.json();
+        await AsyncStorage.multiSet([
+          [ADDRESS_KEY, JSON.stringify(address)],
+          [CUSTOMER_KEY, JSON.stringify(profile)],
+        ]);
+        setCustomer(profile);
+        setAccountAddress(profile.address || fullAddress);
+      } else {
+        await AsyncStorage.setItem(ADDRESS_KEY, JSON.stringify(address));
+      }
+      setDeliveryAddress(address);
+      setCheckoutForm((form) => ({ ...form, address: fullAddress }));
+      setAddressMessage(customer ? "Đã cập nhật địa chỉ tài khoản và địa chỉ nhận hàng." : "Đã lưu địa chỉ nhận hàng trên thiết bị.");
+    } catch (error) {
+      setAddressMessage(error.message || "Không thể lưu địa chỉ. Vui lòng thử lại.");
+    } finally {
+      setAddressBusy(false);
+    }
   };
 
   const logoutCustomer = () => {
@@ -1407,7 +1472,7 @@ export default function App() {
           <Pressable style={styles.receiverCheck} onPress={() => setDeliveryAddress((a) => ({ ...a, otherReceiver: !a.otherReceiver }))}><Text style={styles.checkBox}>{deliveryAddress.otherReceiver ? "☑" : "□"}</Text><Text style={styles.genderText}>Gọi người khác nhận hàng (nếu có)</Text></Pressable>
           {deliveryAddress.otherReceiver ? <TextInput placeholder="Tên và số điện thoại người nhận" style={styles.accountInput} /> : null}
           {addressMessage ? <Text style={styles.accountMessage}>{addressMessage}</Text> : null}
-          <AppButton title="Lưu địa chỉ" onPress={saveDeliveryAddress} />
+          <AppButton title={addressBusy ? "Đang lưu..." : "Lưu địa chỉ"} onPress={saveDeliveryAddress} disabled={addressBusy || !accountReady} />
         </View>}
       </> : <>
         <Text style={styles.eyebrow}>E-MART</Text>
@@ -1610,10 +1675,8 @@ export default function App() {
       {/* ========================================================================= */}
       {/* Danh mục loại sản phẩm và sản phẩm của cửa hàng. */}
       {/* ========================================================================= */}
-      <Modal
+      <CategorySlideModal
         visible={categoryModalOpen}
-        animationType="fade"
-        transparent={isDesktop}
         onRequestClose={() => selectedProduct ? setSelectedProduct(null) : setCategoryModalOpen(false)}
       >
         {selectedProduct ? renderProductDetails() : (
@@ -1772,7 +1835,7 @@ export default function App() {
           </View>
         </SafeAreaView>
         )}
-      </Modal>
+      </CategorySlideModal>
 
       <Modal visible={!!selectedProduct && !categoryModalOpen} animationType="slide" onRequestClose={() => setSelectedProduct(null)}>
         {!categoryModalOpen && renderProductDetails()}

@@ -171,6 +171,24 @@ namespace backend.Controllers
                 : Ok(ToCustomerProfile(customer));
         }
 
+        [HttpPut("account/address")]
+        [Authorize(Roles = "customer")]
+        public async Task<IActionResult> UpdateAccountAddress([FromBody] StorefrontAddressUpdateRequest request)
+        {
+            var address = request.Address.Trim();
+            if (string.IsNullOrWhiteSpace(address))
+                return BadRequest(new { message = "Địa chỉ không được để trống." });
+
+            var customer = await GetAuthenticatedCustomerAsync();
+            if (customer == null)
+                return Unauthorized(new { message = "Phiên đăng nhập không hợp lệ." });
+
+            customer.Address = address;
+            customer.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return Ok(ToCustomerProfile(customer));
+        }
+
         [HttpPut("account")]
         [Authorize(Roles = "customer")]
         public async Task<IActionResult> UpdateAccount([FromBody] StorefrontAccountUpdateRequest? request)
@@ -715,6 +733,12 @@ namespace backend.Controllers
 
         [Required, StringLength(20)]
         public string Phone { get; set; } = string.Empty;
+    }
+
+    public class StorefrontAddressUpdateRequest
+    {
+        [Required, StringLength(500)]
+        public string Address { get; set; } = string.Empty;
     }
 
     public class StorefrontAccountUpdateRequest

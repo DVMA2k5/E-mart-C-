@@ -354,6 +354,23 @@ export async function getUsersPaginated(page = 1, pageSize = 10) {
   return request(`/users/paginated${q}`);
 }
 
+export async function getRoles() {
+  return request("/roles");
+}
+
+export async function getEmployees() { return request("/employees"); }
+export async function createEmployee(payload) { return request("/employees", { method: "POST", body: payload }); }
+export async function updateEmployee(id, payload) { return request(`/employees/${id}`, { method: "PUT", body: payload }); }
+export async function deleteEmployee(id) { return request(`/employees/${id}`, { method: "DELETE" }); }
+
+export async function getPermissions() {
+  return request("/roles/permissions");
+}
+
+export async function updateRole(id, payload) {
+  return request(`/roles/${id}`, { method: "PUT", body: payload });
+}
+
 export async function getUserById(id) {
   return request(`/users/${id}`);
 }

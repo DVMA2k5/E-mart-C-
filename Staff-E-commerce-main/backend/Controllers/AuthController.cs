@@ -32,12 +32,16 @@ namespace backend.Controllers
             var exists = await _db.Users.AnyAsync(u => u.Username == req.Username);
             if (exists) return BadRequest("Username already exists.");
 
+            var staffRole = await _db.Roles.FirstOrDefaultAsync(r => r.Name == "staff" && r.IsActive);
+            if (staffRole == null)
+                return StatusCode(500, "Default staff role is not configured.");
+
             var user = new User
             {
                 Username = req.Username,
                 PasswordHash = HashPassword(req.Password),
                 FullName = req.Username,
-                Role = "staff",
+                RoleId = staffRole.Id,
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
             };
@@ -61,6 +65,7 @@ namespace backend.Controllers
             }
 
             var user = await _db.Users
+                .Include(u => u.RoleEntity)
                 .FirstOrDefaultAsync(u => u.Username == req.Username);
 
             if (user == null)
@@ -86,6 +91,9 @@ namespace backend.Controllers
                 return Unauthorized(new { message = "Tên đăng nhập hoặc mật khẩu không đúng" });
             }
 
+            if (string.Equals(user.RoleEntity?.Name, "customer", StringComparison.OrdinalIgnoreCase))
+                return StatusCode(403, new { message = "Tài khoản khách hàng chỉ đăng nhập trên ứng dụng khách hàng." });
+
             var (token, expiresIn) = _jwt.GenerateToken(user);
             Console.WriteLine($"✅ Token generated successfully");
 
@@ -96,7 +104,7 @@ namespace backend.Controllers
                 ExpiresIn = expiresIn,
                 UserId = user.Id,
                 UserName = user.Username,
-                Role = user.Role
+                Role = user.RoleEntity?.Name ?? string.Empty
             });
         }
 

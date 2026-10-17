@@ -46,7 +46,9 @@ import { BHX_CATEGORIES } from "./constants/bhxData";
 const defaultHost = typeof window !== "undefined" && window.location?.hostname
   ? `http://${window.location.hostname}:5099/api`
   : "http://10.0.2.2:5099/api";
-const API_URL = (process.env.EXPO_PUBLIC_API_URL || defaultHost).replace(/\/$/, "");
+const API_URL = (typeof window !== "undefined" && window.location?.hostname
+  ? defaultHost
+  : process.env.EXPO_PUBLIC_API_URL || defaultHost).replace(/\/$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
 const CART_KEY = "e-mart-mobile-cart";
 const CUSTOMER_KEY = "e-mart-mobile-customer";
@@ -264,8 +266,16 @@ export default function App() {
   const [customer, setCustomer] = useState(null);
   const [customerToken, setCustomerToken] = useState("");
   const [accountReady, setAccountReady] = useState(false);
-  const [loginPhone, setLoginPhone] = useState("");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [registerMode, setRegisterMode] = useState(false);
+  const [registerFullName, setRegisterFullName] = useState("");
+  const [registerPhone, setRegisterPhone] = useState("");
   const [accountName, setAccountName] = useState("");
+  const [accountEmail, setAccountEmail] = useState("");
+  const [accountAddress, setAccountAddress] = useState("");
+  const [accountDateOfBirth, setAccountDateOfBirth] = useState("");
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountError, setAccountError] = useState("");
   const [accountMessage, setAccountMessage] = useState("");
@@ -352,6 +362,9 @@ export default function App() {
         setCustomer(profile);
         setCustomerToken(token);
         setAccountName(profile.fullName || "");
+        setAccountEmail(profile.email || "");
+        setAccountAddress(profile.address || "");
+        setAccountDateOfBirth(profile.dateOfBirth ? profile.dateOfBirth.slice(0, 10) : "");
         setCheckoutForm((form) => ({ ...form, fullName: profile.fullName || "", phone: profile.phone || "" }));
       } catch {
         await AsyncStorage.multiRemove([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY]).catch(() => { });
@@ -381,10 +394,10 @@ export default function App() {
     return () => { active = false; };
   }, [tab, customerToken, ordersRefreshKey]);
 
-  const loginWithPhone = async () => {
-    const phone = loginPhone.trim();
-    if (!/^(0|\+84)[35789]\d{8}$/.test(phone)) {
-      setAccountError("Số điện thoại Việt Nam chưa đúng định dạng.");
+  const loginCustomer = async () => {
+    const username = loginUsername.trim();
+    if (username.length < 3 || loginPassword.length < 6) {
+      setAccountError("Vui lòng nhập tên đăng nhập và mật khẩu hợp lệ.");
       return;
     }
 
@@ -395,7 +408,7 @@ export default function App() {
       const response = await fetch(`${API_URL}/storefront/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ username, password: loginPassword }),
       });
       if (!response.ok) throw new Error(await readError(response));
       const result = await response.json();
@@ -406,10 +419,53 @@ export default function App() {
       setCustomerToken(result.token);
       setCustomer(result.customer);
       setAccountName(result.customer.fullName || "");
+      setAccountEmail(result.customer.email || "");
+      setAccountAddress(result.customer.address || "");
+      setAccountDateOfBirth(result.customer.dateOfBirth ? result.customer.dateOfBirth.slice(0, 10) : "");
       setCheckoutForm((form) => ({ ...form, fullName: result.customer.fullName || "", phone: result.customer.phone }));
-      setAccountMessage(result.customer.fullName ? "Đăng nhập thành công." : "Tài khoản đã tạo. Bạn có thể thêm họ tên bên dưới.");
+      setAccountMessage("Đăng nhập thành công.");
     } catch (error) {
       setAccountError(error.message || "Không thể đăng nhập.");
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const registerCustomer = async () => {
+    const username = loginUsername.trim();
+    const fullName = registerFullName.trim();
+    const phone = registerPhone.trim();
+    if (username.length < 3 || loginPassword.length < 6 || fullName.length < 2) {
+      setAccountError("Vui lòng nhập tên đăng nhập, mật khẩu và họ tên hợp lệ.");
+      return;
+    }
+    if (!/^(0|\+84)[35789]\d{8}$/.test(phone)) {
+      setAccountError("Số điện thoại Việt Nam chưa đúng định dạng.");
+      return;
+    }
+
+    setAccountBusy(true);
+    setAccountError("");
+    setAccountMessage("");
+    try {
+      const response = await fetch(`${API_URL}/storefront/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password: loginPassword, fullName, phone }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      const result = await response.json();
+      await AsyncStorage.multiSet([
+        [CUSTOMER_TOKEN_KEY, result.token],
+        [CUSTOMER_KEY, JSON.stringify(result.customer)],
+      ]);
+      setCustomerToken(result.token);
+      setCustomer(result.customer);
+      setAccountName(result.customer.fullName || "");
+      setCheckoutForm((form) => ({ ...form, fullName: result.customer.fullName || "", phone: result.customer.phone || "" }));
+      setAccountMessage("Tạo tài khoản thành công.");
+    } catch (error) {
+      setAccountError(error.message || "Không thể tạo tài khoản.");
     } finally {
       setAccountBusy(false);
     }
@@ -432,12 +488,20 @@ export default function App() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${customerToken}`,
         },
-        body: JSON.stringify({ fullName }),
+        body: JSON.stringify({
+          fullName,
+          email: accountEmail.trim() || null,
+          address: accountAddress.trim() || null,
+          dateOfBirth: accountDateOfBirth || null,
+        }),
       });
       if (!response.ok) throw new Error(await readError(response));
       const profile = await response.json();
       await AsyncStorage.setItem(CUSTOMER_KEY, JSON.stringify(profile));
       setCustomer(profile);
+      setAccountEmail(profile.email || "");
+      setAccountAddress(profile.address || "");
+      setAccountDateOfBirth(profile.dateOfBirth ? profile.dateOfBirth.slice(0, 10) : "");
       setCheckoutForm((form) => ({ ...form, fullName: profile.fullName }));
       setAccountMessage("Đã cập nhật họ tên.");
     } catch (error) {
@@ -470,7 +534,13 @@ export default function App() {
           setCustomer(null);
           setCustomerToken("");
           setAccountName("");
-          setLoginPhone("");
+          setAccountEmail("");
+          setAccountAddress("");
+          setAccountDateOfBirth("");
+          setLoginUsername("");
+          setLoginPassword("");
+          setRegisterFullName("");
+          setRegisterPhone("");
           setAccountError("");
           setAccountMessage("");
           setCheckoutForm((form) => ({ ...form, fullName: "", phone: "" }));
@@ -1122,112 +1192,107 @@ export default function App() {
   };
 
   const renderProfile = () => (
-    <ScrollView contentContainerStyle={styles.pageContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      <View style={styles.responsiveContainer}>
-        {profilePage ? (
-          <>
-            <View style={styles.accountPageHeading}>
-              <Pressable style={styles.accountBackButton} onPress={() => { setProfilePage(""); setAccountError(""); setAccountMessage(""); setAddressMessage(""); }}>
-                <Text style={styles.accountBack}>‹</Text>
-              </Pressable>
-              <Text style={styles.accountPageTitle}>
-                {profilePage === "personal" ? "Thông tin tài khoản" : "Địa chỉ giao hàng"}
+    <ScrollView contentContainerStyle={styles.pageContent} keyboardShouldPersistTaps="handled">
+      {profilePage ? <>
+        <View style={styles.accountPageHeading}><Pressable style={styles.accountBackButton} onPress={() => { setProfilePage(""); setAccountError(""); setAccountMessage(""); setAddressMessage(""); }}><Text style={styles.accountBack}>‹</Text></Pressable><Text style={styles.accountPageTitle}>{profilePage === "personal" ? "Thông tin tài khoản" : "Địa chỉ nhận hàng"}</Text></View>
+        {profilePage === "personal" ? <View style={styles.infoCard}>
+          <TextInput value={accountName} onChangeText={setAccountName} placeholder="Họ và tên *" style={styles.accountInput} maxLength={150} autoCapitalize="words" />
+          <TextInput value={accountEmail} onChangeText={setAccountEmail} placeholder="Email" style={styles.accountInput} keyboardType="email-address" autoCapitalize="none" />
+          {Platform.OS === "web" ? (
+            <input
+              type="date"
+              value={accountDateOfBirth}
+              onChange={(event) => setAccountDateOfBirth(event.target.value)}
+              style={styles.webDateInput}
+              aria-label="Ngày sinh"
+            />
+          ) : (
+            <Pressable style={styles.accountInput} onPress={() => setDatePickerOpen(true)}>
+              <Text style={accountDateOfBirth ? styles.dateValue : styles.datePlaceholder}>
+                {accountDateOfBirth || "Chọn ngày sinh"}
+              </Text>
+            </Pressable>
+          )}
+          <TextInput value={accountAddress} onChangeText={setAccountAddress} placeholder="Địa chỉ" style={styles.accountInput} />
+          <Text style={[styles.accountInput, styles.phoneReadonly]}><Text style={styles.phoneHint}>Số điện thoại *</Text>{"\n"}{customer?.phone}</Text>
+          {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
+          {accountMessage ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
+          <AppButton title={accountBusy ? "Đang lưu..." : "Lưu chỉnh sửa"} onPress={saveAccountName} disabled={accountBusy} />
+
+        </View> : <View style={styles.infoCard}>
+          <Pressable style={styles.locationButton} onPress={() => Alert.alert("Lấy vị trí hiện tại", "Tính năng định vị sẽ được bổ sung khi ứng dụng tích hợp quyền truy cập vị trí.")}><Text style={styles.locationButtonText}>◎ Lấy vị trí hiện tại</Text></Pressable>
+          <TextInput value={deliveryAddress.city} onChangeText={(city) => setDeliveryAddress((a) => ({ ...a, city }))} placeholder="Tỉnh/Thành phố" style={styles.accountInput} />
+          <TextInput value={deliveryAddress.ward} onChangeText={(ward) => setDeliveryAddress((a) => ({ ...a, ward }))} placeholder="Phường/Xã" style={styles.accountInput} />
+          <TextInput value={deliveryAddress.street} onChangeText={(street) => setDeliveryAddress((a) => ({ ...a, street }))} placeholder="Số nhà, tên đường" style={styles.accountInput} />
+          <Text style={styles.receiverLine}>Người nhận:  <Text style={styles.receiverPhone}>{customer?.phone}</Text></Text>
+          <Pressable style={styles.receiverCheck} onPress={() => setDeliveryAddress((a) => ({ ...a, otherReceiver: !a.otherReceiver }))}><Text style={styles.checkBox}>{deliveryAddress.otherReceiver ? "☑" : "□"}</Text><Text style={styles.genderText}>Gọi người khác nhận hàng (nếu có)</Text></Pressable>
+          {deliveryAddress.otherReceiver ? <TextInput placeholder="Tên và số điện thoại người nhận" style={styles.accountInput} /> : null}
+          {addressMessage ? <Text style={styles.accountMessage}>{addressMessage}</Text> : null}
+          <AppButton title="Lưu địa chỉ" onPress={saveDeliveryAddress} />
+        </View>}
+      </> : <>
+        <Text style={styles.eyebrow}>E-MART</Text>
+        <Text style={styles.pageTitle}>Tài khoản</Text>
+        {!accountReady ? <View style={styles.centerState}><ActivityIndicator color={GREEN} /><Text style={styles.stateText}>Đang tải tài khoản...</Text></View> : customer ? <>
+          <View style={styles.profileCard}>
+            <Text style={styles.profileEmoji}>👋</Text>
+            <Text style={styles.emptyTitle}>{customer.fullName || "Chào mừng bạn"}</Text>
+            <Text style={styles.stateText}>{customer.phone}</Text>
+            <View style={{ marginTop: 10, backgroundColor: "#eef7ef", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ fontSize: 14 }}>⭐</Text>
+              <Text style={{ fontSize: 13, fontWeight: "800", color: GREEN }}>
+                {customer.rewardPoints || 0} điểm thưởng
+              </Text>
+              <Text style={{ fontSize: 11, color: MUTED }}>
+                (đổi được {money((customer.rewardPoints || 0) * 1000)})
               </Text>
             </View>
-
-            {profilePage === "personal" ? (
-              <View style={styles.infoCard}>
-                <Text style={styles.inputLabel}>HỌ VÀ TÊN</Text>
-                <TextInput value={accountName} onChangeText={setAccountName} placeholder="Họ và tên của bạn" style={styles.accountInput} maxLength={150} autoCapitalize="words" />
-                <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI ĐĂNG KÝ</Text>
-                <Text style={[styles.accountInput, styles.phoneReadonly]}>{customer?.phone}</Text>
-                {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
-                {accountMessage ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
-                <AppButton title={accountBusy ? "Đang lưu..." : "Lưu thay đổi"} onPress={saveAccountName} disabled={accountBusy} />
+          </View>
+          <View style={styles.infoCard}><Text style={styles.infoTitle}>Thông tin cá nhân</Text>
+            <Pressable style={styles.profileMenuRow} onPress={() => { setAccountName(customer.fullName || ""); setProfilePage("personal"); }}><Text style={styles.profileMenuIcon}>♙</Text><Text style={styles.profileMenuText}>Sửa thông tin cá nhân</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
+            <Pressable style={styles.profileMenuRow} onPress={() => { setAddressMessage(""); setProfilePage("address"); }}><Text style={styles.profileMenuIcon}>♧</Text><Text style={styles.profileMenuText}>Địa chỉ nhận hàng</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
+          </View>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>Hỗ trợ khách hàng</Text>
+            <Text style={styles.stateText}>Đơn hàng hiện thanh toán khi nhận hàng.</Text>
+            <AppButton title="Đăng xuất" secondary onPress={logoutCustomer} />
+          </View>
+        </> : <>
+          <View style={styles.infoCard}>
+            <Text style={styles.inputLabel}>{registerMode ? "TẠO TÀI KHOẢN KHÁCH HÀNG" : "ĐĂNG NHẬP KHÁCH HÀNG"}</Text>
+            {registerMode ? <TextInput value={registerFullName} onChangeText={setRegisterFullName} placeholder="Họ và tên" style={styles.formInput} autoCapitalize="words" /> : null}
+            {registerMode ? <TextInput value={registerPhone} onChangeText={setRegisterPhone} placeholder="Số điện thoại" style={styles.formInput} keyboardType="phone-pad" maxLength={13} autoComplete="tel" /> : null}
+            <TextInput value={loginUsername} onChangeText={setLoginUsername} placeholder="Tên đăng nhập" style={styles.formInput} autoCapitalize="none" autoComplete="username" />
+            <TextInput value={loginPassword} onChangeText={setLoginPassword} placeholder="Mật khẩu" style={styles.formInput} secureTextEntry autoCapitalize="none" autoComplete="password" />
+            {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
+            <AppButton title={accountBusy ? (registerMode ? "Đang tạo tài khoản..." : "Đang đăng nhập...") : (registerMode ? "Tạo tài khoản" : "Đăng nhập")} onPress={registerMode ? registerCustomer : loginCustomer} disabled={accountBusy} />
+            <Pressable onPress={() => { setRegisterMode((mode) => !mode); setAccountError(""); setAccountMessage(""); }}>
+              <Text style={styles.accountLink}>{registerMode ? "Đã có tài khoản? Đăng nhập" : "Chưa có tài khoản? Đăng ký ngay"}</Text>
+            </Pressable>
+            {accountMessage ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
+          </View>
+        </>}
+        <Modal visible={datePickerOpen} transparent animationType="fade" onRequestClose={() => setDatePickerOpen(false)}>
+          <View style={styles.dateModalBackdrop}>
+            <View style={styles.dateModalCard}>
+              <Text style={styles.infoTitle}>Chọn ngày sinh</Text>
+              <TextInput
+                value={accountDateOfBirth}
+                onChangeText={setAccountDateOfBirth}
+                placeholder="YYYY-MM-DD"
+                style={styles.accountInput}
+                keyboardType="numbers-and-punctuation"
+                maxLength={10}
+              />
+              <View style={styles.dateModalActions}>
+                <AppButton title="Hủy" secondary onPress={() => setDatePickerOpen(false)} />
+                <AppButton title="Chọn ngày" onPress={() => setDatePickerOpen(false)} />
               </View>
-            ) : (
-              <View style={styles.infoCard}>
-                <Text style={styles.inputLabel}>TỈNH / THÀNH PHỐ</Text>
-                <TextInput value={deliveryAddress.city} onChangeText={(city) => setDeliveryAddress((a) => ({ ...a, city }))} placeholder="Ví dụ: TP. Hồ Chí Minh" style={styles.accountInput} />
-                <Text style={styles.inputLabel}>QUẬN / HUYỆN / PHƯỜNG / XÃ</Text>
-                <TextInput value={deliveryAddress.ward} onChangeText={(ward) => setDeliveryAddress((a) => ({ ...a, ward }))} placeholder="Ví dụ: Phường Bến Nghé, Quận 1" style={styles.accountInput} />
-                <Text style={styles.inputLabel}>SỐ NHÀ, TÊN ĐƯỜNG</Text>
-                <TextInput value={deliveryAddress.street} onChangeText={(street) => setDeliveryAddress((a) => ({ ...a, street }))} placeholder="Ví dụ: 72 Lê Thánh Tôn" style={styles.accountInput} />
-                {addressMessage ? <Text style={styles.accountMessage}>{addressMessage}</Text> : null}
-                <AppButton title="Lưu địa chỉ nhận hàng" onPress={saveDeliveryAddress} />
-              </View>
-            )}
-          </>
-        ) : (
-          <>
-            <Text style={styles.eyebrow}>BÁCH HÓA XANH</Text>
-            <Text style={styles.pageTitle}>Tài khoản thành viên</Text>
-
-            {!accountReady ? (
-              <View style={styles.centerState}>
-                <ActivityIndicator color={BHX_GREEN} />
-                <Text style={styles.stateText}>Đang tải hồ sơ...</Text>
-              </View>
-            ) : customer ? (
-              <>
-                <View style={styles.profileCard}>
-                  <View style={styles.profileAvatarBox}>
-                    <IconUser size={34} color={BHX_GREEN} />
-                  </View>
-                  <Text style={styles.profileName}>{customer.fullName || "Khách Hàng Thân Thiết"}</Text>
-                  <Text style={styles.profilePhone}>{customer.phone}</Text>
-                  <View style={styles.pointsPill}>
-                    <IconStar size={15} color="#d97706" />
-                    <Text style={styles.pointsText}>{customer.rewardPoints || 0} điểm tích lũy</Text>
-                    <Text style={styles.pointsEquivalent}>= {money((customer.rewardPoints || 0) * 1000)}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.infoCard}>
-                  <Text style={styles.infoTitle}>Cài đặt cá nhân</Text>
-                  <Pressable style={styles.profileMenuRow} onPress={() => { setAccountName(customer.fullName || ""); setProfilePage("personal"); }}>
-                    <Text style={styles.profileMenuText}>Hồ sơ cá nhân</Text>
-                    <IconChevronRight size={18} color="#94a3b8" />
-                  </Pressable>
-                  <Pressable style={styles.profileMenuRow} onPress={() => { setAddressMessage(""); setProfilePage("address"); }}>
-                    <Text style={styles.profileMenuText}>Địa chỉ nhận hàng mặc định</Text>
-                    <IconChevronRight size={18} color="#94a3b8" />
-                  </Pressable>
-                </View>
-
-                <View style={styles.infoCard}>
-                  <AppButton title="Đăng xuất tài khoản" secondary onPress={logoutCustomer} />
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={styles.profileCard}>
-                  <View style={styles.profileAvatarBox}>
-                    <IconUser size={34} color={BHX_GREEN} />
-                  </View>
-                  <Text style={styles.emptyTitle}>Đăng nhập bằng SĐT</Text>
-                  <Text style={styles.stateText}>Nhập số điện thoại để tích điểm và theo dõi đơn hàng giao tận nhà.</Text>
-                </View>
-                <View style={styles.infoCard}>
-                  <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI DI ĐỘNG</Text>
-                  <TextInput
-                    value={loginPhone}
-                    onChangeText={setLoginPhone}
-                    placeholder="0912345678"
-                    style={styles.formInput}
-                    keyboardType="phone-pad"
-                    maxLength={13}
-                    autoComplete="tel"
-                  />
-                  {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
-                  <AppButton title={accountBusy ? "Đang kết nối..." : "Đăng nhập ngay"} onPress={loginWithPhone} disabled={accountBusy} />
-                  {accountMessage ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
-                </View>
-              </>
-            )}
-          </>
-        )}
-      </View>
+            </View>
+          </View>
+        </Modal>
+        <View style={styles.infoCard}><Text style={styles.infoTitle}>Hỗ trợ khách hàng</Text><Text style={styles.stateText}>Đơn hàng hiện thanh toán khi nhận hàng.</Text></View>
+      </>}
     </ScrollView>
   );
 
@@ -1816,2066 +1881,258 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: BG_PAGE,
-  },
-  responsiveContainer: {
-    width: "100%",
-    maxWidth: 1200,
-    alignSelf: "center",
-  },
-
-  // 1. TOP HEADER PHONG CÁCH BÁCH HÓA XANH (BỐ CỤC 2 TẦNG CHỐNG TRÀN TRÊN MOBILE)
-  header: {
-    backgroundColor: BHX_GREEN,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 10,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-  },
-  headerResponsiveInner: {
-    width: "100%",
-    maxWidth: 1200,
-    alignSelf: "center",
-  },
-  locationBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "rgba(0, 0, 0, 0.18)",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  locationLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    marginRight: 6,
-    gap: 4,
-  },
-  locationLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#e2e8f0",
-  },
-  locationAddress: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#ffffff",
-    flexShrink: 1,
-  },
-  locationRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-    backgroundColor: "rgba(255, 212, 0, 0.2)",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  speedText: {
-    fontSize: 10,
-    fontWeight: "900",
-    color: BHX_YELLOW,
-  },
-
-  headerTopLine: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  brandRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  brandTextE: {
-    color: "#ffffff",
-    fontSize: 18,
-    fontWeight: "900",
-    letterSpacing: -0.5,
-  },
-  brandTagBox: {
-    backgroundColor: BHX_YELLOW,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  brandTextXanh: {
-    color: BHX_GREEN,
-    fontSize: 13,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-  },
-  headerRightGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  categoryMenuBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.18)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.35)",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    gap: 4,
-  },
-  categoryMenuBtnText: {
-    color: "#ffffff",
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  headerCart: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255, 255, 255, 0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-  },
-  cartBadge: {
-    position: "absolute",
-    right: -4,
-    top: -4,
-    minWidth: 17,
-    height: 17,
-    borderRadius: 9,
-    backgroundColor: BHX_RED,
-    borderWidth: 1.5,
-    borderColor: "#ffffff",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 3,
-  },
-  cartBadgeText: {
-    color: "#ffffff",
-    fontSize: 9,
-    fontWeight: "900",
-  },
-
-  // Search Bar (100% chiều rộng chống tràn)
-  searchBar: {
-    height: 38,
-    backgroundColor: "#ffffff",
-    borderRadius: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingLeft: 12,
-    paddingRight: 3,
-    overflow: "hidden",
-  },
-  searchInput: {
-    flex: 1,
-    color: TEXT_DARK,
-    fontSize: 12,
-    paddingVertical: 0,
-  },
-  searchSubmitBtn: {
-    backgroundColor: BHX_YELLOW,
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  clearSearchBtn: {
-    padding: 6,
-  },
-
-  // Quick Tags
-  quickTagsRow: {
-    gap: 6,
-    marginTop: 8,
-    paddingBottom: 2,
-  },
-  quickTagChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 14,
-    backgroundColor: "rgba(255, 255, 255, 0.15)",
-  },
-  quickTagChipActive: {
-    backgroundColor: BHX_YELLOW,
-  },
-  quickTagText: {
-    fontSize: 10,
-    color: "#ffffff",
-    fontWeight: "700",
-  },
-  quickTagTextActive: {
-    color: BHX_GREEN,
-    fontWeight: "900",
-  },
-
-  // Scroll Content
-  screen: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: 10,
-    paddingTop: 10,
-    paddingBottom: 24,
-  },
-
-  // Hero Banner
-  heroBanner: {
-    minHeight: 120,
-    borderRadius: 12,
-    padding: 14,
-    overflow: "hidden",
-    position: "relative",
-    justifyContent: "center",
-  },
-  bannerInfo: {
-    maxWidth: "85%",
-    zIndex: 2,
-  },
-  bannerBadgePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(255, 255, 255, 0.18)",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginBottom: 4,
-    gap: 4,
-  },
-  bannerBadgeText: {
-    color: BHX_YELLOW,
-    fontSize: 9,
-    fontWeight: "900",
-  },
-  bannerTitle: {
-    color: "#ffffff",
-    fontSize: 17,
-    fontWeight: "900",
-    letterSpacing: -0.3,
-  },
-  bannerSubtitle: {
-    color: "#e2e8f0",
-    fontSize: 11,
-    marginTop: 2,
-  },
-  bannerCtaBtn: {
-    alignSelf: "flex-start",
-    backgroundColor: BHX_YELLOW,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginTop: 8,
-  },
-  bannerCtaText: {
-    color: BHX_GREEN,
-    fontSize: 10,
-    fontWeight: "900",
-  },
-  bannerDots: {
-    position: "absolute",
-    bottom: 8,
-    right: 12,
-    flexDirection: "row",
-    gap: 4,
-    zIndex: 3,
-  },
-  bannerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "rgba(255, 255, 255, 0.4)",
-  },
-  bannerDotActive: {
-    width: 14,
-    backgroundColor: BHX_YELLOW,
-  },
-
-  // Trust Bar
-  trustBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-  },
-  trustItem: {
-    flex: 1,
-    alignItems: "center",
-    gap: 2,
-  },
-  trustLabel: {
-    fontSize: 9,
-    fontWeight: "700",
-    color: TEXT_DARK,
-    textAlign: "center",
-  },
-  trustDivider: {
-    width: 1,
-    height: 20,
-    backgroundColor: "#e2e8f0",
-  },
-
-  // 3. MENU PHÂN LOẠI NGÀNH HÀNG GRID 10 Ô
-  categorySectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 14,
-    marginBottom: 8,
-  },
-  categorySectionTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  greenBar: {
-    width: 4,
-    height: 14,
-    backgroundColor: BHX_GREEN,
-    borderRadius: 2,
-  },
-  categorySectionTitle: {
-    fontSize: 13,
-    fontWeight: "900",
-    color: TEXT_DARK,
-    letterSpacing: 0.3,
-  },
-  openCategoryDrawerBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-  },
-  openCategoryDrawerText: {
-    fontSize: 11,
-    color: BHX_GREEN,
-    fontWeight: "800",
-  },
-
-  categoryGridContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    padding: 6,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-    justifyContent: "space-between",
-    rowGap: 4,
-  },
-  categoryGridItem: {
-    alignItems: "center",
-    paddingVertical: 6,
-    paddingHorizontal: 2,
-    borderRadius: 8,
-  },
-  categoryGridItemActive: {
-    backgroundColor: "#e8f5ec",
-    borderWidth: 1,
-    borderColor: BHX_GREEN,
-  },
-  categoryIconWrap: {
-    width: 36,
-    height: 36,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 3,
-  },
-  categoryGridText: {
-    fontSize: 9,
-    fontWeight: "700",
-    color: TEXT_DARK,
-    textAlign: "center",
-    lineHeight: 12,
-  },
-  categoryGridTextActive: {
-    color: BHX_GREEN,
-    fontWeight: "900",
-  },
-
-  // 4. FILTER TOOLBAR
-  filterToolbar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 14,
-    marginBottom: 10,
-  },
-  filterLeft: {
-    flex: 1,
-    marginRight: 6,
-  },
-  filterResultCount: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: TEXT_DARK,
-  },
-  filterNumber: {
-    fontSize: 12,
-    color: TEXT_MUTED,
-    fontWeight: "600",
-  },
-  sortPillsRow: {
-    flexDirection: "row",
-    gap: 5,
-  },
-  sortPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-    gap: 3,
-  },
-  sortPillActive: {
-    backgroundColor: BHX_GREEN,
-    borderColor: BHX_GREEN,
-  },
-  sortPillText: {
-    fontSize: 10,
-    color: TEXT_DARK,
-    fontWeight: "700",
-  },
-  sortPillTextActive: {
-    color: "#ffffff",
-  },
-
-  // 5. PRODUCT GRID (RESPONSIVE CHUẨN CẢ MOBILE & DESKTOP)
-  productGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    rowGap: 10,
-  },
-  productCard: {
-    backgroundColor: "#ffffff",
-    borderColor: BORDER_COLOR,
-    borderWidth: 1,
-    borderRadius: 10,
-    overflow: "hidden",
-    paddingBottom: 8,
-    ...Platform.select({
-      web: {
-        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-      },
-      default: {
-        elevation: 1,
-      },
-    }),
-  },
-  productCardActive: {
-    borderColor: BHX_GREEN,
-    borderWidth: 1.5,
-    backgroundColor: "#fcfdfc",
-  },
-  productImageBox: {
-    height: 125,
-    backgroundColor: "#ffffff",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
-    padding: 6,
-  },
-  productImage: {
-    width: "100%",
-    height: "100%",
-  },
-  badgeRow: {
-    position: "absolute",
-    top: 4,
-    left: 4,
-    flexDirection: "column",
-    gap: 3,
-  },
-  discountBadge: {
-    backgroundColor: BHX_RED,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  discountBadgeText: {
-    color: "#ffffff",
-    fontSize: 9,
-    fontWeight: "900",
-  },
-  hotBadge: {
-    backgroundColor: BHX_ORANGE,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  hotBadgeText: {
-    color: "#ffffff",
-    fontSize: 8,
-    fontWeight: "900",
-  },
-
-  productBody: {
-    paddingHorizontal: 8,
-    paddingTop: 6,
-  },
-  productCategory: {
-    color: "#94a3b8",
-    fontSize: 8,
-    fontWeight: "800",
-    textTransform: "uppercase",
-  },
-  productName: {
-    color: TEXT_DARK,
-    fontWeight: "800",
-    fontSize: 12,
-    lineHeight: 16,
-    minHeight: 32,
-    marginTop: 2,
-  },
-  fastDeliveryTag: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    marginTop: 3,
-  },
-  fastDeliveryText: {
-    fontSize: 9,
-    color: BHX_ORANGE,
-    fontWeight: "800",
-  },
-  priceContainer: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 5,
-    marginTop: 5,
-    marginBottom: 6,
-  },
-  productPrice: {
-    color: BHX_GREEN,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  originalPrice: {
-    color: "#94a3b8",
-    fontSize: 10,
-    fontWeight: "600",
-    textDecorationLine: "line-through",
-  },
-
-  // Smart Stepper
-  stepperContainer: {
-    height: 30,
-  },
-  addCartBtn: {
-    flex: 1,
-    height: 30,
-    backgroundColor: BHX_GREEN,
-    borderRadius: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-  },
-  addCartBtnText: {
-    color: "#ffffff",
-    fontSize: 10,
-    fontWeight: "900",
-  },
-  stepperBox: {
-    flex: 1,
-    height: 30,
-    backgroundColor: "#ffffff",
-    borderRadius: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderWidth: 1.5,
-    borderColor: BHX_GREEN,
-    overflow: "hidden",
-  },
-  stepperBtn: {
-    width: 30,
-    height: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#ffffff",
-  },
-  stepperQtyText: {
-    color: BHX_GREEN,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  stepperBtnPlus: {
-    backgroundColor: BHX_GREEN,
-  },
-
-  // ==========================================
-  // MEGA CATEGORY DRAWER (MENU PHÂN LOẠI 2 CỘT FIX TỶ LỆ)
-  // ==========================================
-  drawerSafeArea: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-  },
-  drawerDesktopBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 20,
-  },
-  drawerDesktopDialog: {
-    width: "100%",
-    maxWidth: 960,
-    height: "88%",
-    maxHeight: 750,
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    overflow: "hidden",
-    ...Platform.select({
-      web: {
-        boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.4)",
-      },
-    }),
-  },
-  drawerMobileContainer: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-  },
-  bhxModalHeader: {
-    height: 54,
-    backgroundColor: BHX_GREEN,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 8,
-    gap: 8,
-  },
-  bhxHeaderActionGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  bhxHeaderCircleBtn: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 4,
-  },
-  bhxHeaderBtnLabel: {
-    color: "#ffffff",
-    fontSize: 9,
-    fontWeight: "800",
-    marginTop: 1,
-  },
-  bhxModalSearchBox: {
-    flex: 1,
-    height: 36,
-    backgroundColor: "#ffffff",
-    borderRadius: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 10,
-    gap: 6,
-  },
-  bhxModalSearchInput: {
-    flex: 1,
-    fontSize: 11,
-    color: TEXT_DARK,
-    fontWeight: "600",
-    paddingVertical: 0,
-  },
-
-  drawerBody: {
-    flex: 1,
-    flexDirection: "row",
-    overflow: "hidden",
-    width: "100%",
-  },
-  drawerSidebarWrapper: {
-    backgroundColor: "#f8fafc",
-    borderRightWidth: 1,
-    borderRightColor: BORDER_COLOR,
-    flexGrow: 0,
-    flexShrink: 0,
-    width: 105,
-    maxWidth: 105,
-  },
-  drawerSidebar: {
-    flex: 1,
-    width: "100%",
-  },
-  bhxSidebarItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-    alignItems: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
-    position: "relative",
-  },
-  bhxSidebarItemActive: {
-    backgroundColor: "#ffffff",
-  },
-  bhxSidebarIconBox: {
-    width: 36,
-    height: 36,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 3,
-    borderRadius: 8,
-    backgroundColor: "#f8fafc",
-  },
-  bhxSidebarIconBoxActive: {
-    backgroundColor: "#e8f5ec",
-  },
-  bhxSidebarName: {
-    fontSize: 9,
-    color: "#475569",
-    fontWeight: "700",
-    textAlign: "center",
-    lineHeight: 12,
-  },
-  bhxSidebarNameActive: {
-    color: BHX_GREEN,
-    fontWeight: "900",
-  },
-  bhxSidebarActiveBar: {
-    position: "absolute",
-    left: 0,
-    top: 4,
-    bottom: 4,
-    width: 3.5,
-    backgroundColor: BHX_GREEN,
-    borderTopRightRadius: 2,
-    borderBottomRightRadius: 2,
-  },
-
-  drawerContentCol: {
-    flex: 1,
-    flexGrow: 1,
-    flexShrink: 1,
-    minWidth: 0,
-    backgroundColor: "#ffffff",
-    overflow: "hidden",
-  },
-  bhxSubHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER_COLOR,
-    backgroundColor: "#fdfdfd",
-  },
-  bhxSubHeaderTitle: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: TEXT_DARK,
-    flex: 1,
-    marginRight: 6,
-  },
-  bhxViewAllCategoryBtn: {
-    paddingVertical: 2,
-    paddingHorizontal: 4,
-  },
-  bhxViewAllCategoryText: {
-    fontSize: 10,
-    color: BHX_GREEN,
-    fontWeight: "800",
-  },
-  bhxSubGridContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    padding: 6,
-    justifyContent: "flex-start",
-    rowGap: 8,
-  },
-  bhxSubGridItem: {
-    width: "31.5%",
-    marginHorizontal: "0.9%",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  bhxSubImageBox: {
-    width: 58,
-    height: 58,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    position: "relative",
-    overflow: "hidden",
-  },
-  bhxSubTagBadge: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: BHX_RED,
-    paddingVertical: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  bhxSubTagText: {
-    color: "#ffffff",
-    fontSize: 7,
-    fontWeight: "900",
-  },
-  bhxSubName: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: TEXT_DARK,
-    textAlign: "center",
-    lineHeight: 13,
-    marginTop: 4,
-  },
-  bhxEmptySubState: {
-    width: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 30,
-  },
-
-  // Thanh Giỏ Hàng Nổi (Sticky Bottom Cart Strip)
-  floatingHomeCartBar: {
-    position: "absolute",
-    bottom: 60,
-    left: 12,
-    right: 12,
-    backgroundColor: BHX_GREEN,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    zIndex: 99,
-    ...Platform.select({
-      web: {
-        boxShadow: "0 6px 20px rgba(0, 136, 72, 0.45)",
-      },
-      default: {
-        elevation: 8,
-      },
-    }),
-  },
-  drawerFloatingCart: {
-    position: "absolute",
-    bottom: 8,
-    left: 8,
-    right: 8,
-    backgroundColor: BHX_GREEN,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    zIndex: 999,
-    ...Platform.select({
-      web: {
-        boxShadow: "0 6px 20px rgba(0, 136, 72, 0.45)",
-      },
-      default: {
-        elevation: 8,
-      },
-    }),
-  },
-  floatingCartLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  floatingCartIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-  },
-  floatingCartBadge: {
-    position: "absolute",
-    top: -4,
-    right: -4,
-    backgroundColor: BHX_RED,
-    minWidth: 15,
-    height: 15,
-    borderRadius: 7.5,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 2,
-    borderWidth: 1,
-    borderColor: "#ffffff",
-  },
-  floatingCartBadgeText: {
-    color: "#ffffff",
-    fontSize: 8,
-    fontWeight: "900",
-  },
-  floatingCartInfo: {
-    justifyContent: "center",
-  },
-  floatingCartQtyText: {
-    color: "#e8f5ec",
-    fontSize: 9,
-    fontWeight: "700",
-  },
-  floatingCartPriceText: {
-    color: BHX_YELLOW,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  floatingCartRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  floatingCartCtaText: {
-    color: "#ffffff",
-    fontSize: 10,
-    fontWeight: "900",
-  },
-
-  // Bottom Navigation (Responsive)
-  bottomNav: {
-    height: 54,
-    backgroundColor: "#ffffff",
-    borderTopWidth: 1,
-    borderTopColor: BORDER_COLOR,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  bottomNavInner: {
-    width: "100%",
-    maxWidth: 600,
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-  },
-  navItem: {
-    minWidth: 60,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  navIconWrapper: {
-    height: 22,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  navLabel: {
-    color: TEXT_MUTED,
-    fontSize: 9,
-    fontWeight: "700",
-    marginTop: 2,
-  },
-  navLabelActive: {
-    color: BHX_GREEN,
-    fontWeight: "900",
-  },
-  bottomNavBadge: {
-    position: "absolute",
-    top: -5,
-    right: -8,
-    backgroundColor: BHX_RED,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 2,
-    borderWidth: 1.5,
-    borderColor: "#ffffff",
-  },
-  bottomNavBadgeText: {
-    color: "#ffffff",
-    fontSize: 8,
-    fontWeight: "900",
-  },
-
-  // Cart Desktop Layout
-  cartDesktopLayout: {
-    flexDirection: "row",
-    gap: 16,
-    alignItems: "flex-start",
-  },
-  cartItemListCol: {
-    flex: 1.6,
-  },
-  cartSummaryCol: {
-    flex: 1,
-    marginTop: 0,
-  },
-
-  // Cart, Orders & Profile Common
-  pageContent: {
-    padding: 12,
-    paddingBottom: 26,
-  },
-  eyebrow: {
-    color: BHX_GREEN,
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 0.8,
-  },
-  pageTitle: {
-    color: TEXT_DARK,
-    fontSize: 20,
-    fontWeight: "900",
-    marginTop: 2,
-    marginBottom: 12,
-  },
-  cartRow: {
-    flexDirection: "row",
-    gap: 10,
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-  },
-  cartThumb: {
-    width: 60,
-    height: 60,
-    backgroundColor: "#f8fafc",
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    padding: 4,
-  },
-  cartImage: {
-    width: "100%",
-    height: "100%",
-  },
-  cartInfo: {
-    flex: 1,
-    justifyContent: "center",
-  },
-  cartName: {
-    color: TEXT_DARK,
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  cartPrice: {
-    color: BHX_GREEN,
-    fontWeight: "900",
-    fontSize: 13,
-    marginTop: 3,
-  },
-  cartStepperRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 5,
-  },
-  cartStepperBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fff",
-  },
-  cartStepperBtnPlus: {
-    backgroundColor: BHX_GREEN,
-    borderColor: BHX_GREEN,
-  },
-  cartStepperQty: {
-    color: TEXT_DARK,
-    fontSize: 12,
-    fontWeight: "800",
-    minWidth: 18,
-    textAlign: "center",
-  },
-
-  summaryCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-  },
-  summaryLine: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginVertical: 4,
-  },
-  summaryLabel: {
-    color: TEXT_MUTED,
-    fontSize: 11,
-  },
-  summaryValue: {
-    color: TEXT_DARK,
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  freeShipping: {
-    color: BHX_GREEN,
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  voucherRow: {
-    minHeight: 36,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    marginTop: 6,
-    paddingTop: 6,
-  },
-  voucherLabel: {
-    color: TEXT_DARK,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  voucherAction: {
-    color: BHX_GREEN,
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  voucherRemove: {
-    color: BHX_RED,
-    fontSize: 11,
-    textAlign: "right",
-    marginBottom: 4,
-  },
-  summaryTotal: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    marginTop: 8,
-    paddingTop: 8,
-  },
-  summaryTotalLabel: {
-    color: TEXT_DARK,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  summaryTotalValue: {
-    color: BHX_GREEN,
-    fontSize: 16,
-    fontWeight: "900",
-  },
-
-  // Orders
-  ordersScreen: {
-    flex: 1,
-    backgroundColor: BG_PAGE,
-  },
-  ordersTitle: {
-    color: TEXT_DARK,
-    fontSize: 16,
-    fontWeight: "900",
-    textAlign: "center",
-    paddingVertical: 10,
-    backgroundColor: "#ffffff",
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER_COLOR,
-  },
-  orderFilterScroll: {
-    height: 42,
-    flexGrow: 0,
-    flexShrink: 0,
-  },
-  orderFilterRow: {
-    paddingHorizontal: 10,
-    alignItems: "center",
-    gap: 6,
-  },
-  orderFilterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 14,
-    backgroundColor: "#e2e8f0",
-  },
-  orderFilterChipActive: {
-    backgroundColor: BHX_GREEN,
-  },
-  orderFilterText: {
-    color: TEXT_DARK,
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  orderFilterTextActive: {
-    color: "#ffffff",
-  },
-  orderListContent: {
-    padding: 10,
-    paddingTop: 6,
-    paddingBottom: 24,
-  },
-  orderListCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-  },
-  orderListHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  orderListNumber: {
-    flex: 1,
-    color: TEXT_DARK,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  orderViewLink: {
-    color: BHX_GREEN,
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  orderPickup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    borderRadius: 6,
-    backgroundColor: "#f8fafc",
-    padding: 6,
-  },
-  orderPickupText: {
-    flex: 1,
-    color: TEXT_MUTED,
-    fontSize: 10,
-    fontWeight: "600",
-  },
-  orderThumbnailRow: {
-    flexDirection: "row",
-    gap: 6,
-    paddingVertical: 8,
-    alignItems: "center",
-  },
-  orderThumbnailBox: {
-    width: 48,
-    height: 52,
-    borderRadius: 6,
-    backgroundColor: "#f8fafc",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    padding: 3,
-  },
-  orderThumbnail: {
-    width: "100%",
-    height: "100%",
-  },
-  orderMoreOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  orderMoreText: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "900",
-  },
-  orderListTotals: {
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    paddingTop: 6,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  orderListStatus: {
-    color: BHX_GREEN,
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  orderListTotal: {
-    color: TEXT_DARK,
-    fontSize: 11,
-    fontWeight: "800",
-  },
-
-  orderDetailHeading: {
-    minHeight: 46,
-    backgroundColor: "#ffffff",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER_COLOR,
-  },
-  orderBack: {
-    position: "absolute",
-    left: 8,
-    height: 38,
-    justifyContent: "center",
-    paddingHorizontal: 6,
-  },
-  orderBackText: {
-    color: TEXT_DARK,
-    fontSize: 28,
-    lineHeight: 32,
-  },
-  orderDetailTitle: {
-    color: TEXT_DARK,
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  orderDetailContent: {
-    padding: 10,
-    paddingBottom: 24,
-  },
-  orderInfoCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-  },
-  orderInfoTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  orderInfoLabel: {
-    color: TEXT_DARK,
-    fontSize: 11,
-    fontWeight: "900",
-  },
-  orderInfoDate: {
-    color: TEXT_MUTED,
-    fontSize: 10,
-  },
-  orderAddress: {
-    color: TEXT_DARK,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  orderStatusText: {
-    color: BHX_GREEN,
-    fontSize: 11,
-    fontWeight: "800",
-    marginTop: 6,
-  },
-  orderItemsCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-  },
-  orderItemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
-    gap: 8,
-  },
-  orderItemImageBox: {
-    width: 48,
-    height: 52,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#f8fafc",
-    borderRadius: 6,
-    padding: 3,
-  },
-  orderItemImage: {
-    width: "100%",
-    height: "100%",
-  },
-  orderItemInfo: {
-    flex: 1,
-  },
-  orderItemName: {
-    color: TEXT_DARK,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  orderItemQuantity: {
-    color: TEXT_MUTED,
-    fontSize: 10,
-    marginTop: 2,
-  },
-  orderItemAmount: {
-    alignItems: "flex-end",
-  },
-  orderItemPrice: {
-    color: TEXT_DARK,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  orderItemUnitPrice: {
-    color: TEXT_MUTED,
-    fontSize: 10,
-    textDecorationLine: "line-through",
-  },
-  orderTotals: {
-    paddingTop: 6,
-  },
-
-  // Profile
-  profileCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    alignItems: "center",
-    padding: 16,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-  },
-  profileAvatarBox: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#e8f5ec",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 6,
-  },
-  profileName: {
-    color: TEXT_DARK,
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  profilePhone: {
-    color: TEXT_MUTED,
-    fontSize: 11,
-    marginTop: 2,
-  },
-  pointsPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fef3c7",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 14,
-    marginTop: 6,
-    gap: 4,
-    borderWidth: 1,
-    borderColor: "#fde68a",
-  },
-  pointsText: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#b45309",
-  },
-  pointsEquivalent: {
-    fontSize: 10,
-    color: TEXT_MUTED,
-  },
-  infoCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    padding: 12,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-  },
-  infoTitle: {
-    color: TEXT_DARK,
-    fontSize: 12,
-    fontWeight: "900",
-    marginBottom: 4,
-  },
-  profileMenuRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-  },
-  profileMenuText: {
-    color: TEXT_DARK,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  accountPageHeading: {
-    minHeight: 44,
-    backgroundColor: "#ffffff",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  accountBackButton: {
-    position: "absolute",
-    left: 8,
-    height: 38,
-    justifyContent: "center",
-    paddingHorizontal: 6,
-  },
-  accountBack: {
-    color: TEXT_DARK,
-    fontSize: 28,
-    lineHeight: 32,
-  },
-  accountPageTitle: {
-    color: TEXT_DARK,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  accountInput: {
-    minHeight: 40,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    color: TEXT_DARK,
-    fontSize: 12,
-    marginBottom: 8,
-    backgroundColor: "#fff",
-  },
-  phoneReadonly: {
-    backgroundColor: "#f1f5f9",
-    paddingTop: 10,
-  },
-
-  // Modals
-  modalBackdrop: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
-  },
-  checkoutSheet: {
-    maxHeight: "92%",
-    backgroundColor: "#ffffff",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 16,
-  },
-  checkoutSheetDesktop: {
-    maxWidth: 600,
-    width: "100%",
-    alignSelf: "center",
-    borderBottomLeftRadius: 18,
-    borderBottomRightRadius: 18,
-    marginVertical: "auto",
-  },
-  sheetHandle: {
-    width: 32,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "#cbd5e1",
-    alignSelf: "center",
-    marginBottom: 10,
-  },
-  checkoutContent: {
-    paddingBottom: 10,
-  },
-  checkoutTitle: {
-    color: TEXT_DARK,
-    fontSize: 16,
-    fontWeight: "900",
-    marginTop: 2,
-  },
-  inputLabel: {
-    color: "#475569",
-    fontSize: 9,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  formInput: {
-    minHeight: 38,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    color: TEXT_DARK,
-    fontSize: 12,
-  },
-  addressInput: {
-    minHeight: 52,
-    textAlignVertical: "top",
-    paddingTop: 8,
-  },
-  noteInput: {
-    minHeight: 40,
-    textAlignVertical: "top",
-    paddingTop: 8,
-  },
-  paymentMethodOption: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: BORDER_COLOR,
-    backgroundColor: "#ffffff",
-  },
-  paymentMethodOptionActive: {
-    borderColor: BHX_GREEN,
-    backgroundColor: "#f0fdf4",
-  },
-  paymentMethodLabel: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: TEXT_DARK,
-  },
-  paymentMethodLabelActive: {
-    color: BHX_GREEN,
-  },
-  paymentMethodDesc: {
-    fontSize: 10,
-    color: TEXT_MUTED,
-  },
-  radioCircle: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: "#94a3b8",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  radioCircleActive: {
-    borderColor: BHX_GREEN,
-  },
-  radioDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: BHX_GREEN,
-  },
-  rewardPointsCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: BORDER_COLOR,
-    backgroundColor: "#fffbeb",
-    marginTop: 4,
-    marginBottom: 6,
-  },
-  rewardPointsCardActive: {
-    borderColor: "#f59e0b",
-    backgroundColor: "#fef3c7",
-  },
-  rewardPointsTitle: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#b45309",
-  },
-  rewardPointsDesc: {
-    fontSize: 10,
-    color: TEXT_MUTED,
-  },
-  checkSquare: {
-    width: 18,
-    height: 18,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    borderColor: "#94a3b8",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkSquareActive: {
-    backgroundColor: BHX_GREEN,
-    borderColor: BHX_GREEN,
-  },
-  checkoutTotal: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    paddingTop: 8,
-    marginTop: 10,
-  },
-  cancelCheckout: {
-    alignItems: "center",
-    paddingVertical: 8,
-  },
-  cancelText: {
-    color: TEXT_MUTED,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-
-  paymentBoxMomo: {
-    marginTop: 10,
-    padding: 10,
-    borderRadius: 8,
-    backgroundColor: "#fff0f6",
-    borderWidth: 1,
-    borderColor: "#ffadd2",
-    alignItems: "center",
-  },
-  paymentBoxMomoTitle: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "#a50064",
-    marginBottom: 2,
-  },
-  paymentBoxMomoDesc: {
-    fontSize: 10,
-    color: "#595959",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  momoActionBtn: {
-    backgroundColor: "#a50064",
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 6,
-    alignSelf: "stretch",
-    alignItems: "center",
-  },
-  momoActionText: {
-    color: "#ffffff",
-    fontWeight: "900",
-    fontSize: 11,
-  },
-  paymentWaitText: {
-    fontSize: 10,
-    color: TEXT_MUTED,
-  },
-  paymentBoxBank: {
-    marginTop: 10,
-    padding: 10,
-    borderRadius: 8,
-    backgroundColor: "#f0f5ff",
-    borderWidth: 1,
-    borderColor: "#adc6ff",
-    alignItems: "center",
-  },
-  paymentBoxBankTitle: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "#1d39c4",
-    marginBottom: 2,
-  },
-  paymentBoxBankDesc: {
-    fontSize: 10,
-    color: "#595959",
-    textAlign: "center",
-    marginBottom: 6,
-  },
-  vietQrImage: {
-    width: 180,
-    height: 180,
-    borderRadius: 8,
-    marginVertical: 4,
-    backgroundColor: "#ffffff",
-  },
-  bankDetailCard: {
-    width: "100%",
-    backgroundColor: "#ffffff",
-    padding: 8,
-    borderRadius: 6,
-    marginTop: 4,
-    gap: 2,
-  },
-  bankDetailLine: {
-    fontSize: 10,
-    color: TEXT_DARK,
-  },
-  bankBold: {
-    fontWeight: "700",
-  },
-  bankMoney: {
-    fontWeight: "900",
-    color: "#1d39c4",
-  },
-  bankContent: {
-    fontWeight: "900",
-    color: "#d4380d",
-  },
-  successContent: {
-    alignItems: "stretch",
-    paddingBottom: 10,
-  },
-  successBadgeCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: BHX_GREEN,
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "center",
-    marginBottom: 10,
-  },
-  successTitle: {
-    color: TEXT_DARK,
-    fontSize: 16,
-    fontWeight: "900",
-    textAlign: "center",
-    marginTop: 4,
-    marginBottom: 8,
-  },
-  successCode: {
-    color: BHX_GREEN,
-    fontSize: 14,
-    fontWeight: "900",
-    textAlign: "center",
-    padding: 8,
-    backgroundColor: "#e8f5ec",
-    borderRadius: 6,
-  },
-
-  // Voucher modal
-  voucherBackdrop: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.6)",
-  },
-  voucherSheet: {
-    height: "72%",
-    backgroundColor: "#ffffff",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingHorizontal: 14,
-    paddingBottom: 12,
-  },
-  voucherSheetDesktop: {
-    maxWidth: 480,
-    width: "100%",
-    height: 500,
-    alignSelf: "center",
-    borderRadius: 16,
-    marginVertical: "auto",
-  },
-  voucherHeading: {
-    height: 46,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER_COLOR,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  voucherTitle: {
-    color: TEXT_DARK,
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  voucherCloseButton: {
-    position: "absolute",
-    right: 4,
-    padding: 6,
-  },
-  voucherCodeRow: {
-    flexDirection: "row",
-    gap: 6,
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  voucherInput: {
-    flex: 1,
-    minHeight: 38,
-    backgroundColor: "#f8fafc",
-    borderColor: BORDER_COLOR,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    color: TEXT_DARK,
-    fontSize: 12,
-  },
-  voucherAdd: {
-    width: 76,
-    borderRadius: 8,
-    backgroundColor: BHX_GREEN,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  voucherAddText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  voucherSubheading: {
-    color: TEXT_DARK,
-    fontSize: 11,
-    fontWeight: "800",
-    marginBottom: 6,
-  },
-  voucherList: {
-    flex: 1,
-  },
-  voucherCard: {
-    backgroundColor: "#f8fafc",
-    borderRadius: 8,
-    borderColor: BORDER_COLOR,
-    borderWidth: 1,
-    padding: 8,
-    marginBottom: 6,
-  },
-  voucherCardTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  voucherBadge: {
-    minWidth: 46,
-    minHeight: 34,
-    paddingHorizontal: 4,
-    borderRadius: 6,
-    backgroundColor: "#e8f5ec",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  voucherBadgeText: {
-    color: BHX_GREEN,
-    fontWeight: "900",
-    fontSize: 11,
-  },
-  voucherInfo: {
-    flex: 1,
-  },
-  voucherName: {
-    color: TEXT_DARK,
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  voucherExpiry: {
-    color: TEXT_MUTED,
-    fontSize: 9,
-    marginTop: 2,
-  },
-  voucherUseBtn: {
-    backgroundColor: BHX_GREEN,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  voucherUseText: {
-    color: "#ffffff",
-    fontSize: 10,
-    fontWeight: "900",
-  },
-  voucherDescription: {
-    color: BHX_ORANGE,
-    fontSize: 9,
-    marginTop: 4,
-  },
-  voucherMessage: {
-    color: BHX_RED,
-    fontSize: 10,
-    marginVertical: 4,
-  },
-
-  // Common UI states
-  centerState: {
-    minHeight: 140,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stateText: {
-    color: TEXT_MUTED,
-    fontSize: 11,
-    textAlign: "center",
-    marginTop: 6,
-  },
-  emptyState: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 36,
-    paddingHorizontal: 14,
-  },
-  emptyTitle: {
-    color: TEXT_DARK,
-    fontSize: 14,
-    fontWeight: "900",
-    textAlign: "center",
-    marginTop: 6,
-  },
-  emptyCta: {
-    marginTop: 12,
-    alignSelf: "stretch",
-  },
-  errorCard: {
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#fecaca",
-  },
-  errorTitle: {
-    color: BHX_RED,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  errorText: {
-    color: "#7f1d1d",
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: 4,
-  },
-  apiHint: {
-    color: TEXT_MUTED,
-    fontSize: 9,
-    marginTop: 4,
-  },
-  orderError: {
-    color: BHX_RED,
-    fontSize: 10,
-    backgroundColor: "#fee2e2",
-    borderRadius: 6,
-    padding: 6,
-    marginTop: 6,
-  },
-  accountMessage: {
-    color: BHX_GREEN,
-    fontSize: 10,
-    marginTop: 6,
-    textAlign: "center",
-  },
-  button: {
-    minHeight: 40,
-    borderRadius: 8,
-    backgroundColor: BHX_GREEN,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 12,
-    marginTop: 8,
-  },
-  buttonText: {
-    color: "#ffffff",
-    fontSize: 11,
-    fontWeight: "900",
-  },
-  buttonSecondary: {
-    backgroundColor: "#e2e8f0",
-  },
-  buttonSecondaryText: {
-    color: TEXT_DARK,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
+  safeArea: { flex: 1, backgroundColor: "#f6f8f4" },
+  header: { backgroundColor: "#fff", paddingHorizontal: 18, paddingTop: 7, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: "#edf0ec" },
+  headerTop: { flexDirection: "row", alignItems: "center" },
+  brandIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: GREEN, alignItems: "center", justifyContent: "center", marginRight: 9 },
+  brandLetter: { color: "#fff", fontSize: 25, fontWeight: "900", fontStyle: "italic" },
+  brandName: { color: GREEN, fontWeight: "900", fontSize: 20, letterSpacing: -0.7 },
+  brandTagline: { color: "#8b978e", fontSize: 8, letterSpacing: 1.2, fontWeight: "800", marginTop: -1 },
+  headerCart: { marginLeft: "auto", backgroundColor: "#f0f6ef", borderRadius: 12, width: 42, height: 42, alignItems: "center", justifyContent: "center" },
+  headerCartIcon: { fontSize: 20 },
+  cartBadge: { position: "absolute", right: -4, top: -4, minWidth: 18, height: 18, borderRadius: 10, backgroundColor: "#dc5a42", alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
+  cartBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
+  searchBar: { height: 44, backgroundColor: "#f4f6f2", borderRadius: 11, marginTop: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center" },
+  searchIcon: { color: "#7f8a81", fontSize: 24, marginRight: 7 },
+  searchInput: { flex: 1, color: DARK, fontSize: 13, paddingVertical: 0 },
+  promises: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: 9, gap: 9 },
+  promiseText: { color: "#708077", fontSize: 10, fontWeight: "600" },
+  promiseDot: { color: "#b6c0b8" },
+  screen: { flex: 1 },
+  scrollContent: { padding: 16, paddingBottom: 20 },
+  hero: { minHeight: 176, borderRadius: 18, backgroundColor: "#e8f2e5", padding: 19, overflow: "hidden", justifyContent: "center" },
+  heroKicker: { color: "#57936e", fontSize: 9, fontWeight: "900", letterSpacing: 1.1, marginBottom: 8 },
+  heroTitle: { color: "#193d2d", fontSize: 23, fontWeight: "900", letterSpacing: -0.7 },
+  heroTitleAccent: { color: "#278455", fontSize: 23, fontWeight: "900", letterSpacing: -0.7 },
+  heroCaption: { color: "#66776b", fontSize: 10, lineHeight: 15, maxWidth: "76%", marginTop: 8 },
+  heroDecoration: { position: "absolute", right: 5, top: 34, width: 105, height: 105, borderRadius: 55, backgroundColor: "#d2e7bd", alignItems: "center", justifyContent: "center" },
+  heroBag: { fontSize: 55 },
+  sectionHeading: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 23, marginBottom: 11 },
+  eyebrow: { color: "#57936e", fontSize: 9, fontWeight: "900", letterSpacing: 1.1 },
+  sectionTitle: { color: DARK, fontSize: 17, fontWeight: "900", marginTop: 3 },
+  categoryRow: { gap: 8, paddingRight: 8 },
+  categoryChip: { width: 83, height: 78, borderRadius: 12, backgroundColor: "#fff", borderColor: "#e9eee8", borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
+  categoryChipActive: { backgroundColor: "#eef7ef", borderColor: "#78aa88" },
+  categoryEmoji: { fontSize: 23, marginBottom: 4 },
+  categoryName: { color: "#59665e", fontSize: 9, fontWeight: "700", textAlign: "center" },
+  refreshButton: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#eaf3e9" },
+  refreshText: { color: GREEN, fontSize: 10, fontWeight: "800" },
+  productGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10 },
+  productCard: { width: "48.5%", backgroundColor: "#fff", borderColor: "#edf0ec", borderWidth: 1, borderRadius: 13, padding: 9 },
+  productImageBox: { height: 123, borderRadius: 10, backgroundColor: "#f7f8f5", alignItems: "center", justifyContent: "center", overflow: "hidden", marginBottom: 9 },
+  productImage: { width: "90%", height: "90%" },
+  productEmoji: { fontSize: 40 },
+  productCategory: { color: "#839287", fontSize: 8, fontWeight: "800", letterSpacing: 0.8 },
+  productName: { color: "#34463a", fontWeight: "800", fontSize: 12, lineHeight: 17, minHeight: 34, marginTop: 4 },
+  stockLabel: { color: "#328259", fontSize: 9, marginTop: 5 },
+  productFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 },
+  productPrice: { color: "#1e573b", fontSize: 12, fontWeight: "900", flexShrink: 1 },
+  originalPrice: { color: "#8b95a1", fontSize: 10, marginTop: 2, textDecorationLine: "line-through" },
+  productSaving: { color: "#df4c42", fontSize: 9, fontWeight: "800", marginTop: 2 },
+  addButton: { width: 29, height: 29, borderRadius: 9, backgroundColor: "#eaf3ea", alignItems: "center", justifyContent: "center", marginLeft: 4 },
+  addButtonText: { color: GREEN, fontSize: 22, lineHeight: 25, fontWeight: "600" },
+  centerState: { minHeight: 170, alignItems: "center", justifyContent: "center" },
+  stateText: { color: MUTED, fontSize: 12, lineHeight: 18, textAlign: "center", marginTop: 7 },
+  emptyState: { alignItems: "center", justifyContent: "center", paddingVertical: 55, paddingHorizontal: 18 },
+  emptyEmoji: { fontSize: 51, marginBottom: 9 },
+  emptyTitle: { color: DARK, fontSize: 16, fontWeight: "900", textAlign: "center" },
+  emptyCta: { marginTop: 18, alignSelf: "stretch" },
+  errorCard: { backgroundColor: "#fff", borderRadius: 13, padding: 17, borderWidth: 1, borderColor: "#f0dfda" },
+  errorTitle: { color: "#a3443c", fontSize: 14, fontWeight: "900" },
+  errorText: { color: "#785f5b", fontSize: 11, lineHeight: 17, marginTop: 6 },
+  apiHint: { color: "#89948b", fontSize: 9, marginTop: 8 },
+  button: { minHeight: 45, borderRadius: 10, backgroundColor: GREEN, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, marginTop: 13 },
+  buttonText: { color: "#fff", fontSize: 12, fontWeight: "900" },
+  buttonSecondary: { backgroundColor: "#edf5ed" },
+  buttonSecondaryText: { color: GREEN },
+  buttonDisabled: { opacity: 0.65 },
+  ordersScreen: { flex: 1, backgroundColor: "#f4f4f4" },
+  ordersTitle: { color: DARK, fontSize: 16, fontWeight: "900", textAlign: "center", paddingVertical: 13, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
+  orderFilterScroll: { height: 48, flexGrow: 0, flexShrink: 0 },
+  orderFilterRow: { paddingHorizontal: 14, alignItems: "center", gap: 8 },
+  orderFilterChip: { paddingHorizontal: 14, paddingVertical: 4, borderRadius: 24, backgroundColor: "#e4eaf7" },
+  orderFilterChipActive: { backgroundColor: "#328656" },
+  orderFilterText: { color: "#344054", fontSize: 10, fontWeight: "600" },
+  orderFilterTextActive: { color: "#fff" },
+  orderListContent: { padding: 14, paddingTop: 4, paddingBottom: 20 },
+  orderListCard: { backgroundColor: "#fff", borderRadius: 14, padding: 12, marginBottom: 12 },
+  orderListHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 },
+  orderListNumber: { flex: 1, color: DARK, fontSize: 12, fontWeight: "900" },
+  orderViewLink: { color: "#344054", fontSize: 10, fontWeight: "700" },
+  orderPickup: { flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 9, backgroundColor: "#f0f3fa", padding: 10 },
+  orderPickupIcon: { color: "#78857c", fontSize: 15 },
+  orderPickupText: { flex: 1, color: "#586273", fontSize: 10, fontWeight: "600" },
+  orderThumbnailRow: { flexDirection: "row", gap: 8, paddingVertical: 13, minHeight: 83, alignItems: "center" },
+  orderThumbnailBox: { width: 57, height: 68, borderRadius: 7, backgroundColor: "#f7f8f5", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  orderThumbnail: { width: "90%", height: "90%" },
+  orderMoreOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "#17202b99", alignItems: "center", justifyContent: "center" },
+  orderMoreText: { color: "#fff", fontSize: 17, fontWeight: "900" },
+  orderListTotals: { borderTopWidth: 1, borderTopColor: "#edf0ec", paddingTop: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 6 },
+  orderListStatus: { color: GREEN, fontSize: 11, fontWeight: "800", flexShrink: 1 },
+  orderListTotal: { color: DARK, fontSize: 11, fontWeight: "700" },
+  orderListActions: { flexDirection: "row", marginHorizontal: -12, marginTop: 12, borderTopWidth: 1, borderTopColor: "#edf0ec" },
+  orderListAction: { flex: 1, alignItems: "center", paddingVertical: 12 },
+  orderListActionText: { color: DARK, fontSize: 10, fontWeight: "800" },
+  orderDetailHeading: { minHeight: 52, backgroundColor: "#fff", flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 15, borderBottomWidth: 1, borderBottomColor: "#edf0ec" },
+  orderBack: { position: "absolute", left: 13, height: 44, justifyContent: "center", paddingHorizontal: 5 },
+  orderBackText: { color: DARK, fontSize: 34, lineHeight: 38 },
+  orderDetailTitle: { color: DARK, fontSize: 15, fontWeight: "900", maxWidth: "82%" },
+  orderDetailContent: { padding: 14, paddingBottom: 20 },
+  orderInfoCard: { backgroundColor: "#fff", borderRadius: 13, padding: 15, marginBottom: 12 },
+  orderInfoTop: { flexDirection: "row", justifyContent: "space-between", gap: 8, marginBottom: 10 },
+  orderInfoLabel: { color: "#59636f", fontSize: 13, fontWeight: "900" },
+  orderInfoDate: { color: "#67717d", fontSize: 10, textAlign: "right" },
+  orderAddress: { color: DARK, fontSize: 14, lineHeight: 20 },
+  orderStatusText: { color: GREEN, fontSize: 11, fontWeight: "800", marginTop: 10 },
+  orderItemsCard: { backgroundColor: "#fff", borderRadius: 13, paddingHorizontal: 12, paddingTop: 5, paddingBottom: 12, marginBottom: 12 },
+  orderItemRow: { flexDirection: "row", alignItems: "center", minHeight: 92, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#edf0ec", gap: 10 },
+  orderItemImageBox: { width: 65, height: 72, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", borderRadius: 7, overflow: "hidden" },
+  orderItemImage: { width: "90%", height: "90%" },
+  orderItemInfo: { flex: 1 },
+  orderItemName: { color: "#344054", fontSize: 12, lineHeight: 18 },
+  orderItemQuantity: { color: "#8b95a1", fontSize: 11, marginTop: 5 },
+  orderItemAmount: { alignItems: "flex-end", maxWidth: 100 },
+  orderItemPrice: { color: DARK, fontSize: 13, fontWeight: "900" },
+  orderItemUnitPrice: { color: "#9aa2ad", fontSize: 10, marginTop: 5, textDecorationLine: "line-through" },
+  orderTotals: { paddingTop: 10 },
+  orderDetailActions: { flexDirection: "row", backgroundColor: "#fff", paddingHorizontal: 14, paddingVertical: 10, gap: 10, borderTopWidth: 1, borderTopColor: "#e8ebe8" },
+  orderActionSecondary: { flex: 1, minHeight: 45, borderRadius: 10, borderWidth: 1, borderColor: "#cfd7d0", alignItems: "center", justifyContent: "center" },
+  orderActionSecondaryText: { color: "#56615a", fontSize: 13, fontWeight: "700" },
+  orderActionPrimary: { flex: 1.3, minHeight: 45, borderRadius: 10, backgroundColor: GREEN, alignItems: "center", justifyContent: "center" },
+  orderActionPrimaryText: { color: "#fff", fontSize: 13, fontWeight: "800" },
+  pageContent: { padding: 18, paddingBottom: 25 },
+  pageTitle: { color: DARK, fontSize: 16, fontWeight: "900", marginTop: 4, marginBottom: 17 },
+  cartRow: { flexDirection: "row", gap: 12, backgroundColor: "#fff", borderRadius: 12, padding: 10, marginBottom: 9, borderWidth: 1, borderColor: "#edf0ec" },
+  cartThumb: { width: 67, height: 67, backgroundColor: "#f5f7f3", borderRadius: 9, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  cartImage: { width: "90%", height: "90%" },
+  cartInfo: { flex: 1, justifyContent: "center" },
+  cartName: { color: "#435349", fontSize: 11, fontWeight: "800" },
+  cartPrice: { color: GREEN, fontWeight: "900", fontSize: 12, marginTop: 4 },
+  cartSaving: { color: "#df4c42", fontSize: 10, fontWeight: "800", marginTop: 3 },
+  quantityControl: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 7 },
+  quantityButton: { width: 25, height: 25, borderWidth: 1, borderColor: "#e2e9e1", borderRadius: 7, alignItems: "center", justifyContent: "center" },
+  quantityText: { color: "#526157", fontSize: 16 },
+  quantityValue: { color: DARK, fontSize: 11, fontWeight: "800" },
+  summaryCard: { backgroundColor: "#fff", borderRadius: 13, padding: 15, marginTop: 10, borderWidth: 1, borderColor: "#edf0ec" },
+  summaryLine: { flexDirection: "row", justifyContent: "space-between", marginVertical: 5 },
+  summaryLabel: { color: MUTED, fontSize: 11 },
+  summaryValue: { color: "#34463b", fontSize: 11, fontWeight: "800" },
+  summaryDiscount: { color: "#df4c42", fontSize: 11, fontWeight: "800" },
+  freeShipping: { color: "#258256", fontSize: 11, fontWeight: "800" },
+  summaryTotal: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: "#edf0ec", marginTop: 10, paddingTop: 13 },
+  summaryTotalLabel: { color: DARK, fontSize: 12, fontWeight: "800" },
+  summaryTotalValue: { color: "#176843", fontSize: 17, fontWeight: "900" },
+  orderCard: { backgroundColor: "#fff", borderRadius: 14, padding: 16, borderColor: "#e7eee6", borderWidth: 1 },
+  orderCheck: { width: 34, height: 34, lineHeight: 34, borderRadius: 17, overflow: "hidden", textAlign: "center", color: GREEN, backgroundColor: "#e8f5eb", fontWeight: "900", fontSize: 19, marginBottom: 10 },
+  orderTitle: { color: DARK, fontSize: 14, fontWeight: "900" },
+  orderCode: { color: GREEN, fontSize: 13, fontWeight: "900", marginVertical: 12 },
+  profileCard: { backgroundColor: "#e8f2e5", borderRadius: 15, alignItems: "center", padding: 20 },
+  profileEmoji: { fontSize: 39, marginBottom: 8 },
+  infoCard: { backgroundColor: "#fff", borderRadius: 13, padding: 16, marginTop: 13 },
+  infoTitle: { color: DARK, fontSize: 13, fontWeight: "900" },
+  voucherRow: { minHeight: 43, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: "#edf0ec", marginTop: 8, paddingTop: 7 },
+  voucherLabel: { color: "#344054", fontSize: 13, fontWeight: "700" },
+  voucherAction: { color: "#83909c", fontSize: 12 },
+  voucherRemove: { color: "#b0443c", fontSize: 11, textAlign: "right", marginBottom: 5 },
+  voucherBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "#14221966" },
+  voucherSheet: { height: "78%", backgroundColor: "#f8faff", borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 16, paddingBottom: 14 },
+  voucherHeading: { height: 62, marginHorizontal: -16, paddingHorizontal: 20, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e7eaf0", borderTopLeftRadius: 22, borderTopRightRadius: 22, flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  voucherTitle: { color: DARK, fontSize: 18, fontWeight: "900" },
+  voucherCloseButton: { position: "absolute", right: 18, top: 15 },
+  voucherClose: { color: "#fff", backgroundColor: "#9da8ba", overflow: "hidden", borderRadius: 20, width: 30, height: 30, textAlign: "center", lineHeight: 28, fontSize: 25 },
+  voucherCodeRow: { flexDirection: "row", gap: 9, marginTop: 14, marginBottom: 14 },
+  voucherInput: { flex: 1, minHeight: 48, backgroundColor: "#fff", borderColor: "#dce3e9", borderWidth: 1, borderRadius: 10, paddingHorizontal: 13, color: DARK, fontSize: 14 },
+  voucherAdd: { width: 86, borderRadius: 10, backgroundColor: GREEN, alignItems: "center", justifyContent: "center" },
+  voucherAddText: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  voucherSubheading: { color: "#59636f", fontSize: 13, fontWeight: "800", marginBottom: 8 },
+  voucherList: { flex: 1 },
+  voucherCard: { backgroundColor: "#fff", borderRadius: 12, borderColor: "#e2e8ef", borderWidth: 1, padding: 12, marginBottom: 9 },
+  voucherCardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  voucherBadge: { minWidth: 58, minHeight: 45, paddingHorizontal: 5, borderRadius: 7, backgroundColor: "#e9edf5", alignItems: "center", justifyContent: "center" },
+  voucherBadgeText: { color: "#49576a", fontWeight: "900", fontSize: 13 },
+  voucherInfo: { flex: 1 },
+  voucherName: { color: "#303b4b", fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  voucherExpiry: { color: "#8b95a1", fontSize: 11, marginTop: 4 },
+  voucherUse: { color: "#25976c", fontSize: 12, fontWeight: "900" },
+  voucherDescription: { color: "#d58b3d", fontSize: 11, lineHeight: 16, marginTop: 8 },
+  voucherMessage: { color: "#b0443c", fontSize: 12, marginVertical: 8 },
+  accountPageHeading: { minHeight: 54, backgroundColor: "#fff", flexDirection: "row", alignItems: "center", justifyContent: "center", borderRadius: 12, marginBottom: 10, position: "relative" },
+  accountBackButton: { position: "absolute", left: 7, top: 5, zIndex: 1, width: 42, height: 44, justifyContent: "center" },
+  accountBack: { color: DARK, fontSize: 34, lineHeight: 40 },
+  accountPageTitle: { color: DARK, fontSize: 17, fontWeight: "900" },
+  profileMenuRow: { minHeight: 55, flexDirection: "row", alignItems: "center", borderTopWidth: 1, borderTopColor: "#edf0ec", marginTop: 12, paddingTop: 7 },
+  profileMenuIcon: { width: 35, color: "#78857c", fontSize: 21 },
+  profileMenuText: { flex: 1, color: "#29352f", fontSize: 14 },
+  profileMenuArrow: { color: "#111", fontSize: 29, fontWeight: "700" },
+  genderText: { color: "#293443", fontSize: 16 },
+  accountInput: { minHeight: 53, borderWidth: 1, borderColor: "#dce3e9", borderRadius: 10, paddingHorizontal: 14, color: DARK, fontSize: 16, marginBottom: 12, justifyContent: "center" },
+  phoneReadonly: { backgroundColor: "#e5eaf6", borderColor: "#e5eaf6", paddingTop: 8, fontSize: 16 },
+  phoneHint: { color: "#98a0ac", fontSize: 12 },
+  deleteHint: { color: "#293443", fontSize: 14, lineHeight: 21, textAlign: "center", marginTop: 22 },
+  deleteLink: { color: "#c44343", textDecorationLine: "underline", fontSize: 16, textAlign: "center", marginTop: 12, marginBottom: 5 },
+  locationButton: { minHeight: 48, borderWidth: 1, borderColor: "#e1e5e1", borderRadius: 10, alignItems: "center", justifyContent: "center", marginBottom: 15 },
+  locationButtonText: { color: GREEN, fontSize: 16, fontWeight: "800" },
+  receiverLine: { color: "#293443", fontSize: 15, marginTop: 5, marginBottom: 10 },
+  receiverPhone: { fontWeight: "900" },
+  receiverCheck: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 9 },
+  checkBox: { color: "#75808c", fontSize: 21 },
+  bottomNav: { height: 62, backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#e9ede8", flexDirection: "row", justifyContent: "space-around", alignItems: "center", paddingBottom: 3 },
+  navItem: { minWidth: 60, alignItems: "center", justifyContent: "center", gap: 2 },
+  navIcon: { color: "#849087", fontSize: 20, fontWeight: "700", height: 24 },
+  navLabel: { color: "#849087", fontSize: 9, fontWeight: "600" },
+  navActive: { color: GREEN, fontWeight: "900" },
+  navBadge: { color: "#fff", backgroundColor: "#dc5a42", overflow: "hidden", borderRadius: 8, fontSize: 9, fontWeight: "900" },
+  modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "#14221988" },
+  productDetailScreen: { flex: 1, backgroundColor: "#f7f9f6" },
+  productDetailTopBar: { backgroundColor: "#fff", paddingHorizontal: 14, paddingTop: 7, paddingBottom: 9, borderBottomWidth: 1, borderBottomColor: "#edf0ec" },
+  productDetailSearchBar: { height: 44, backgroundColor: "#f4f6f2", borderRadius: 11, paddingLeft: 12, paddingRight: 5, flexDirection: "row", alignItems: "center" },
+  productDetailHeader: { minHeight: 56, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e8ebe8", alignItems: "center", justifyContent: "center", paddingHorizontal: 56 },
+  productDetailBack: { position: "absolute", left: 14, top: 6, width: 42, height: 44, justifyContent: "center", zIndex: 1 },
+  productDetailBackText: { color: DARK, fontSize: 37, lineHeight: 41 },
+  productDetailHeaderTitle: { color: DARK, fontSize: 16, fontWeight: "900" },
+  productDetailContent: { paddingBottom: 100 },
+  productDetailImageBox: { height: 350, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" },
+  productDetailImage: { width: "92%", height: "92%" },
+  flashSaleBanner: { backgroundColor: "#ff8c19", paddingHorizontal: 18, paddingVertical: 13 },
+  flashSaleTitle: { color: "#fff", fontSize: 17, fontWeight: "900" },
+  flashSaleText: { color: "#fff", fontSize: 12, fontWeight: "700", marginTop: 4 },
+  productDetailInfo: { backgroundColor: "#fff", padding: 18, marginTop: 10 },
+  productDetailName: { color: DARK, fontSize: 22, fontWeight: "900", lineHeight: 30, marginTop: 6 },
+  productDetailPriceBlock: { marginTop: 16 },
+  productDetailPriceRow: { flexDirection: "row", alignItems: "baseline", flexWrap: "wrap", gap: 9 },
+  productDetailPrice: { color: GREEN, fontSize: 25, fontWeight: "900" },
+  productDetailOriginalPrice: { color: "#8b95a1", fontSize: 15, textDecorationLine: "line-through" },
+  productDetailSaving: { color: "#df4c42", fontSize: 13, fontWeight: "800", marginTop: 7 },
+  discountBadge: { color: "#fff", backgroundColor: "#df4c42", overflow: "hidden", borderRadius: 5, paddingHorizontal: 6, paddingVertical: 3, fontSize: 12, fontWeight: "900" },
+  productDetailStock: { color: GREEN, fontSize: 13, fontWeight: "800", marginTop: 16 },
+  productDetailAction: { backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#e8ebe8", paddingHorizontal: 18, paddingTop: 12, paddingBottom: 16 },
+  productDetailQuantityControl: { minHeight: 45, borderRadius: 10, backgroundColor: "#eaf3ea", flexDirection: "row", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  productDetailQuantityButton: { width: 58, height: 45, alignItems: "center", justifyContent: "center" },
+  productDetailQuantityButtonText: { color: GREEN, fontSize: 26, lineHeight: 30, fontWeight: "700" },
+  productDetailQuantityValue: { minWidth: 54, color: DARK, fontSize: 17, fontWeight: "900", textAlign: "center" },
+  checkoutSheet: { maxHeight: "92%", backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 18 },
+  sheetHandle: { width: 38, height: 4, borderRadius: 2, backgroundColor: "#d7ded7", alignSelf: "center", marginBottom: 15 },
+  checkoutContent: { paddingBottom: 10 },
+  checkoutTitle: { color: DARK, fontSize: 21, fontWeight: "900", marginTop: 4 },
+  checkoutDescription: { color: MUTED, fontSize: 11, marginTop: 5, marginBottom: 14 },
+  inputLabel: { color: "#536257", fontSize: 9, fontWeight: "900", letterSpacing: 0.7, marginTop: 12, marginBottom: 6 },
+  formInput: { minHeight: 43, backgroundColor: "#fbfcfa", borderWidth: 1, borderColor: "#dfe7df", borderRadius: 9, paddingHorizontal: 11, color: DARK, fontSize: 12 },
+  addressInput: { minHeight: 62, textAlignVertical: "top", paddingTop: 10 },
+  noteInput: { minHeight: 48, textAlignVertical: "top", paddingTop: 9 },
+  orderError: { color: "#a33e36", fontSize: 11, backgroundColor: "#fff1ef", borderRadius: 8, padding: 10, marginTop: 10 },
+  accountMessage: { color: GREEN, fontSize: 11, marginTop: 10, textAlign: "center" },
+  accountLink: { color: GREEN, fontSize: 13, fontWeight: "700", textAlign: "center", marginTop: 14 },
+  webDateInput: { width: "100%", minHeight: 53, borderWidth: 1, borderColor: "#dce3e9", borderRadius: 10, paddingLeft: 14, paddingRight: 14, color: DARK, fontSize: 16, marginBottom: 12, backgroundColor: "#fff" },
+  dateValue: { color: DARK, fontSize: 16 },
+  datePlaceholder: { color: "#78857c", fontSize: 16 },
+  dateModalBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#14221988", padding: 20 },
+  dateModalCard: { width: "100%", maxWidth: 380, backgroundColor: "#fff", borderRadius: 14, padding: 18 },
+  dateModalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 4 },
+  checkoutTotal: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: "#edf0ec", paddingTop: 13, marginTop: 15 },
+  cancelCheckout: { alignItems: "center", paddingVertical: 12 },
+  cancelText: { color: MUTED, fontSize: 11, fontWeight: "700" },
+  successContent: { alignItems: "stretch", paddingBottom: 10 },
+  successIcon: { width: 52, height: 52, lineHeight: 52, borderRadius: 26, overflow: "hidden", textAlign: "center", backgroundColor: "#e8f5eb", color: GREEN, fontSize: 27, fontWeight: "900", alignSelf: "center", marginBottom: 17 },
+  successTitle: { color: DARK, fontSize: 20, fontWeight: "900", textAlign: "center", marginTop: 8, marginBottom: 18 },
+  successCode: { color: GREEN, fontSize: 16, fontWeight: "900", textAlign: "center", padding: 12, backgroundColor: "#f2f7f1", borderRadius: 9 },
 });

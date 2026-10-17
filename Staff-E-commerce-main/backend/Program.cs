@@ -150,6 +150,16 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+try
+{
+    await AuthorizationSchemaInitializer.InitializeAsync(app.Services);
+}
+catch (Exception ex)
+{
+    app.Logger.LogCritical(ex, "Authorization schema initialization failed.");
+    throw;
+}
+
 // -------------------------
 // Middleware pipeline
 // -------------------------

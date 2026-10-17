@@ -15,17 +15,17 @@ import CustomerAddModal from "../../components/customers/CustomerAddModal";
 import {
   Search,
   Edit2,
-  Power,
   Eye,
   RotateCcw,
   Tag,
   CheckCircle,
   Clock,
   XCircle,
+  Trash2,
   Upload,
 } from "lucide-react";
 import ImportModal from "../../components/import/ImportModal";
-import { getCustomers } from "../../api/customerApi";
+import { getCustomers, deleteCustomer } from "../../api/customerApi";
 import { useAuth } from "../../hook/useAuth";
 
 const CustomerList = () => {
@@ -158,6 +158,21 @@ const CustomerList = () => {
 
   const handleEdit = (customerId) => {
     setEditingCustomerId(customerId);
+  };
+
+  const handleDelete = async (customerId) => {
+    if (!window.confirm("Xóa hồ sơ khách hàng này?")) return;
+    try {
+      await deleteCustomer(customerId);
+      await dispatch(fetchCustomers({
+        page: pagination.currentPage,
+        pageSize: pagination.pageSize,
+        search: filters.search,
+        status: filters.status,
+      }));
+    } catch (error) {
+      console.error("Error deleting customer:", error);
+    }
   };
 
   const handlePageChange = (page) => {
@@ -303,10 +318,10 @@ const CustomerList = () => {
                   Điện Thoại
                 </th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                  Địa Chỉ
+                  Ngày Sinh
                 </th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                  Trạng Thái
+                  Địa Chỉ
                 </th>
                 <th className="px-6 py-3 text-center text-sm font-semibold text-gray-700">
                   Hành Động
@@ -362,24 +377,10 @@ const CustomerList = () => {
                       {customer.phone || "-"}
                     </td>
                     <td className="px-6 py-3 text-sm text-gray-600">
-                      {customer.address || "-"}
+                      {customer.dateOfBirth ? new Date(customer.dateOfBirth).toLocaleDateString("vi-VN") : "-"}
                     </td>
-                    <td className="px-6 py-3">
-                      {(() => {
-                        const statusClass = customer.isActive
-                          ? "bg-green-100 text-green-800"
-                          : "bg-red-100 text-red-800";
-                        const statusText = customer.isActive
-                          ? "Hoạt Động"
-                          : "Ngừng Hoạt Động";
-                        return (
-                          <span
-                            className={`px-3 py-1 rounded-full text-sm font-semibold ${statusClass}`}
-                          >
-                            {statusText}
-                          </span>
-                        );
-                      })()}
+                    <td className="px-6 py-3 text-sm text-gray-600">
+                      {customer.address || "-"}
                     </td>
                     <td className="px-6 py-3 text-center">
                       <div className="flex items-center justify-center gap-2">
@@ -400,19 +401,11 @@ const CustomerList = () => {
                               <Edit2 size={18} />
                             </button>
                             <button
-                              onClick={() => handleToggleStatus(customer.id)}
-                              className={`p-2 rounded-lg transition ${
-                                customer.isActive
-                                  ? "text-red-600 hover:bg-red-50"
-                                  : "text-orange-600 hover:bg-orange-50"
-                              }`}
-                              title={
-                                customer.isActive
-                                  ? "Ngừng hoạt động"
-                                  : "Kích hoạt"
-                              }
+                              onClick={() => handleDelete(customer.id)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                              title="Xóa hồ sơ"
                             >
-                              <Power size={18} />
+                              <Trash2 size={18} />
                             </button>
                           </>
                         )}

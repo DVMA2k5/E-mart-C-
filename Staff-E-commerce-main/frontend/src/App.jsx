@@ -5,6 +5,8 @@ import ProductList from "./pages/products/ProductList";
 import OrdersPage from "./pages/orders/OrdersPage";
 import AuditPage from "./pages/audits/AuditPage";
 import UserManagement from "./pages/users/UserManagement";
+import RoleManagement from "./pages/users/RoleManagement";
+import EmployeeManagement from "./pages/employees/EmployeeManagement";
 import ProfilePage from "./pages/profile/ProfilePage";
 import PromotionList from "./pages/promotions/PromotionList";
 import PromotionDetail from "./pages/promotions/PromotionDetail";
@@ -53,6 +55,8 @@ function App() {
           <Route path="/pos" element={<POS />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/users" element={<UserManagement />} />
+          <Route path="/employees" element={<EmployeeManagement />} />
+          <Route path="/roles" element={<RoleManagement />} />
           <Route path="/profile" element={<ProfilePage />} />
 
           {/* Promotion Routes */}

@@ -103,6 +103,32 @@ ON customers(email)
 WHERE email IS NOT NULL;
 GO
 
+CREATE TABLE employees (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  full_name NVARCHAR(255) NOT NULL,
+  phone VARCHAR(50),
+  email VARCHAR(255),
+  address NVARCHAR(MAX),
+  note NVARCHAR(MAX),
+  is_active BIT NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT GETDATE(),
+  updated_at DATETIME NOT NULL DEFAULT GETDATE()
+);
+CREATE UNIQUE INDEX ux_employees_email ON employees(email) WHERE email IS NOT NULL;
+
+CREATE TABLE roles (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  name VARCHAR(50) NOT NULL UNIQUE,
+  description NVARCHAR(255),
+  is_active BIT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE permissions (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  code VARCHAR(100) NOT NULL UNIQUE,
+  name NVARCHAR(150) NOT NULL,
+  description NVARCHAR(255)
+);
 
 CREATE TABLE users (
   id INT IDENTITY(1,1) PRIMARY KEY,
@@ -111,19 +137,31 @@ CREATE TABLE users (
   full_name NVARCHAR(255) NOT NULL,
   email VARCHAR(255),
   phone VARCHAR(20),
-  role VARCHAR(20) NOT NULL DEFAULT 'staff',
+  role_id INT NOT NULL,
+  employee_id INT NULL,
+  customer_id INT NULL,
   is_active BIT NOT NULL DEFAULT 1,
   locked BIT NOT NULL DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_login DATETIME DEFAULT NULL,
-  CONSTRAINT ck_users_role CHECK (role IN ('admin','staff'))
+  CONSTRAINT fk_users_role FOREIGN KEY (role_id) REFERENCES roles(id),
+  CONSTRAINT fk_users_employee FOREIGN KEY (employee_id) REFERENCES employees(id),
+  CONSTRAINT fk_users_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
 GO
 CREATE UNIQUE INDEX ux_users_email
 ON users(email)
 WHERE email IS NOT NULL;
 GO
+
+CREATE TABLE role_permissions (
+  role_id INT NOT NULL,
+  permission_id INT NOT NULL,
+  PRIMARY KEY (role_id, permission_id),
+  CONSTRAINT fk_role_permissions_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+  CONSTRAINT fk_role_permissions_permission FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+);
 
 CREATE TABLE promotions (
   id INT IDENTITY(1,1) PRIMARY KEY,
@@ -398,13 +436,23 @@ CREATE INDEX idx_orders_created_at ON [orders] (created_at);
 CREATE INDEX idx_inventory_quantity ON inventory (quantity);
 CREATE INDEX idx_products_created_at ON products (created_at);
 
--- ===== USERS (ADMIN + EMPLOYEE, phân quyền bằng role) =====
+-- ===== USERS (ADMIN + EMPLOYEE, role ánh xạ qua khóa ngoại) =====
+INSERT INTO roles (name, description)
+VALUES ('admin', N'Quản trị toàn hệ thống'), ('staff', N'Nhân viên bán hàng'), ('customer', N'Khách hàng');
+INSERT INTO permissions (code, name)
+VALUES ('users.read', N'Xem tài khoản'), ('users.write', N'Tạo và cập nhật tài khoản'),
+       ('roles.read', N'Xem vai trò và quyền'), ('roles.write', N'Gán quyền cho vai trò'),
+       ('customers.read', N'Tra cứu khách hàng'), ('customers.write', N'Tạo và cập nhật khách hàng');
+
 INSERT INTO users
-(username, password_hash, full_name, email, role, is_active, locked, created_at)
+(username, password_hash, full_name, email, role_id, is_active, locked, created_at)
 VALUES
-  ('admin', '$2a$11$B5Pre4vLwlsfDIMg/gXXjuH/CyqianiPXHXSXikWE5R0djN/9Tf7.', N'Quản trị viên', 'admin@example.com', 'admin', 1, 0, GETDATE()),
-  ('staff01', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Nguyễn Văn A', 'staff01@example.com', 'staff', 1, 0, GETDATE()),
-  ('staff02', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Lê Thị B', 'staff02@example.com', 'staff', 1, 0, GETDATE());
+  ('admin', '$2a$11$B5Pre4vLwlsfDIMg/gXXjuH/CyqianiPXHXSXikWE5R0djN/9Tf7.', N'Quản trị viên', 'admin@example.com', (SELECT id FROM roles WHERE name = 'admin'), 1, 0, GETDATE()),
+  ('staff01', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Nguyễn Văn A', 'staff01@example.com', (SELECT id FROM roles WHERE name = 'staff'), 1, 0, GETDATE()),
+  ('staff02', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Lê Thị B', 'staff02@example.com', (SELECT id FROM roles WHERE name = 'staff'), 1, 0, GETDATE());
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r CROSS JOIN permissions p WHERE r.name = 'admin';
 
 -- password của admin là admin123
 -- password của employee là 123456

@@ -27,6 +27,8 @@ namespace backend.Models
         [Column("email")]
         [StringLength(255)]
         public string? Email { get; set; }
+        [Column("date_of_birth")]
+        public DateTime? DateOfBirth { get; set; }
 
         [Column("address")]
         public string? Address { get; set; }

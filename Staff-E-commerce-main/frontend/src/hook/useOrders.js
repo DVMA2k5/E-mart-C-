@@ -964,6 +964,21 @@ const showOrder = async (index) => {
     }
 };
 
+const showOrderById = async (orderId) => {
+    try {
+        const item = await request(`/orders/${orderId}`);
+        setOrdersFormMode("detail");
+        setCurrentOrder(item);
+        setListOrderProducts(await loadOrderItemsByOrderId(orderId));
+        setSelectedProduct(null);
+        setPayment(await getPaymentByOrder(orderId) || { method: "", transaction_ref: "", status: "Chưa thanh toán" });
+        setPromotion(item.promotionId ? await getPromotionById(item.promotionId) : null);
+        setShowOrderModal(true);
+    } catch (err) {
+        console.error("showOrderById error:", err);
+    }
+};
+
 
 
 useEffect(() => {
@@ -1031,6 +1046,7 @@ return {
   getPromotionById,
   getPaymentByOrder,
   showOrder,
+  showOrderById,
   cancelOrder,
   completePendingOrder
 

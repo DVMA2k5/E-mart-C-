@@ -362,9 +362,9 @@ CREATE TABLE [orders] (
   CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT fk_orders_promo FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT ck_orders_type CHECK (order_type IN ('pos','mobile')),
-  CONSTRAINT ck_orders_status CHECK (status IN ('pending','processing','completed','cancelled')),
+  CONSTRAINT ck_orders_status CHECK (status IN ('pending','processing','completed','cancelled','refunded')),
   CONSTRAINT ck_orders_payment_method CHECK (payment_method IS NULL OR payment_method IN ('cash','card','e_wallet')),
-  CONSTRAINT ck_orders_payment_status CHECK (payment_status IN ('pending','paid','failed')),
+  CONSTRAINT ck_orders_payment_status CHECK (payment_status IN ('pending','paid','failed','refunded')),
   CONSTRAINT ck_orders_amounts CHECK (subtotal >= 0 AND discount >= 0 AND total_amount >= 0)
 );
 CREATE INDEX idx_orders_customer ON [orders] (customer_id);
@@ -402,6 +402,71 @@ CREATE TABLE payments (
   CONSTRAINT fk_payments_order FOREIGN KEY (order_id) REFERENCES [orders](id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE INDEX idx_payments_order ON payments (order_id);
+
+-- Issued invoice snapshots: one invoice per order; canceled invoices are retained as voided.
+CREATE TABLE invoices (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  order_id INT NOT NULL UNIQUE,
+  invoice_number VARCHAR(120) NOT NULL UNIQUE,
+  invoice_status VARCHAR(20) NOT NULL DEFAULT 'issued',
+  payment_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  payment_method VARCHAR(20) NULL,
+  customer_name NVARCHAR(255) NOT NULL DEFAULT N'Khách lẻ',
+  customer_phone VARCHAR(50) NULL,
+  customer_email VARCHAR(255) NULL,
+  customer_address NVARCHAR(MAX) NULL,
+  subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+  tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  shipping_fee DECIMAL(12,2) NOT NULL DEFAULT 0,
+  discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  issued_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+  updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+  CONSTRAINT fk_invoices_order FOREIGN KEY (order_id) REFERENCES [orders](id) ON DELETE NO ACTION,
+  CONSTRAINT ck_invoices_status CHECK (invoice_status IN ('issued','paid','voided','refunded')),
+  CONSTRAINT ck_invoices_payment_status CHECK (payment_status IN ('pending','paid','failed','refunded')),
+  CONSTRAINT ck_invoices_amounts CHECK (subtotal >= 0 AND tax_amount >= 0 AND shipping_fee >= 0 AND discount_amount >= 0 AND total_amount >= 0)
+);
+
+CREATE TABLE invoice_items (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  invoice_id INT NOT NULL,
+  product_id INT NULL,
+  product_name NVARCHAR(255) NOT NULL,
+  sku VARCHAR(100) NULL,
+  quantity INT NOT NULL,
+  unit_price DECIMAL(12,2) NOT NULL,
+  total_price DECIMAL(12,2) NOT NULL,
+  CONSTRAINT fk_invoice_items_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE NO ACTION,
+  CONSTRAINT fk_invoice_items_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
+  CONSTRAINT ck_invoice_items_quantity CHECK (quantity > 0),
+  CONSTRAINT ck_invoice_items_amounts CHECK (unit_price >= 0 AND total_price >= 0)
+);
+
+GO
+CREATE OR ALTER TRIGGER dbo.trg_invoices_lock_paid_amounts ON dbo.invoices
+AFTER UPDATE AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM inserted n JOIN deleted o ON o.id=n.id
+    WHERE o.invoice_status='paid' AND (n.subtotal<>o.subtotal OR n.tax_amount<>o.tax_amount OR
+      n.shipping_fee<>o.shipping_fee OR n.discount_amount<>o.discount_amount OR n.total_amount<>o.total_amount))
+  BEGIN
+    THROW 51001, 'Amounts on a paid invoice are immutable; void and issue an adjustment instead.', 1;
+  END;
+END;
+GO
+CREATE OR ALTER TRIGGER dbo.trg_invoice_items_lock_paid_snapshot ON dbo.invoice_items
+AFTER INSERT, UPDATE, DELETE AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM deleted d JOIN dbo.invoices i ON i.id=d.invoice_id WHERE i.invoice_status='paid')
+    OR EXISTS (SELECT 1 FROM inserted n JOIN dbo.invoices i ON i.id=n.invoice_id WHERE i.invoice_status='paid')
+  BEGIN
+    THROW 51002, 'Items on a paid invoice are immutable.', 1;
+  END;
+END;
+GO
 
 
 -- Optional: Promotion redemptions to track usage per customer/order
@@ -810,6 +875,23 @@ VALUES
 (29, 28, 1, 25000.00, 25000.00, GETDATE()),
 (30, 25, 1, 250000.00, 250000.00, GETDATE());
 
+-- Seed invoice snapshots after the sample orders and their items have been inserted.
+INSERT INTO invoices (order_id, invoice_number, invoice_status, payment_status, payment_method,
+  customer_name, customer_phone, customer_email, customer_address, subtotal, discount_amount, total_amount, issued_at, updated_at)
+SELECT o.id, CONCAT('HD-', o.order_number), 'issued', o.payment_status, o.payment_method,
+  COALESCE(c.full_name,N'Khách lẻ'), c.phone, c.email, c.address,
+  o.subtotal, o.discount, o.total_amount, o.created_at, o.updated_at
+FROM [orders] o LEFT JOIN customers c ON c.id=o.customer_id
+WHERE o.status IN ('processing','completed') OR o.payment_status='paid';
+
+INSERT INTO invoice_items (invoice_id, product_id, product_name, sku, quantity, unit_price, total_price)
+SELECT i.id, oi.product_id, COALESCE(p.product_name,N'Sản phẩm'), p.sku, oi.quantity, oi.unit_price, oi.total_price
+FROM invoices i JOIN [orders] o ON o.id=i.order_id
+JOIN order_items oi ON oi.order_id=o.id LEFT JOIN products p ON p.id=oi.product_id;
+
+UPDATE i SET invoice_status='paid'
+FROM invoices i JOIN [orders] o ON o.id=i.order_id WHERE o.payment_status='paid';
+
 -- ===== PAYMENTS với số tiền mới =====
 INSERT INTO payments (order_id, amount, method, transaction_ref, status, created_at)
 VALUES
@@ -879,4 +961,118 @@ SELECT COUNT(*) AS purchase_orders_count FROM purchase_orders;
 SELECT COUNT(*) AS promotions_count FROM promotions;
 SELECT COUNT(*) AS staff_count FROM users WHERE role = 'staff';
 SELECT COUNT(*) AS admins_count FROM users WHERE role = 'admin';
+GO
+
+/*
+  INVOICE UPGRADE BLOCK
+  This idempotent block is included here so the invoice database update lives in
+  this file too. On an existing database, execute this block (from this comment
+  to the final GO) instead of rerunning the full bootstrap script above.
+*/
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
+
+IF OBJECT_ID(N'dbo.invoices', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.invoices (
+    id INT IDENTITY(1,1) NOT NULL CONSTRAINT pk_invoices PRIMARY KEY,
+    order_id INT NOT NULL,
+    invoice_number VARCHAR(120) NOT NULL,
+    invoice_status VARCHAR(20) NOT NULL CONSTRAINT df_invoices_invoice_status DEFAULT 'issued',
+    payment_status VARCHAR(20) NOT NULL CONSTRAINT df_invoices_payment_status DEFAULT 'pending',
+    payment_method VARCHAR(20) NULL,
+    customer_name NVARCHAR(255) NOT NULL CONSTRAINT df_invoices_customer_name DEFAULT N'Khách lẻ',
+    customer_phone VARCHAR(50) NULL,
+    customer_email VARCHAR(255) NULL,
+    customer_address NVARCHAR(MAX) NULL,
+    subtotal DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_subtotal DEFAULT 0,
+    tax_amount DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_tax DEFAULT 0,
+    shipping_fee DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_shipping DEFAULT 0,
+    discount_amount DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_discount DEFAULT 0,
+    total_amount DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_total DEFAULT 0,
+    issued_at DATETIME2 NOT NULL CONSTRAINT df_invoices_issued_at DEFAULT SYSUTCDATETIME(),
+    updated_at DATETIME2 NOT NULL CONSTRAINT df_invoices_updated_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT ux_invoices_order UNIQUE (order_id),
+    CONSTRAINT ux_invoices_number UNIQUE (invoice_number),
+    CONSTRAINT fk_invoices_order FOREIGN KEY (order_id) REFERENCES dbo.[orders](id) ON DELETE NO ACTION,
+    CONSTRAINT ck_invoices_status CHECK (invoice_status IN ('issued','paid','voided','refunded')),
+    CONSTRAINT ck_invoices_payment_status CHECK (payment_status IN ('pending','paid','failed','refunded')),
+    CONSTRAINT ck_invoices_amounts CHECK (subtotal >= 0 AND tax_amount >= 0 AND shipping_fee >= 0 AND discount_amount >= 0 AND total_amount >= 0)
+  );
+END;
+
+IF OBJECT_ID(N'dbo.invoice_items', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.invoice_items (
+    id INT IDENTITY(1,1) NOT NULL CONSTRAINT pk_invoice_items PRIMARY KEY,
+    invoice_id INT NOT NULL,
+    product_id INT NULL,
+    product_name NVARCHAR(255) NOT NULL,
+    sku VARCHAR(100) NULL,
+    quantity INT NOT NULL,
+    unit_price DECIMAL(12,2) NOT NULL,
+    total_price DECIMAL(12,2) NOT NULL,
+    CONSTRAINT fk_invoice_items_invoice FOREIGN KEY (invoice_id) REFERENCES dbo.invoices(id) ON DELETE NO ACTION,
+    CONSTRAINT fk_invoice_items_product FOREIGN KEY (product_id) REFERENCES dbo.products(id) ON DELETE SET NULL,
+    CONSTRAINT ck_invoice_items_quantity CHECK (quantity > 0),
+    CONSTRAINT ck_invoice_items_amounts CHECK (unit_price >= 0 AND total_price >= 0)
+  );
+END;
+
+/* Backfill eligible orders and historical line snapshots, without duplicates. */
+INSERT dbo.invoices (order_id, invoice_number, invoice_status, payment_status, payment_method,
+  customer_name, customer_phone, customer_email, customer_address, subtotal, discount_amount, total_amount, issued_at, updated_at)
+SELECT o.id, CONCAT('HD-', o.order_number), 'issued', o.payment_status, o.payment_method,
+  COALESCE(c.full_name,N'Khách lẻ'), c.phone, c.email, c.address,
+  o.subtotal, o.discount, o.total_amount, o.created_at, o.updated_at
+FROM dbo.[orders] o LEFT JOIN dbo.customers c ON c.id=o.customer_id
+WHERE o.status <> 'cancelled' AND (o.status IN ('processing','completed') OR o.payment_status='paid')
+  AND NOT EXISTS (SELECT 1 FROM dbo.invoices i WHERE i.order_id=o.id);
+
+INSERT dbo.invoice_items (invoice_id, product_id, product_name, sku, quantity, unit_price, total_price)
+SELECT i.id, oi.product_id, COALESCE(p.product_name,N'Sản phẩm'), p.sku, oi.quantity, oi.unit_price, oi.total_price
+FROM dbo.invoices i JOIN dbo.order_items oi ON oi.order_id=i.order_id
+LEFT JOIN dbo.products p ON p.id=oi.product_id
+WHERE NOT EXISTS (SELECT 1 FROM dbo.invoice_items ii WHERE ii.invoice_id=i.id);
+
+UPDATE i SET invoice_status=CASE WHEN o.status='cancelled' THEN 'voided'
+                                 WHEN o.payment_status='refunded' OR o.status='refunded' THEN 'refunded'
+                                 WHEN o.payment_status='paid' THEN 'paid' ELSE 'issued' END,
+             payment_status=CASE WHEN o.payment_status='refunded' OR o.status='refunded' THEN 'refunded' ELSE o.payment_status END
+FROM dbo.invoices i JOIN dbo.[orders] o ON o.id=i.order_id;
+
+IF OBJECT_ID(N'dbo.ck_orders_status', N'C') IS NOT NULL
+  ALTER TABLE dbo.[orders] DROP CONSTRAINT ck_orders_status;
+ALTER TABLE dbo.[orders] ADD CONSTRAINT ck_orders_status CHECK (status IN ('pending','processing','completed','cancelled','refunded'));
+
+IF OBJECT_ID(N'dbo.ck_orders_payment_status', N'C') IS NOT NULL
+  ALTER TABLE dbo.[orders] DROP CONSTRAINT ck_orders_payment_status;
+ALTER TABLE dbo.[orders] ADD CONSTRAINT ck_orders_payment_status CHECK (payment_status IN ('pending','paid','failed','refunded'));
+
+COMMIT TRANSACTION;
+GO
+
+CREATE OR ALTER TRIGGER dbo.trg_invoices_lock_paid_amounts ON dbo.invoices
+AFTER UPDATE AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM inserted n JOIN deleted o ON o.id=n.id
+    WHERE o.invoice_status='paid' AND (n.subtotal<>o.subtotal OR n.tax_amount<>o.tax_amount OR
+      n.shipping_fee<>o.shipping_fee OR n.discount_amount<>o.discount_amount OR n.total_amount<>o.total_amount))
+  BEGIN
+    THROW 51001, 'Amounts on a paid invoice are immutable; void and issue an adjustment instead.', 1;
+  END;
+END;
+GO
+
+CREATE OR ALTER TRIGGER dbo.trg_invoice_items_lock_paid_snapshot ON dbo.invoice_items
+AFTER INSERT, UPDATE, DELETE AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM deleted d JOIN dbo.invoices i ON i.id=d.invoice_id WHERE i.invoice_status='paid')
+    OR EXISTS (SELECT 1 FROM inserted n JOIN dbo.invoices i ON i.id=n.invoice_id WHERE i.invoice_status='paid')
+  BEGIN
+    THROW 51002, 'Items on a paid invoice are immutable.', 1;
+  END;
+END;
 GO

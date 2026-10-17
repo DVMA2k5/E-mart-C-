@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import OrdersForm from "../../components/orders/OrderForm";
 import OrderTable from "../../components/orders/OrderTable";
 import CustomerModal from "../../components/orders/CustomerModal";
@@ -6,6 +7,9 @@ import ProductModal from "../../components/orders/ProductModal";
 import { useOrders } from "../../hook/useOrders";
 
 export default function OrdersPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const openedOrderRef = useRef(null);
   const handleSearch = () => {
       setCurrentPage(1);
       loadOrdersAdvanced(1);
@@ -66,6 +70,7 @@ export default function OrdersPage() {
     setSearchKeyword,
     loadOrdersAdvanced ,
     showOrder,
+    showOrderById,
     cancelOrder,
     completePendingOrder
 
@@ -74,6 +79,14 @@ export default function OrdersPage() {
 
     
   } = useOrders();
+
+  useEffect(() => {
+    const orderId = location.state?.orderId;
+    if (!orderId || openedOrderRef.current === orderId) return;
+    openedOrderRef.current = orderId;
+    showOrderById(orderId);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location, navigate, showOrderById]);
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6">
 

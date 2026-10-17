@@ -100,6 +100,13 @@ namespace backend.Controllers
 
             return Ok(result);
         }
+
+        [HttpGet("{orderId:int}")]
+        public async Task<IActionResult> GetOrderById(int orderId)
+        {
+            try { return Ok(await _orderService.MapToDTOAsync(orderId)); }
+            catch (Exception) { return NotFound(); }
+        }
        
         [HttpPost("{orderId}/cancel")]
         public async Task<IActionResult> CancelOrder(int orderId)
@@ -223,6 +230,14 @@ namespace backend.Controllers
             {
                 return StatusCode(500, new { message = ex.Message });
             }
+        }
+
+        [HttpPost("{orderId}/refund")]
+        public async Task<IActionResult> MarkOrderRefunded(int orderId)
+        {
+            var result = await _orderService.MarkOrderRefundedAsync(orderId);
+            return result ? Ok(new { success = true, message = "Đơn hàng và hóa đơn đã được đánh dấu hoàn tiền." })
+                : Conflict(new { message = "Chỉ đơn đã thanh toán mới có thể đánh dấu hoàn tiền." });
         }
 
         [HttpGet("{orderId}/items")]

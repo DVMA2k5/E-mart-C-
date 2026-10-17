@@ -17,6 +17,7 @@ namespace backend.Services
         private readonly CustomerRepository _customerRepo;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly AppDbContext _context;
+        private readonly InvoiceService _invoiceService;
 
         public OrderService(
             OrderRepository orderRepo,
@@ -24,7 +25,8 @@ namespace backend.Services
             UserRepository userRepo,
             CustomerRepository customerRepo,
             IHttpContextAccessor httpContextAccessor,
-            AppDbContext context)
+            AppDbContext context,
+            InvoiceService invoiceService)
         {
             _orderRepo = orderRepo;
             _logService = logService;
@@ -32,6 +34,7 @@ namespace backend.Services
             _userRepo = userRepo;
             _httpContextAccessor = httpContextAccessor;
             _context = context;
+            _invoiceService = invoiceService;
         }
 
         // Tự động lấy user_id
@@ -143,6 +146,7 @@ namespace backend.Services
                 payment.CreatedAt = now;
             }
             var created = await _orderRepo.CreateOrderAsync(order);
+            await _invoiceService.SyncOrderLifecycleAsync(created.Id);
 
             // Tích điểm nếu đơn hoàn tất tại quầy
             if (created.Status == "completed" && created.CustomerId.HasValue && created.CustomerId.Value > 0)
@@ -167,7 +171,8 @@ namespace backend.Services
         // Chuyển Order sang OrderDTO đầy đủ
         public async Task<OrderDTO> MapToDTOAsync(int orderId)
         {
-            var order = await _orderRepo.GetByIdAsync(orderId);
+            var order = await _context.Orders.Include(o => o.Customer).Include(o => o.User).Include(o => o.Promotion)
+                .FirstOrDefaultAsync(o => o.Id == orderId);
             if (order == null) throw new Exception("Không tìm thấy đơn hàng");
 
             return new OrderDTO
@@ -177,6 +182,8 @@ namespace backend.Services
                 CustomerId = order.CustomerId ?? 0,
                 UserId = order.UserId,
                 Status = order.Status,
+                PaymentStatus = order.PaymentStatus,
+                PaymentMethod = order.PaymentMethod,
                 Subtotal = order.Subtotal,
                 Discount = order.Discount,
                 TotalAmount = order.TotalAmount,
@@ -227,13 +234,17 @@ namespace backend.Services
             await _orderRepo.UpdateOrderUserAsync(orderId, currentUserId);
 
             // 4. Tiến hành hủy đơn
-            return await _orderRepo.CancelOrderAsync(orderId);
+            var cancelled = await _orderRepo.CancelOrderAsync(orderId);
+            if (cancelled) await _invoiceService.SyncOrderLifecycleAsync(orderId);
+            return cancelled;
         }
 
         public async Task<bool> CompletePendingOrderAsync(int orderId)
         {
             var currentUserId = GetCurrentUserId();
-            return await _orderRepo.CompletePendingOrderAsync(orderId, currentUserId);
+            var completed = await _orderRepo.CompletePendingOrderAsync(orderId, currentUserId);
+            if (completed) await _invoiceService.SyncOrderLifecycleAsync(orderId);
+            return completed;
         }
 
         // ===== ONLINE ORDER MANAGEMENT =====
@@ -323,6 +334,7 @@ namespace backend.Services
                     .SetProperty(o => o.Status, "processing")
                     .SetProperty(o => o.UserId, (int?)userId)
                     .SetProperty(o => o.UpdatedAt, now));
+            if (updated == 1) await _invoiceService.SyncOrderLifecycleAsync(orderId);
             return updated == 1;
         }
 
@@ -364,6 +376,7 @@ namespace backend.Services
 
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
+                await _invoiceService.SyncOrderLifecycleAsync(orderId);
                 return true;
             }
             catch
@@ -405,6 +418,20 @@ namespace backend.Services
             }
 
             await _context.SaveChangesAsync();
+            await _invoiceService.SyncOrderLifecycleAsync(orderId);
+            return true;
+        }
+
+        public async Task<bool> MarkOrderRefundedAsync(int orderId)
+        {
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
+            if (order == null || order.PaymentStatus != "paid" || order.Status == "cancelled") return false;
+            await _invoiceService.EnsureInvoiceForOrderAsync(orderId);
+            order.Status = "refunded";
+            order.PaymentStatus = "refunded";
+            order.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+            await _invoiceService.SyncOrderLifecycleAsync(orderId);
             return true;
         }
 

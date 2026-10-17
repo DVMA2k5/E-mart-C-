@@ -1,6 +1,7 @@
 import React from "react";
 import DetailOrderForm from "./DetailOrderForm";
 import PromotionSection from "./PromotionSection";
+import { useNavigate } from "react-router-dom";
 
 export default function OrdersForm({
   onClose,
@@ -21,6 +22,7 @@ export default function OrdersForm({
   completePendingOrder,
 }) {
   const formMode = mode;
+  const navigate = useNavigate();
 
   return (
     <div
@@ -55,6 +57,11 @@ export default function OrdersForm({
             </svg>
           </button>
         </div>
+        {formMode !== "create" && (currentOrder?.status === "processing" || currentOrder?.status === "completed" || currentOrder?.paymentStatus === "paid") && (
+          <button onClick={() => navigate(`/invoices?orderId=${currentOrder.id}`)} className="mb-5 rounded-lg bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">
+            Xem hóa đơn liên quan
+          </button>
+        )}
 
         {/* Thông tin đơn hàng */}
         <div className="space-y-5 mb-6">

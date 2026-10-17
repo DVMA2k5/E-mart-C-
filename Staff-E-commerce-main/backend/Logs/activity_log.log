@@ -533,3 +533,4 @@
 [2026-10-12 16:08:16] [User:2] [Action:UPDATE_Storefront] [Entity:Storefront#account] [IP:192.168.1.2] {"fullName":"B\u00ECnh"}
 [2026-10-12 16:24:50] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
 [2026-10-12 16:46:41] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#login] [IP:192.168.1.2] {"phone":"0945021928"}
+[2026-10-17 12:35:17] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#login] [IP:192.168.1.2] {"phone":"0945021928"}

@@ -1,6 +1,7 @@
 import React from "react";
 import DetailOrderForm from "./DetailOrderForm";
 import PromotionSection from "./PromotionSection";
+import { useNavigate } from "react-router-dom";
 
 export default function OrdersForm({
   onClose,
@@ -18,12 +19,14 @@ export default function OrdersForm({
   promotion,
   setPromotion,
   click_buttonCreateNewOrder,
+  completePendingOrder,
 }) {
   const formMode = mode;
+  const navigate = useNavigate();
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50"
+      className="fixed inset-0 z-40 flex justify-center items-center bg-black/50"
       onClick={onClose}
     >
       <div
@@ -54,6 +57,11 @@ export default function OrdersForm({
             </svg>
           </button>
         </div>
+        {formMode !== "create" && (currentOrder?.status === "processing" || currentOrder?.status === "completed" || currentOrder?.paymentStatus === "paid") && (
+          <button onClick={() => navigate(`/invoices?orderId=${currentOrder.id}`)} className="mb-5 rounded-lg bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">
+            Xem hóa đơn liên quan
+          </button>
+        )}
 
         {/* Thông tin đơn hàng */}
         <div className="space-y-5 mb-6">
@@ -268,7 +276,7 @@ export default function OrdersForm({
               </label>
               <input
                 readOnly
-                value={payment.transaction_ref}
+                  value={payment?.transaction_ref || ""}
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50"
               />
 
@@ -277,7 +285,7 @@ export default function OrdersForm({
               </label>
               <input
                 readOnly
-                value={payment.status}
+                value={payment?.status || ""}
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50"
               />
             </div>
@@ -294,7 +302,8 @@ export default function OrdersForm({
               <span className="text-green-600">{currentOrder.discount}₫</span>
             </div>
             <div className="flex justify-between text-xl text-blue-600">
-              <span>Phải trả:</span> <span>{currentOrder.total_amount}₫</span>
+              <span>Phải trả:</span>{" "}
+              <span>{Math.max(0, Number(currentOrder.subtotal || 0) - Number(currentOrder.discount || 0))}₫</span>
             </div>
           </div>
 
@@ -304,6 +313,14 @@ export default function OrdersForm({
               <button
                 onClick={click_buttonCreateNewOrder}
                 className="px-7 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg"
+              >
+                Tạo Đơn Hàng
+              </button>
+            )}
+            {formMode !== "create" && currentOrder?.status === "pending" && (
+              <button
+                onClick={() => completePendingOrder(currentOrder.id)}
+                className="px-7 py-3 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 shadow-lg"
               >
                 Tạo Đơn Hàng
               </button>

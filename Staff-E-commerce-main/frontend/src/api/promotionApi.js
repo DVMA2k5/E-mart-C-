@@ -71,3 +71,12 @@ export async function getPromotionRedemptions(id) {
 export async function getPromotionStats(id) {
   return request(`/promotions/${id}/stats`);
 }
+
+export async function getProductSelectionLocks({ startDate, endDate, excludePromotionId } = {}) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  if (excludePromotionId) params.set("excludePromotionId", String(excludePromotionId));
+  const query = params.toString();
+  return request(`/promotions/product-selection-locks${query ? `?${query}` : ""}`);
+}

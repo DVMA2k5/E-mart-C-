@@ -1,5 +1,3 @@
-@import "tailwindcss";
-
 .line-clamp-1 {
   overflow: hidden;
   display: -webkit-box;
@@ -12,20 +10,4 @@
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-/* AI Chat Widget Animation */
-@keyframes slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-slide-up {
-  animation: slide-up 0.3s ease-out;
 }

@@ -29,7 +29,8 @@ namespace backend.Controllers
             [FromQuery] decimal? minPrice = null,
             [FromQuery] decimal? maxPrice = null,
             [FromQuery] string? sortBy = "",
-            [FromQuery] int? status = null)
+            [FromQuery] int? status = null,
+            [FromQuery] string? stockStatus = null)
         {
             if (page < 1) page = 1;
             if (pageSize < 1 || pageSize > 100) pageSize = 12;
@@ -41,7 +42,7 @@ namespace backend.Controllers
             //     return BadRequest("User ID not found in token");
 
             var result = await _productService.GetPaginatedProductsAsync(
-                page, pageSize, search, categoryId, supplierId, minPrice, maxPrice, sortBy, status);
+                page, pageSize, search, categoryId, supplierId, minPrice, maxPrice, sortBy, status, stockStatus);
             return Ok(result);
         }
 
@@ -62,6 +63,24 @@ namespace backend.Controllers
             catch (ArgumentException ex)
             {
                 return BadRequest(ex.Message);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // GET api/products/barcode/{code}
+        [HttpGet("barcode/{code}")]
+        public async Task<ActionResult<ProductDTO>> GetProductByBarcode(string code)
+        {
+            try
+            {
+                var product = await _productService.GetProductByBarcodeAsync(code);
+                if (product == null)
+                    return NotFound(new { message = $"Không tìm thấy sản phẩm có mã vạch: {code}" });
+
+                return Ok(product);
             }
             catch (Exception ex)
             {

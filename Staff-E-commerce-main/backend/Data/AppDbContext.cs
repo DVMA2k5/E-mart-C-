@@ -12,6 +12,8 @@ namespace backend.Data
         public DbSet<Payment> Payments { get; set; }
         public DbSet<OrderItem> OrderItems { get; set; }
         public DbSet<Order> Orders { get; set; }
+        public DbSet<Invoice> Invoices { get; set; }
+        public DbSet<InvoiceItem> InvoiceItems { get; set; }
         public DbSet<InventoryAdjustment> InventoryAdjustments { get; set; }
         public DbSet<Inventory> Inventory { get; set; }
         public DbSet<Unit> Units { get; set; }
@@ -21,13 +23,11 @@ namespace backend.Data
         public DbSet<Customer> Customers { get; set; }
         public DbSet<User> Users { get; set; }
         public DbSet<Promotion> Promotions { get; set; }
+        public DbSet<PurchaseOrder> PurchaseOrders { get; set; }
+        public DbSet<PurchaseOrderDetail> PurchaseOrderDetails { get; set; }
         public DbSet<EventPromotion> EventPromotions { get; set; }
         public DbSet<VoucherPromotion> VoucherPromotions { get; set; }
         public DbSet<ProductPromotion> ProductPromotions { get; set; }
-        public DbSet<PurchaseOrder> PurchaseOrders { get; set; }
-        public DbSet<PurchaseOrderDetail> PurchaseOrderDetails { get; set; }
-        public DbSet<AiConversation> AiConversations { get; set; }
-        public DbSet<AiMessage> AiMessages { get; set; }
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -123,6 +123,14 @@ namespace backend.Data
                 .OnDelete(DeleteBehavior.Restrict);
 
             // Payment -> Order
+            modelBuilder.Entity<Invoice>().HasIndex(i => i.OrderId).IsUnique();
+            modelBuilder.Entity<Invoice>().HasIndex(i => i.InvoiceNumber).IsUnique();
+            modelBuilder.Entity<Invoice>().HasOne(i => i.Order).WithOne(o => o.Invoice)
+                .HasForeignKey<Invoice>(i => i.OrderId).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<InvoiceItem>().HasOne(i => i.Invoice).WithMany(i => i.Items)
+                .HasForeignKey(i => i.InvoiceId).OnDelete(DeleteBehavior.Restrict);
+
+            // Payment -> Order
             modelBuilder.Entity<Payment>()
                 .HasOne(p => p.Order)
                 .WithMany(o => o.Payments)
@@ -195,29 +203,12 @@ namespace backend.Data
             modelBuilder.Entity<Promotion>()
                 .HasQueryFilter(p => !p.IsDeleted);
 
-            modelBuilder.Entity<Promotion>()
-                .HasOne(p => p.EventPromotion)
-                .WithOne(detail => detail.Promotion)
-                .HasForeignKey<EventPromotion>(detail => detail.PromotionId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            modelBuilder.Entity<Promotion>()
-                .HasOne(p => p.VoucherPromotion)
-                .WithOne(detail => detail.Promotion)
-                .HasForeignKey<VoucherPromotion>(detail => detail.PromotionId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            modelBuilder.Entity<Promotion>()
-                .HasMany(p => p.ProductPromotions)
-                .WithOne(detail => detail.Promotion)
-                .HasForeignKey(detail => detail.PromotionId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            modelBuilder.Entity<ProductPromotion>()
-                .HasOne(detail => detail.Product)
-                .WithMany()
-                .HasForeignKey(detail => detail.ProductId)
-                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<Promotion>().HasOne(p => p.EventDetails).WithOne(d => d.Promotion)
+                .HasForeignKey<EventPromotion>(d => d.PromotionId).OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<Promotion>().HasOne(p => p.VoucherDetails).WithOne(d => d.Promotion)
+                .HasForeignKey<VoucherPromotion>(d => d.PromotionId).OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<Promotion>().HasMany(p => p.ProductDetails).WithOne(d => d.Promotion)
+                .HasForeignKey(d => d.PromotionId).OnDelete(DeleteBehavior.Cascade);
 
             // Customer -> Orders
             modelBuilder.Entity<Customer>()
@@ -245,19 +236,9 @@ namespace backend.Data
                 .HasForeignKey(l => l.UserId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-            // AiConversation -> User
-            modelBuilder.Entity<AiConversation>()
-                .HasOne(c => c.User)
-                .WithMany()
-                .HasForeignKey(c => c.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
+       
 
-            // AiMessage -> AiConversation
-            modelBuilder.Entity<AiMessage>()
-                .HasOne(m => m.Conversation)
-                .WithMany(c => c.Messages)
-                .HasForeignKey(m => m.ConversationId)
-                .OnDelete(DeleteBehavior.Cascade);
+
         }
     }
 }

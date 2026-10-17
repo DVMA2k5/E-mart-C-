@@ -31,29 +31,11 @@ namespace backend.Models
         public string PasswordHash { get; set; } = string.Empty;
 
         [Required]
-        [Column("first_name")]
-        [StringLength(100)]
-        public string FirstName { get; set; } = string.Empty;
+        [Column("full_name")]
+        [StringLength(255)]
+        public string FullName { get; set; } = string.Empty;
 
-        [Required]
-        [Column("last_name")]
-        [StringLength(100)]
-        public string LastName { get; set; } = string.Empty;
-
-        [NotMapped]
-        public string FullName
-        {
-            get => string.Join(" ", new[] { FirstName, LastName }.Where(part => !string.IsNullOrWhiteSpace(part)));
-            set
-            {
-                var name = value?.Trim() ?? string.Empty;
-                var lastSpace = name.LastIndexOf(' ');
-                FirstName = lastSpace < 0 ? name : name[..lastSpace];
-                LastName = lastSpace < 0 ? string.Empty : name[(lastSpace + 1)..];
-            }
-        }
-
-        // "admin" or "staff" stored as string (matches DB ENUM)
+        // The current schema accepts "admin" or "staff".
         [Column("role")]
         [StringLength(50)]
         public string Role { get; set; } = "staff";
@@ -78,9 +60,5 @@ namespace backend.Models
         public virtual ICollection<InventoryAdjustment>? InventoryAdjustments { get; set; }
         public virtual ICollection<ActivityLog>? ActivityLogs { get; set; }
 
-        internal static string? FindFirst(string v)
-        {
-            throw new NotImplementedException();
-        }
     }
 }

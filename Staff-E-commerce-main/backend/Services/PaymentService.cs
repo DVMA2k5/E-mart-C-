@@ -13,21 +13,27 @@ namespace backend.Services
         private readonly OrderRepository _orderRepo;
         private readonly ActivityLogService _logService;
         private readonly IConfiguration _config;
+        private readonly InvoiceService _invoiceService;
 
         // Hàm lưu một payment nếu là thanh toán trực tiếp 
         // Lưu Payment (Cash, Card, ECard,...)
         public async Task<Payment> CreatePaymentAsync(Payment payment)
         {
+            // The POS request does not send CreatedAt. Avoid DateTime.MinValue,
+            // which SQL Server's datetime column cannot store.
+            if (payment.CreatedAt == default)
+                payment.CreatedAt = DateTime.UtcNow;
 
             return await _paymentRepo.AddPaymentAsync(payment);
         }
 
-        public PaymentService(PaymentRepository paymentRepo, OrderRepository orderRepo, ActivityLogService logService, IConfiguration config)
+        public PaymentService(PaymentRepository paymentRepo, OrderRepository orderRepo, ActivityLogService logService, IConfiguration config, InvoiceService invoiceService)
         {
             _paymentRepo = paymentRepo;
             _orderRepo = orderRepo;
             _logService = logService;
             _config = config;
+            _invoiceService = invoiceService;
         }
 
         private string SignSHA256(string message, string key)
@@ -153,7 +159,15 @@ namespace backend.Services
                 {
                     payment.Status = "completed";
                     await _paymentRepo.UpdatePaymentAsync(payment);
-                    await _orderRepo.UpdateOrderStatusAsync(payment.OrderId, "completed");
+
+                    var order = await _orderRepo.GetByIdAsync(payment.OrderId);
+                    if (order != null)
+                    {
+                        var newStatus = order.OrderType == "pos" ? "completed" : (order.Status == "pending" ? "processing" : order.Status);
+                        await _orderRepo.UpdateOrderPaymentAsync(order.Id, "paid", newStatus);
+                        await _invoiceService.SyncOrderLifecycleAsync(order.Id);
+                    }
+
                     await _logService.LogAsync(payment.OrderId, "PAYMENT_SUCCESS", "Payment", payment.TransactionRef, JsonConvert.SerializeObject(callback), "system");
                 }
             }

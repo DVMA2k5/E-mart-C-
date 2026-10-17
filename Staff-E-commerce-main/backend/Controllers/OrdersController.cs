@@ -1,7 +1,9 @@
 using backend.DTO;
 using backend.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using backend.Models;
+using backend.Hubs;
 
 namespace backend.Controllers
 {
@@ -10,9 +12,12 @@ namespace backend.Controllers
     public class OrdersController : ControllerBase
     {
         private readonly OrderService _orderService;
-        public OrdersController(OrderService orderService)
+        private readonly IHubContext<OrderHub>? _orderHub;
+
+        public OrdersController(OrderService orderService, IHubContext<OrderHub>? orderHub = null)
         {
             _orderService = orderService;
+            _orderHub = orderHub;
         }
 
         //1. Khởi tạo một đối tượng đơn hàng tạm thời để truyền xuống frontend
@@ -50,6 +55,7 @@ namespace backend.Controllers
         // }
 
         [HttpPost("create")]
+        [HttpPost("")]
         public async Task<IActionResult> CreateOrder([FromBody] Order order)
         {
             if (order == null)
@@ -94,6 +100,13 @@ namespace backend.Controllers
 
             return Ok(result);
         }
+
+        [HttpGet("{orderId:int}")]
+        public async Task<IActionResult> GetOrderById(int orderId)
+        {
+            try { return Ok(await _orderService.MapToDTOAsync(orderId)); }
+            catch (Exception) { return NotFound(); }
+        }
        
         [HttpPost("{orderId}/cancel")]
         public async Task<IActionResult> CancelOrder(int orderId)
@@ -112,7 +125,133 @@ namespace backend.Controllers
             }
         }
 
+        [HttpPost("{orderId}/complete")]
+        public async Task<IActionResult> CompletePendingOrder(int orderId)
+        {
+            try
+            {
+                var result = await _orderService.CompletePendingOrderAsync(orderId);
+                if (!result)
+                    return Conflict(new { message = "Đơn hàng không còn ở trạng thái chờ xử lý." });
 
+                return Ok(true);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Complete pending order failed: {ex}");
+                return StatusCode(500, new { message = "Không thể hoàn thành đơn hàng." });
+            }
+        }
 
+        /// <summary>
+        /// Lấy danh sách đơn hàng online (order_type = 'mobile') với phân trang
+        /// </summary>
+        [HttpGet("online")]
+        public async Task<IActionResult> GetOnlineOrders(
+            int pageNumber = 1,
+            int pageSize = 20,
+            string? status = null,
+            string? search = null)
+        {
+            var result = await _orderService.GetOnlineOrdersAsync(pageNumber, pageSize, status, search);
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// Xác nhận đơn hàng online: pending -> processing
+        /// </summary>
+        [HttpPost("{orderId}/confirm")]
+        public async Task<IActionResult> ConfirmOnlineOrder(int orderId)
+        {
+            try
+            {
+                var result = await _orderService.ConfirmOnlineOrderAsync(orderId);
+                if (!result)
+                    return Conflict(new { message = "Đơn hàng không thể xác nhận (không tồn tại hoặc không ở trạng thái pending)." });
+
+                if (_orderHub != null)
+                {
+                    _ = _orderHub.Clients.All.SendAsync("OrderStatusChanged", new { orderId, status = "processing" });
+                }
+
+                return Ok(new { success = true, message = "Đã xác nhận đơn hàng." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Từ chối đơn hàng online: pending -> cancelled
+        /// </summary>
+        [HttpPost("{orderId}/reject")]
+        public async Task<IActionResult> RejectOnlineOrder(int orderId, [FromBody] RejectOrderDTO? dto)
+        {
+            try
+            {
+                var result = await _orderService.RejectOnlineOrderAsync(orderId, dto?.Reason);
+                if (!result)
+                    return Conflict(new { message = "Đơn hàng không thể từ chối (không tồn tại hoặc không ở trạng thái pending/processing)." });
+
+                if (_orderHub != null)
+                {
+                    _ = _orderHub.Clients.All.SendAsync("OrderStatusChanged", new { orderId, status = "cancelled" });
+                }
+
+                return Ok(new { success = true, message = "Đã từ chối đơn hàng." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Hoàn thành giao hàng: processing -> completed
+        /// </summary>
+        [HttpPost("{orderId}/deliver")]
+        public async Task<IActionResult> DeliverOnlineOrder(int orderId)
+        {
+            try
+            {
+                var result = await _orderService.DeliverOnlineOrderAsync(orderId);
+                if (!result)
+                    return Conflict(new { message = "Đơn hàng không thể chuyển sang trạng thái giao hàng." });
+
+                if (_orderHub != null)
+                {
+                    _ = _orderHub.Clients.All.SendAsync("OrderStatusChanged", new { orderId, status = "completed" });
+                }
+
+                return Ok(new { success = true, message = "Đã hoàn thành giao hàng." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("{orderId}/refund")]
+        public async Task<IActionResult> MarkOrderRefunded(int orderId)
+        {
+            var result = await _orderService.MarkOrderRefundedAsync(orderId);
+            return result ? Ok(new { success = true, message = "Đơn hàng và hóa đơn đã được đánh dấu hoàn tiền." })
+                : Conflict(new { message = "Chỉ đơn đã thanh toán mới có thể đánh dấu hoàn tiền." });
+        }
+
+        [HttpGet("{orderId}/items")]
+        public async Task<IActionResult> GetOrderItems(int orderId)
+        {
+            try
+            {
+                var items = await _orderService.GetOrderItemsAsync(orderId);
+                return Ok(items);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
     }
 }

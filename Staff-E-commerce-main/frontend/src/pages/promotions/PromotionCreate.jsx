@@ -1,34 +1,27 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { createPromotion } from "../../api/promotionApi";
-import { getProductsPaginated } from "../../api/apiClient";
+import ProductPickerModal from "../../components/promotions/ProductPickerModal";
 
 export default function PromotionCreate({ onCancel, onSuccess }) {
   const [formData, setFormData] = useState({
     name: "",
-    code: "",
-    promotionKind: "event",
-    type: "percent",
+    type: "event",
+    discountType: "percent",
     value: "",
     minOrderAmount: "",
+    voucherCode: "",
     maxDiscount: "",
     usageLimit: "",
     description: "",
     startDate: "",
     endDate: "",
     active: true,
-    voucherCode: "",
     productIds: [],
   });
 
-  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-
-  useEffect(() => {
-    getProductsPaginated(1, 100, "", null, null, null, null, "name_asc", 1)
-      .then((data) => setProducts(data.items ?? data.Items ?? []))
-      .catch(() => setProducts([]));
-  }, []);
+  const [showProductPicker, setShowProductPicker] = useState(false);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -37,14 +30,6 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
         ...prev,
         [name]: type === "checkbox" ? checked : value,
       };
-      
-      // Xóa giá trị maxDiscount khi chuyển sang loại "fixed"
-      if (name === "type" && value === "fixed") {
-        newData.maxDiscount = "";
-      }
-      if (name === "promotionKind" && value === "product") {
-        newData.type = "percent";
-      }
       
       return newData;
     });
@@ -57,28 +42,26 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
 
     try {
       // Validate
-      if (!formData.code || !formData.value ||
-          (formData.promotionKind === "event" && formData.minOrderAmount === "") ||
-          (formData.promotionKind === "product" && formData.productIds.length === 0)) {
+      if (!formData.name || !formData.value || (formData.type === "event" && !formData.minOrderAmount) || (formData.type === "voucher" && !formData.voucherCode.trim()) || (formData.type === "product" && formData.productIds.length === 0)) {
         throw new Error("Vui lòng điền đầy đủ thông tin bắt buộc");
       }
 
       // Convert to proper types
       const payload = {
-        name: formData.name.trim() || formData.code.trim().toUpperCase(),
-        code: formData.code.toUpperCase(),
-        promotionKind: formData.promotionKind,
+        name: formData.name,
         type: formData.type,
+        discountType: formData.discountType,
         value: parseFloat(formData.value),
-        minOrderAmount: formData.promotionKind === "event" ? parseFloat(formData.minOrderAmount || 0) : 0,
+        minOrderAmount: formData.type === "event" ? parseFloat(formData.minOrderAmount || 0) : 0,
+        voucherCode: formData.type === "voucher" ? formData.voucherCode.trim().toUpperCase() : null,
+        productIds: formData.type === "product" ? formData.productIds : [],
         maxDiscount: formData.maxDiscount ? parseFloat(formData.maxDiscount) : null,
         usageLimit: formData.usageLimit ? parseInt(formData.usageLimit) : null,
         description: formData.description || "",
         startDate: formData.startDate || null,
         endDate: formData.endDate || null,
         active: formData.active,
-        voucherCode: formData.voucherCode.trim() || formData.code.toUpperCase(),
-        productIds: formData.productIds,
+        status: formData.active ? "active" : "disabled",
       };
 
       await createPromotion(payload);
@@ -87,10 +70,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
     } catch (err) {
       let errorMessage = err.message || "Có lỗi xảy ra khi tạo khuyến mãi";
       
-      // Xử lý lỗi mã khuyến mãi đã tồn tại
-      if (errorMessage.toLowerCase().includes('already exists')) {
-        errorMessage = `Mã khuyến mãi "${formData.code.toUpperCase()}" đã tồn tại. Vui lòng chọn mã khác.`;
-      }
+      if (errorMessage.toLowerCase().includes('already exists')) errorMessage = "Mã voucher đã tồn tại. Vui lòng chọn mã khác.";
       
       setError(errorMessage);
     } finally {
@@ -120,93 +100,14 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
           )}
 
           {/* Mã khuyến mãi */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Tên chương trình
-            </label>
-            <input
-              type="text"
-              name="name"
-              value={formData.name}
-              onChange={handleChange}
-              placeholder="VD: Khuyến mãi cuối tuần"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Mã khuyến mãi <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              name="code"
-              value={formData.code}
-              onChange={handleChange}
-              placeholder="VD: SUMMER2025"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 uppercase"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Nhóm khuyến mãi <span className="text-red-500">*</span>
-            </label>
-            <select
-              name="promotionKind"
-              value={formData.promotionKind}
-              onChange={handleChange}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="event">Theo đơn hàng</option>
-              <option value="voucher">Voucher</option>
-              <option value="product">Theo sản phẩm</option>
-            </select>
-          </div>
-
-          {formData.promotionKind === "voucher" && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Mã voucher</label>
-              <input
-                type="text"
-                name="voucherCode"
-                value={formData.voucherCode}
-                onChange={handleChange}
-                placeholder="Để trống sẽ dùng mã khuyến mãi"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 uppercase"
-              />
-            </div>
-          )}
-
-          {formData.promotionKind === "product" && (
-            <fieldset className="rounded-lg border border-gray-200 p-4">
-              <legend className="px-1 text-sm font-medium text-gray-700">Sản phẩm áp dụng</legend>
-              <div className="max-h-40 space-y-2 overflow-y-auto">
-                {products.map((product) => (
-                  <label key={product.id} className="flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={formData.productIds.includes(product.id)}
-                      onChange={(event) => setFormData((current) => ({
-                        ...current,
-                        productIds: event.target.checked
-                          ? [...current.productIds, product.id]
-                          : current.productIds.filter((id) => id !== product.id),
-                      }))}
-                    />
-                    <span>{product.productName ?? product.name} (#{product.id})</span>
-                  </label>
-                ))}
-                {products.length === 0 && <p className="text-sm text-gray-500">Không tải được danh sách sản phẩm.</p>}
-              </div>
-            </fieldset>
-          )}
+          <div><label className="block text-sm font-medium text-gray-700 mb-2">Tên chương trình *</label><input name="name" value={formData.name} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg" required /></div>
+          {formData.type !== "voucher" && <p className="text-sm text-gray-500">Mã nội bộ sẽ được hệ thống tạo tự động. Chỉ voucher mới có mã khách hàng nhập.</p>}
 
           {/* Loại và giá trị */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Loại giảm giá <span className="text-red-500">*</span>
+                Loại chương trình <span className="text-red-500">*</span>
               </label>
               <select
                 name="type"
@@ -214,13 +115,14 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
                 onChange={handleChange}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                <option value="percent">Giảm theo %</option>
-                {formData.promotionKind !== "product" && <option value="fixed">Giảm cố định (VNĐ)</option>}
+                <option value="event">Sự kiện</option>
+                <option value="voucher">Voucher</option>
+                <option value="product">Theo sản phẩm</option>
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Giá trị {formData.type === "percent" ? "(%)" : "(VNĐ)"} <span className="text-red-500">*</span>
+                Giá trị {formData.discountType === "percent" ? "(%)" : "(VNĐ)"} <span className="text-red-500">*</span>
               </label>
               <input
                 type="number"
@@ -228,49 +130,42 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
                 value={formData.value}
                 onChange={handleChange}
                 min="0"
-                step={formData.type === "percent" ? "1" : "1000"}
-                max={formData.type === "percent" ? "100" : undefined}
+                step={formData.discountType === "percent" ? "1" : "1000"}
+                max={formData.discountType === "percent" ? "100" : undefined}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 required
               />
             </div>
           </div>
 
-          {/* Điều kiện đơn hàng */}
-          {(formData.promotionKind === "event" || formData.promotionKind === "voucher") && <div className="grid grid-cols-2 gap-4">
-            <div>
-              {formData.promotionKind === "event" && <>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Đơn hàng tối thiểu (VNĐ) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  name="minOrderAmount"
-                  value={formData.minOrderAmount}
-                  onChange={handleChange}
-                  min="0"
-                  step="1000"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                />
-              </>}
-            </div>
+          <div><label className="block text-sm font-medium text-gray-700 mb-2">Kiểu giảm</label><select name="discountType" value={formData.discountType} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg"><option value="percent">Phần trăm</option><option value="fixed">Số tiền cố định</option></select></div>
+          {/* Điều kiện theo loại chương trình */}
+          {formData.type === "event" && <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Giảm tối đa (VNĐ) {formData.type === "percent" && <span className="text-gray-500 text-xs">(nếu có)</span>}
+                Đơn hàng tối thiểu (VNĐ) <span className="text-red-500">*</span>
               </label>
               <input
                 type="number"
-                name="maxDiscount"
-                value={formData.maxDiscount}
+                name="minOrderAmount"
+                value={formData.minOrderAmount}
                 onChange={handleChange}
                 min="0"
                 step="1000"
-                disabled={formData.type === "fixed"}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
               />
             </div>
           </div>}
+          {formData.type === "voucher" && <div><label className="block text-sm font-medium text-gray-700 mb-2">Mã voucher</label><input name="voucherCode" value={formData.voucherCode} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg" required /></div>}
+          {formData.type === "product" && <div>
+            <label className="mb-2 block text-sm font-medium text-gray-700">Sản phẩm áp dụng <span className="text-red-500">*</span></label>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={() => setShowProductPicker(true)} className="rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-700 hover:bg-blue-50">Chọn sản phẩm</button>
+              <span className="text-sm text-gray-600">Đã chọn {formData.productIds.length} sản phẩm</span>
+            </div>
+          </div>}
+          <div><label className="block text-sm font-medium text-gray-700 mb-2">Giảm tối đa (VNĐ, tùy chọn)</label><input type="number" name="maxDiscount" value={formData.maxDiscount} onChange={handleChange} min="0" step="1000" disabled={formData.discountType === "fixed"} className="w-full px-4 py-2 border border-gray-300 rounded-lg disabled:bg-gray-100" /></div>
 
           {/* Thời gian */}
           <div className="grid grid-cols-2 gap-4">
@@ -281,6 +176,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
                 name="startDate"
                 value={formData.startDate}
                 onChange={handleChange}
+                required
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -291,6 +187,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
                 name="endDate"
                 value={formData.endDate}
                 onChange={handleChange}
+                required
                 min={formData.startDate}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
@@ -357,6 +254,13 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
           </div>
         </form>
       </div>
+      {showProductPicker && <ProductPickerModal
+        selectedIds={formData.productIds}
+        onChange={(productIds) => setFormData((previous) => ({ ...previous, productIds }))}
+        startDate={formData.startDate}
+        endDate={formData.endDate}
+        onClose={() => setShowProductPicker(false)}
+      />}
     </div>
   );
 }

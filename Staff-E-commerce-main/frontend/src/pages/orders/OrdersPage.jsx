@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import OrdersForm from "../../components/orders/OrderForm";
 import OrderTable from "../../components/orders/OrderTable";
 import CustomerModal from "../../components/orders/CustomerModal";
@@ -6,9 +7,12 @@ import ProductModal from "../../components/orders/ProductModal";
 import { useOrders } from "../../hook/useOrders";
 
 export default function OrdersPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const openedOrderRef = useRef(null);
   const handleSearch = () => {
       setCurrentPage(1);
-      loadOrdersAdvanced();
+      loadOrdersAdvanced(1);
   };
 
   const handleFilterDate = () => {
@@ -25,7 +29,7 @@ export default function OrdersPage() {
 
     // Reset trang về 1
     setCurrentPage(1);
-    loadOrdersAdvanced();
+    loadOrdersAdvanced(1);
   };
 
   
@@ -66,13 +70,23 @@ export default function OrdersPage() {
     setSearchKeyword,
     loadOrdersAdvanced ,
     showOrder,
-    cancelOrder
+    showOrderById,
+    cancelOrder,
+    completePendingOrder
 
 
  
 
     
   } = useOrders();
+
+  useEffect(() => {
+    const orderId = location.state?.orderId;
+    if (!orderId || openedOrderRef.current === orderId) return;
+    openedOrderRef.current = orderId;
+    showOrderById(orderId);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location, navigate, showOrderById]);
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6">
 
@@ -84,6 +98,7 @@ export default function OrdersPage() {
           </label>
           <select
               onChange={(e) => {
+                setCurrentPage(1);
                 setSelectedStatus(e.target.value);
                 console.log("Trạng thái đang được chọn",e.target.value );
               }}
@@ -91,6 +106,7 @@ export default function OrdersPage() {
           >
             <option value="">Tất cả trạng thái</option>
             <option value="pending">Chưa xử lý</option>
+            <option value="processing">Đang xử lý</option>
             <option value="paid">Đã thanh toán</option>
             <option value="completed">Hoàn thành</option>
             <option value="cancelled">Đã hủy</option>
@@ -161,6 +177,7 @@ export default function OrdersPage() {
       promotion={promotion}
       setPromotion={setPromotion}
       click_buttonCreateNewOrder={click_buttonCreateNewOrder}
+      completePendingOrder={completePendingOrder}
      
 
 
@@ -178,13 +195,11 @@ export default function OrdersPage() {
         onPrev={() => {
           if (currentPage > 1) {
             setCurrentPage(currentPage - 1);
-            loadOrdersAdvanced();
           }
         }}
         onNext={() => {
           if (currentPage < totalPages) {
             setCurrentPage(currentPage + 1);
-            loadOrdersAdvanced();
           }
         }}
       />

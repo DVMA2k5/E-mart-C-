@@ -323,7 +323,8 @@ export async function getProductsPaginated(
   minPrice = null,
   maxPrice = null,
   sortBy = "",
-  status = null
+  status = null,
+  stockStatus = ""
 ) {
   const params = new URLSearchParams({
     page: page.toString(),
@@ -335,9 +336,16 @@ export async function getProductsPaginated(
     ...(maxPrice && { maxPrice: maxPrice.toString() }),
     ...(sortBy && { sortBy }),
     ...(status && { status: status.toString() }),
+    ...(stockStatus && { stockStatus }),
   });
   return request(`/products/paginated?${params}`);
 }
+
+export async function getProductByBarcode(barcode) {
+  return request(`/products/barcode/${encodeURIComponent(barcode)}`);
+}
+
+export const getPaginatedProducts = getProductsPaginated;
 
 // Users -------------------------------------------------------------
 

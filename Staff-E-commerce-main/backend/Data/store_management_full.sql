@@ -1,7 +1,7 @@
 -- =========================================================
 -- STORE MANAGEMENT - CONVENIENCE STORE
 -- SQL Server / SSMS
--- Admin + Employee: dùng chung bảng Users, phân quyền bằng role.
+-- Admin + Staff: dùng chung bảng Users, phân quyền bằng role.
 -- Customer: tài khoản riêng cho App.
 -- Schema bám theo ERD: Users, Customers, Categories, Products,
 -- Suppliers, Purchase Orders, Promotions (3 loại), Orders, Payments...
@@ -28,14 +28,12 @@ BEGIN
 END;
 GO
 
-CREATE DATABASE [store_management];
+CREATE DATABASE [store_management] COLLATE Vietnamese_CI_AS;
 GO
 
 USE [store_management];
 GO
 
-IF OBJECT_ID(N'ai_messages', N'U') IS NOT NULL DROP TABLE ai_messages;
-IF OBJECT_ID(N'ai_conversations', N'U') IS NOT NULL DROP TABLE ai_conversations;
 
 IF OBJECT_ID(N'activity_logs', N'U') IS NOT NULL DROP TABLE activity_logs;
 IF OBJECT_ID(N'promotion_redemptions', N'U') IS NOT NULL DROP TABLE promotion_redemptions;
@@ -60,8 +58,8 @@ IF OBJECT_ID(N'promotions', N'U') IS NOT NULL DROP TABLE promotions;
 -- Parent tables first
 CREATE TABLE categories (
   id INT IDENTITY(1,1) PRIMARY KEY,
-  name VARCHAR(191) NOT NULL,
-  slug VARCHAR(191) DEFAULT NULL,
+  name NVARCHAR(191) NOT NULL,
+  slug NVARCHAR(191) DEFAULT NULL,
   description NVARCHAR(MAX),
   is_active BIT NOT NULL DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -93,7 +91,6 @@ CREATE TABLE customers (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   is_active BIT NOT NULL DEFAULT 1,
-  -- Khách hàng đăng nhập App; tài khoản nhân viên/admin nằm ở Users.
   -- SQL Server: dùng filtered unique indexes bên dưới để cho phép nhiều NULL.
 );
 GO
@@ -111,8 +108,7 @@ CREATE TABLE users (
   id INT IDENTITY(1,1) PRIMARY KEY,
   username VARCHAR(150) NOT NULL UNIQUE,
   password_hash VARCHAR(512) NOT NULL,
-  first_name NVARCHAR(100) NOT NULL,
-  last_name NVARCHAR(100) NOT NULL,
+  full_name NVARCHAR(255) NOT NULL,
   email VARCHAR(255),
   phone VARCHAR(20),
   role VARCHAR(20) NOT NULL DEFAULT 'staff',
@@ -134,6 +130,8 @@ CREATE TABLE promotions (
   code VARCHAR(100) NOT NULL UNIQUE,
   name NVARCHAR(150) NOT NULL,
   type VARCHAR(20) NOT NULL,
+  discount_type VARCHAR(10) NOT NULL,
+  discount_value DECIMAL(12,2) NOT NULL,
   description NVARCHAR(1000),
   start_date DATETIME NOT NULL,
   end_date DATETIME NOT NULL,
@@ -146,6 +144,8 @@ CREATE TABLE promotions (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT ck_promotions_type CHECK (type IN ('product','event','voucher')),
+  CONSTRAINT ck_promotions_discount_type CHECK (discount_type IN ('percent','fixed')),
+  CONSTRAINT ck_promotions_discount_value CHECK (discount_value > 0 AND (discount_type <> 'percent' OR discount_value <= 100)),
   CONSTRAINT ck_promotions_status CHECK (status IN ('active','expired','disabled')),
   CONSTRAINT ck_promotions_dates CHECK (end_date >= start_date),
   CONSTRAINT ck_promotions_usage CHECK (usage_limit IS NULL OR usage_limit >= 0),
@@ -156,38 +156,29 @@ CREATE TABLE promotions (
 -- PROMOTION DETAILS: 3 loại khuyến mãi theo ERD
 -- =========================================================
 
--- Event/voucher details
+-- Event details contain only event-specific conditions.
 CREATE TABLE event_promotions (
   id INT IDENTITY(1,1) PRIMARY KEY,
   promotion_id INT NOT NULL UNIQUE,
   min_order_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
-  discount_percent DECIMAL(5,2) NOT NULL,
-  max_discount_amount DECIMAL(12,2) DEFAULT NULL,
   CONSTRAINT fk_event_promotions_promotion
     FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
-  CONSTRAINT ck_event_min_order CHECK (min_order_amount >= 0),
-  CONSTRAINT ck_event_discount CHECK (discount_percent >= 0 AND discount_percent <= 100)
+  CONSTRAINT ck_event_min_order CHECK (min_order_amount >= 0)
 );
 
 CREATE TABLE voucher_promotions (
   id INT IDENTITY(1,1) PRIMARY KEY,
   promotion_id INT NOT NULL UNIQUE,
   voucher_code VARCHAR(50) NOT NULL UNIQUE,
-  discount_percent DECIMAL(5,2) NOT NULL,
-  max_discount_amount DECIMAL(12,2) DEFAULT NULL,
-  usage_limit INT DEFAULT NULL,
-  used_count INT NOT NULL DEFAULT 0,
   CONSTRAINT fk_voucher_promotions_promotion
     FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
-  CONSTRAINT ck_voucher_discount CHECK (discount_percent >= 0 AND discount_percent <= 100),
-  CONSTRAINT ck_voucher_usage CHECK (usage_limit IS NULL OR usage_limit >= 0),
-  CONSTRAINT ck_voucher_used_count CHECK (used_count >= 0)
+  CONSTRAINT ck_voucher_code CHECK (LEN(voucher_code) > 0)
 );
 
 CREATE TABLE units (
   id INT IDENTITY(1,1) PRIMARY KEY,
   code VARCHAR(50) NOT NULL UNIQUE,
-  name VARCHAR(255) NOT NULL,
+  name NVARCHAR(255) NOT NULL,
   is_active BIT NOT NULL DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -198,7 +189,7 @@ CREATE INDEX idx_units_code ON units (code);
 CREATE TABLE products (
   id INT IDENTITY(1,1) PRIMARY KEY,
   sku VARCHAR(100) DEFAULT NULL,
-  product_name VARCHAR(255) NOT NULL,
+  product_name NVARCHAR(255) NOT NULL,
   barcode VARCHAR(191) DEFAULT NULL,
   category_id INT DEFAULT NULL,
   supplier_id INT DEFAULT NULL,
@@ -235,12 +226,10 @@ CREATE TABLE product_promotions (
   id INT IDENTITY(1,1) PRIMARY KEY,
   promotion_id INT NOT NULL,
   product_id INT NOT NULL,
-  discount_percent DECIMAL(5,2) NOT NULL,
   CONSTRAINT fk_product_promotions_promotion
     FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
   CONSTRAINT fk_product_promotions_product
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-  CONSTRAINT ck_product_promotions_discount CHECK (discount_percent >= 0 AND discount_percent <= 100),
   CONSTRAINT ux_product_promotions UNIQUE (promotion_id, product_id)
 );
 
@@ -317,7 +306,7 @@ CREATE TABLE [orders] (
   id INT IDENTITY(1,1) PRIMARY KEY,
   order_number VARCHAR(100) NOT NULL UNIQUE,
   customer_id INT DEFAULT NULL,
-  employee_id INT DEFAULT NULL,
+  user_id INT DEFAULT NULL, -- staff who created the order
   promotion_id INT DEFAULT NULL,
   order_type VARCHAR(20) NOT NULL DEFAULT 'pos',
   status VARCHAR(20) NOT NULL DEFAULT 'pending',
@@ -330,16 +319,16 @@ CREATE TABLE [orders] (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_orders_employee FOREIGN KEY (employee_id) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT fk_orders_promo FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT ck_orders_type CHECK (order_type IN ('pos','mobile')),
-  CONSTRAINT ck_orders_status CHECK (status IN ('pending','processing','completed','cancelled')),
+  CONSTRAINT ck_orders_status CHECK (status IN ('pending','processing','completed','cancelled','refunded')),
   CONSTRAINT ck_orders_payment_method CHECK (payment_method IS NULL OR payment_method IN ('cash','card','e_wallet')),
-  CONSTRAINT ck_orders_payment_status CHECK (payment_status IN ('pending','paid','failed')),
+  CONSTRAINT ck_orders_payment_status CHECK (payment_status IN ('pending','paid','failed','refunded')),
   CONSTRAINT ck_orders_amounts CHECK (subtotal >= 0 AND discount >= 0 AND total_amount >= 0)
 );
 CREATE INDEX idx_orders_customer ON [orders] (customer_id);
-CREATE INDEX idx_orders_employee ON [orders] (employee_id);
+CREATE INDEX idx_orders_user ON [orders] (user_id);
 CREATE INDEX idx_orders_status ON [orders] (status);
 CREATE INDEX idx_orders_type ON [orders] (order_type);
 CREATE INDEX idx_orders_payment_status ON [orders] (payment_status);
@@ -373,6 +362,71 @@ CREATE TABLE payments (
   CONSTRAINT fk_payments_order FOREIGN KEY (order_id) REFERENCES [orders](id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE INDEX idx_payments_order ON payments (order_id);
+
+-- Issued invoice snapshots: one invoice per order; canceled invoices are retained as voided.
+CREATE TABLE invoices (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  order_id INT NOT NULL UNIQUE,
+  invoice_number VARCHAR(120) NOT NULL UNIQUE,
+  invoice_status VARCHAR(20) NOT NULL DEFAULT 'issued',
+  payment_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  payment_method VARCHAR(20) NULL,
+  customer_name NVARCHAR(255) NOT NULL DEFAULT N'Khách lẻ',
+  customer_phone VARCHAR(50) NULL,
+  customer_email VARCHAR(255) NULL,
+  customer_address NVARCHAR(MAX) NULL,
+  subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+  tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  shipping_fee DECIMAL(12,2) NOT NULL DEFAULT 0,
+  discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  issued_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+  updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+  CONSTRAINT fk_invoices_order FOREIGN KEY (order_id) REFERENCES [orders](id) ON DELETE NO ACTION,
+  CONSTRAINT ck_invoices_status CHECK (invoice_status IN ('issued','paid','voided','refunded')),
+  CONSTRAINT ck_invoices_payment_status CHECK (payment_status IN ('pending','paid','failed','refunded')),
+  CONSTRAINT ck_invoices_amounts CHECK (subtotal >= 0 AND tax_amount >= 0 AND shipping_fee >= 0 AND discount_amount >= 0 AND total_amount >= 0)
+);
+
+CREATE TABLE invoice_items (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  invoice_id INT NOT NULL,
+  product_id INT NULL,
+  product_name NVARCHAR(255) NOT NULL,
+  sku VARCHAR(100) NULL,
+  quantity INT NOT NULL,
+  unit_price DECIMAL(12,2) NOT NULL,
+  total_price DECIMAL(12,2) NOT NULL,
+  CONSTRAINT fk_invoice_items_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE NO ACTION,
+  CONSTRAINT fk_invoice_items_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
+  CONSTRAINT ck_invoice_items_quantity CHECK (quantity > 0),
+  CONSTRAINT ck_invoice_items_amounts CHECK (unit_price >= 0 AND total_price >= 0)
+);
+
+GO
+CREATE OR ALTER TRIGGER dbo.trg_invoices_lock_paid_amounts ON dbo.invoices
+AFTER UPDATE AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM inserted n JOIN deleted o ON o.id=n.id
+    WHERE o.invoice_status='paid' AND (n.subtotal<>o.subtotal OR n.tax_amount<>o.tax_amount OR
+      n.shipping_fee<>o.shipping_fee OR n.discount_amount<>o.discount_amount OR n.total_amount<>o.total_amount))
+  BEGIN
+    THROW 51001, 'Amounts on a paid invoice are immutable; void and issue an adjustment instead.', 1;
+  END;
+END;
+GO
+CREATE OR ALTER TRIGGER dbo.trg_invoice_items_lock_paid_snapshot ON dbo.invoice_items
+AFTER INSERT, UPDATE, DELETE AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM deleted d JOIN dbo.invoices i ON i.id=d.invoice_id WHERE i.invoice_status='paid')
+    OR EXISTS (SELECT 1 FROM inserted n JOIN dbo.invoices i ON i.id=n.invoice_id WHERE i.invoice_status='paid')
+  BEGIN
+    THROW 51002, 'Items on a paid invoice are immutable.', 1;
+  END;
+END;
+GO
 
 
 -- Optional: Promotion redemptions to track usage per customer/order
@@ -411,11 +465,11 @@ CREATE INDEX idx_products_created_at ON products (created_at);
 
 -- ===== USERS (ADMIN + EMPLOYEE, phân quyền bằng role) =====
 INSERT INTO users
-(username, password_hash, first_name, last_name, email, phone, role, is_active, locked, created_at)
+(username, password_hash, full_name, email, role, is_active, locked, created_at)
 VALUES
-  ('admin', '$2a$11$B5Pre4vLwlsfDIMg/gXXjuH/CyqianiPXHXSXikWE5R0djN/9Tf7.', N'Quản trị', N'Viên', 'admin@example.com', '0909000000', 'admin', 1, 0, GETDATE()),
-  ('staff01', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Nguyễn Văn', N'A', 'staff01@example.com', '0909000001', 'staff', 1, 0, GETDATE()),
-  ('staff02', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Lê Thị', N'B', 'staff02@example.com', '0909000002', 'staff', 1, 0, GETDATE());
+  ('admin', '$2a$11$B5Pre4vLwlsfDIMg/gXXjuH/CyqianiPXHXSXikWE5R0djN/9Tf7.', N'Quản trị viên', 'admin@example.com', 'admin', 1, 0, GETDATE()),
+  ('staff01', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Nguyễn Văn A', 'staff01@example.com', 'staff', 1, 0, GETDATE()),
+  ('staff02', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Lê Thị B', 'staff02@example.com', 'staff', 1, 0, GETDATE());
 
 -- password của admin là admin123
 -- password của employee là 123456
@@ -424,26 +478,26 @@ VALUES
 -- ===== CUSTOMERS (full_name, phone, email, address) =====
 INSERT INTO customers (full_name, phone, email, address, created_at)
 VALUES
-('Khách hàng 1', '0909000001', 'kh1@mail.com', 'Địa chỉ 1', GETDATE()),
-('Khách hàng 2', '0909000002', 'kh2@mail.com', 'Địa chỉ 2', GETDATE()),
-('Khách hàng 3', '0909000003', 'kh3@mail.com', 'Địa chỉ 3', GETDATE()),
-('Khách hàng 4', '0909000004', 'kh4@mail.com', 'Địa chỉ 4', GETDATE()),
-('Khách hàng 5', '0909000005', 'kh5@mail.com', 'Địa chỉ 5', GETDATE()),
-('Khách hàng 6', '0909000006', 'kh6@mail.com', 'Địa chỉ 6', GETDATE()),
-('Khách hàng 7', '0909000007', 'kh7@mail.com', 'Địa chỉ 7', GETDATE()),
-('Khách hàng 8', '0909000008', 'kh8@mail.com', 'Địa chỉ 8', GETDATE()),
-('Khách hàng 9', '0909000009', 'kh9@mail.com', 'Địa chỉ 9', GETDATE()),
-('Khách hàng 10', '0909000010', 'kh10@mail.com', 'Địa chỉ 10', GETDATE()),
-('Khách hàng 11', '0909000011', 'kh11@mail.com', 'Địa chỉ 11', GETDATE()),
-('Khách hàng 12', '0909000012', 'kh12@mail.com', 'Địa chỉ 12', GETDATE()),
-('Khách hàng 13', '0909000013', 'kh13@mail.com', 'Địa chỉ 13', GETDATE()),
-('Khách hàng 14', '0909000014', 'kh14@mail.com', 'Địa chỉ 14', GETDATE()),
-('Khách hàng 15', '0909000015', 'kh15@mail.com', 'Địa chỉ 15', GETDATE()),
-('Khách hàng 16', '0909000016', 'kh16@mail.com', 'Địa chỉ 16', GETDATE()),
-('Khách hàng 17', '0909000017', 'kh17@mail.com', 'Địa chỉ 17', GETDATE()),
-('Khách hàng 18', '0909000018', 'kh18@mail.com', 'Địa chỉ 18', GETDATE()),
-('Khách hàng 19', '0909000019', 'kh19@mail.com', 'Địa chỉ 19', GETDATE()),
-('Khách hàng 20', '0909000020', 'kh20@mail.com', 'Địa chỉ 20', GETDATE());
+(N'Khách hàng 1', '0909000001', 'kh1@mail.com', N'Địa chỉ 1', GETDATE()),
+(N'Khách hàng 2', '0909000002', 'kh2@mail.com', N'Địa chỉ 2', GETDATE()),
+(N'Khách hàng 3', '0909000003', 'kh3@mail.com', N'Địa chỉ 3', GETDATE()),
+(N'Khách hàng 4', '0909000004', 'kh4@mail.com', N'Địa chỉ 4', GETDATE()),
+(N'Khách hàng 5', '0909000005', 'kh5@mail.com', N'Địa chỉ 5', GETDATE()),
+(N'Khách hàng 6', '0909000006', 'kh6@mail.com', N'Địa chỉ 6', GETDATE()),
+(N'Khách hàng 7', '0909000007', 'kh7@mail.com', N'Địa chỉ 7', GETDATE()),
+(N'Khách hàng 8', '0909000008', 'kh8@mail.com', N'Địa chỉ 8', GETDATE()),
+(N'Khách hàng 9', '0909000009', 'kh9@mail.com', N'Địa chỉ 9', GETDATE()),
+(N'Khách hàng 10', '0909000010', 'kh10@mail.com', N'Địa chỉ 10', GETDATE()),
+(N'Khách hàng 11', '0909000011', 'kh11@mail.com', N'Địa chỉ 11', GETDATE()),
+(N'Khách hàng 12', '0909000012', 'kh12@mail.com', N'Địa chỉ 12', GETDATE()),
+(N'Khách hàng 13', '0909000013', 'kh13@mail.com', N'Địa chỉ 13', GETDATE()),
+(N'Khách hàng 14', '0909000014', 'kh14@mail.com', N'Địa chỉ 14', GETDATE()),
+(N'Khách hàng 15', '0909000015', 'kh15@mail.com', N'Địa chỉ 15', GETDATE()),
+(N'Khách hàng 16', '0909000016', 'kh16@mail.com', N'Địa chỉ 16', GETDATE()),
+(N'Khách hàng 17', '0909000017', 'kh17@mail.com', N'Địa chỉ 17', GETDATE()),
+(N'Khách hàng 18', '0909000018', 'kh18@mail.com', N'Địa chỉ 18', GETDATE()),
+(N'Khách hàng 19', '0909000019', 'kh19@mail.com', N'Địa chỉ 19', GETDATE()),
+(N'Khách hàng 20', '0909000020', 'kh20@mail.com', N'Địa chỉ 20', GETDATE());
 
 -- SQL Server FIX:
 -- slug is NULL for all seed categories. A normal UNIQUE constraint on a nullable
@@ -453,16 +507,16 @@ VALUES
 -- ===== CATEGORIES (name) =====
 INSERT INTO categories (name, created_at)
 VALUES
-('Đồ uống', GETDATE()),
-('Bánh kẹo', GETDATE()),
-('Gia vị', GETDATE()),
-('Đồ gia dụng', GETDATE()),
-('Mỹ phẩm', GETDATE()),
-('Thực phẩm tươi sống', GETDATE()),         
-('Điện tử & Phụ kiện', GETDATE()),       
-('Dược phẩm & Y tế', GETDATE()),     
-('Văn phòng phẩm', GETDATE()),      
-('Thủy hải sản', GETDATE());
+(N'Đồ uống', GETDATE()),
+(N'Bánh kẹo', GETDATE()),
+(N'Gia vị', GETDATE()),
+(N'Đồ gia dụng', GETDATE()),
+(N'Mỹ phẩm', GETDATE()),
+(N'Thực phẩm tươi sống', GETDATE()),         
+(N'Điện tử & Phụ kiện', GETDATE()),       
+(N'Dược phẩm & Y tế', GETDATE()),     
+(N'Văn phòng phẩm', GETDATE()),      
+(N'Thủy hải sản', GETDATE());
 
 -- ===== SUPPLIERS (name, contact_name, phone, email, address) =====
 INSERT INTO suppliers (name, contact_name, phone, email, address, created_at)
@@ -483,103 +537,103 @@ VALUES
 
 -- ===== THÊM DỮ LIỆU MẪU CHO BẢNG UNITS =====
 INSERT INTO units (code, name, created_at) VALUES
-('pcs', 'Cái', GETDATE()),
-('box', 'Hộp', GETDATE()),
-('bottle', 'Chai', GETDATE()),
-('can', 'Lon', GETDATE()),
-('tube', 'Tuýp', GETDATE()),
-('pack', 'Gói', GETDATE()),
-('kg', 'Kilogram', GETDATE()),
-('liter', 'Lít', GETDATE()),
-('pair', 'Đôi', GETDATE()),
-('set', 'Bộ', GETDATE()),
-('roll', 'Cuộn', GETDATE()),             
-('sheet', 'Tờ', GETDATE()),             
-('bag', 'Túi', GETDATE());             
+('pcs', N'Cái', GETDATE()),
+('box', N'Hộp', GETDATE()),
+('bottle', N'Chai', GETDATE()),
+('can', N'Lon', GETDATE()),
+('tube', N'Tuýp', GETDATE()),
+('pack', N'Gói', GETDATE()),
+('kg', N'Kilogram', GETDATE()),
+('liter', N'Lít', GETDATE()),
+('pair', N'Đôi', GETDATE()),
+('set', N'Bộ', GETDATE()),
+('roll', N'Cuộn', GETDATE()),             
+('sheet', N'Tờ', GETDATE()),             
+('bag', N'Túi', GETDATE());             
 
 -- ===== PRODUCTS (category_id, supplier_id, product_name, sku, price, unit) =====
 INSERT INTO products (category_id, supplier_id, product_name, sku, price, unit_id, created_at)
 VALUES
-(1, 1, 'Coca Cola lon', '8900000000001', 15000.00, 4, GETDATE()),
-(1, 5, 'Pepsi lon', '8900000000002', 15000.00, 4, GETDATE()),
-(1, 1, 'Trà Xanh 0 độ', '8900000000003', 12000.00, 3, GETDATE()),
-(1, 5, 'Sting dâu', '8900000000004', 12000.00, 3, GETDATE()),
-(1, 1, 'Red Bull', '8900000000005', 20000.00, 4, GETDATE()),
-(1, 1, 'Nước ngọt Sprite', '8900000000046', 15000.00, 3, GETDATE()),
-(1, 5, 'Trà sữa đóng chai', '8900000000047', 20000.00, 3, GETDATE()),
-(1, 5, 'Nước cam ép', '8900000000054', 25000.00, 3, GETDATE()),
-(1, 5, 'Sinh tố đóng chai', '8900000000055', 30000.00, 3, GETDATE()),
-(1, 5, 'Bia Tiger lon', '8900000000056', 20000.00, 4, GETDATE()),
-(1, 1, 'Trà Lipton', '8900000000027', 10000.00, 3, GETDATE()),
-(1, 4, 'Sữa Vinamilk', '8900000000028', 12000.00, 3, GETDATE()),
-(1, 4, 'Sữa TH 1 Milk', '8900000000029', 15000.00, 3, GETDATE()),
-(1, 5, 'Nước suối Lavie', '8900000000030', 8000.00, 4, GETDATE()),
-(1, 9, 'Cà phê G7', '8900000000026', 50000.00, 3, GETDATE()),
-(2, 8, 'Bánh Oreo', '8900000000006', 25000.00, 6, GETDATE()),
-(2, 8, 'Bánh Chocopie', '8900000000007', 20000.00, 6, GETDATE()),
-(2, 8, 'Kẹo Alpenliebe', '8900000000008', 5000.00, 6, GETDATE()),
-(2, 8, 'Kẹo bạc hà', '8900000000009', 10000.00, 6, GETDATE()),
-(2, 8, 'Socola KitKat', '8900000000010', 15000.00, 6, GETDATE()),
-(2, 4, 'Snack Oishi', '8900000000048', 10000.00, 6, GETDATE()),
+(1, 1, N'Coca Cola lon', '8900000000001', 15000.00, 4, GETDATE()),
+(1, 5, N'Pepsi lon', '8900000000002', 15000.00, 4, GETDATE()),
+(1, 1, N'Trà Xanh 0 độ', '8900000000003', 12000.00, 3, GETDATE()),
+(1, 5, N'Sting dâu', '8900000000004', 12000.00, 3, GETDATE()),
+(1, 1, N'Red Bull', '8900000000005', 20000.00, 4, GETDATE()),
+(1, 1, N'Nước ngọt Sprite', '8900000000046', 15000.00, 3, GETDATE()),
+(1, 5, N'Trà sữa đóng chai', '8900000000047', 20000.00, 3, GETDATE()),
+(1, 5, N'Nước cam ép', '8900000000054', 25000.00, 3, GETDATE()),
+(1, 5, N'Sinh tố đóng chai', '8900000000055', 30000.00, 3, GETDATE()),
+(1, 5, N'Bia Tiger lon', '8900000000056', 20000.00, 4, GETDATE()),
+(1, 1, N'Trà Lipton', '8900000000027', 10000.00, 3, GETDATE()),
+(1, 4, N'Sữa Vinamilk', '8900000000028', 12000.00, 3, GETDATE()),
+(1, 4, N'Sữa TH 1 Milk', '8900000000029', 15000.00, 3, GETDATE()),
+(1, 5, N'Nước suối Lavie', '8900000000030', 8000.00, 4, GETDATE()),
+(1, 9, N'Cà phê G7', '8900000000026', 50000.00, 3, GETDATE()),
+(2, 8, N'Bánh Oreo', '8900000000006', 25000.00, 6, GETDATE()),
+(2, 8, N'Bánh Chocopie', '8900000000007', 20000.00, 6, GETDATE()),
+(2, 8, N'Kẹo Alpenliebe', '8900000000008', 5000.00, 6, GETDATE()),
+(2, 8, N'Kẹo bạc hà', '8900000000009', 10000.00, 6, GETDATE()),
+(2, 8, N'Socola KitKat', '8900000000010', 15000.00, 6, GETDATE()),
+(2, 4, N'Snack Oishi', '8900000000048', 10000.00, 6, GETDATE()),
 (2, 8, 'Snack Lay''s', '8900000000049', 15000.00, 6, GETDATE()),
-(2, 8, 'Kẹo dẻo Haribo', '8900000000050', 20000.00, 6, GETDATE()),
-(2, 8, 'Bánh quy bơ', '8900000000063', 30000.00, 6, GETDATE()),
-(2, 8, 'Kẹo cao su', '8900000000064', 5000.00, 6, GETDATE()),
-(2, 8, 'Bánh gato mini', '8900000000065', 50000.00, 2, GETDATE()),
-(3, 9, 'Nước mắm Nam Ngư', '8900000000011', 35000.00, 3, GETDATE()),
-(3, 9, 'Nước tương Maggi', '8900000000012', 25000.00, 3, GETDATE()),
-(3, 9, 'Muối i-ốt', '8900000000013', 5000.00, 6, GETDATE()),
-(3, 9, 'Bột ngọt Ajinomoto', '8900000000014', 15000.00, 6, GETDATE()),
-(3, 9, 'Dầu ăn Tường An', '8900000000015', 45000.00, 3, GETDATE()),
-(3, 9, 'Hạt nêm Knorr', '8900000000066', 20000.00, 6, GETDATE()),
-(3, 9, 'Tương ớt Chin-su', '8900000000067', 15000.00, 3, GETDATE()),
-(3, 9, 'Giấm gạo lên men', '8900000000068', 12000.00, 3, GETDATE()),
-(4, 6, 'Nồi cơm điện', '8900000000016', 500000.00, 1, GETDATE()),
-(4, 6, 'Ấm siêu tốc', '8900000000017', 300000.00, 1, GETDATE()),
-(4, 6, 'Quạt máy', '8900000000018', 400000.00, 1, GETDATE()),
-(4, 6, 'Bếp gas mini', '8900000000019', 600000.00, 1, GETDATE()),
-(4, 6, 'Máy xay sinh tố', '8900000000020', 350000.00, 1, GETDATE()),
-(4, 6, 'Bình nước Lock&Lock', '8900000000033', 150000.00, 1, GETDATE()),
-(4, 6, 'Hộp nhựa Tupperware', '8900000000034', 80000.00, 1, GETDATE()),
-(4, 6, 'Dao Inox', '8900000000035', 50000.00, 1, GETDATE()),
-(4, 6, 'Nồi áp suất điện', '8900000000057', 800000.00, 1, GETDATE()),
-(4, 6, 'Lò vi sóng', '8900000000058', 1200000.00, 1, GETDATE()),
-(4, 6, 'Máy lọc không khí', '8900000000059', 1500000.00, 1, GETDATE()),
-(5, 7, 'Sữa rửa mặt Hazeline', '8900000000021', 75000.00, 5, GETDATE()),
+(2, 8, N'Kẹo dẻo Haribo', '8900000000050', 20000.00, 6, GETDATE()),
+(2, 8, N'Bánh quy bơ', '8900000000063', 30000.00, 6, GETDATE()),
+(2, 8, N'Kẹo cao su', '8900000000064', 5000.00, 6, GETDATE()),
+(2, 8, N'Bánh gato mini', '8900000000065', 50000.00, 2, GETDATE()),
+(3, 9, N'Nước mắm Nam Ngư', '8900000000011', 35000.00, 3, GETDATE()),
+(3, 9, N'Nước tương Maggi', '8900000000012', 25000.00, 3, GETDATE()),
+(3, 9, N'Muối i-ốt', '8900000000013', 5000.00, 6, GETDATE()),
+(3, 9, N'Bột ngọt Ajinomoto', '8900000000014', 15000.00, 6, GETDATE()),
+(3, 9, N'Dầu ăn Tường An', '8900000000015', 45000.00, 3, GETDATE()),
+(3, 9, N'Hạt nêm Knorr', '8900000000066', 20000.00, 6, GETDATE()),
+(3, 9, N'Tương ớt Chin-su', '8900000000067', 15000.00, 3, GETDATE()),
+(3, 9, N'Giấm gạo lên men', '8900000000068', 12000.00, 3, GETDATE()),
+(4, 6, N'Nồi cơm điện', '8900000000016', 500000.00, 1, GETDATE()),
+(4, 6, N'Ấm siêu tốc', '8900000000017', 300000.00, 1, GETDATE()),
+(4, 6, N'Quạt máy', '8900000000018', 400000.00, 1, GETDATE()),
+(4, 6, N'Bếp gas mini', '8900000000019', 600000.00, 1, GETDATE()),
+(4, 6, N'Máy xay sinh tố', '8900000000020', 350000.00, 1, GETDATE()),
+(4, 6, N'Bình nước Lock&Lock', '8900000000033', 150000.00, 1, GETDATE()),
+(4, 6, N'Hộp nhựa Tupperware', '8900000000034', 80000.00, 1, GETDATE()),
+(4, 6, N'Dao Inox', '8900000000035', 50000.00, 1, GETDATE()),
+(4, 6, N'Nồi áp suất điện', '8900000000057', 800000.00, 1, GETDATE()),
+(4, 6, N'Lò vi sóng', '8900000000058', 1200000.00, 1, GETDATE()),
+(4, 6, N'Máy lọc không khí', '8900000000059', 1500000.00, 1, GETDATE()),
+(5, 7, N'Sữa rửa mặt Hazeline', '8900000000021', 75000.00, 5, GETDATE()),
 (5, 7, 'Kem dưỡng da Pond''s', '8900000000022', 120000.00, 5, GETDATE()),
-(5, 7, 'Dầu gội Sunsilk', '8900000000023', 80000.00, 3, GETDATE()),
-(5, 7, 'Sữa tắm Dove', '8900000000024', 90000.00, 3, GETDATE()),
-(5, 7, 'Nước hoa Romano', '8900000000025', 250000.00, 3, GETDATE()),
-(5, 7, 'Serum chống lão hóa', '8900000000060', 350000.00, 3, GETDATE()),
-(5, 7, 'Mặt nạ dưỡng da', '8900000000061', 20000.00, 1, GETDATE()),
-(5, 7, 'Kem chống nắng SPF50', '8900000000062', 150000.00, 5, GETDATE()),
-(6, 4, 'Bánh mì sandwich', '8900000000041', 20000.00, 1, GETDATE()),
-(6, 4, 'Thịt bò tươi', '8900000000051', 250000.00, 7, GETDATE()),
-(6, 4, 'Cá hồi phi lê', '8900000000052', 350000.00, 7, GETDATE()),
-(6, 4, 'Rau củ đông lạnh', '8900000000053', 50000.00, 6, GETDATE()),
-(6, 4, 'Mì gói Hảo Hảo', '8900000000042', 5000.00, 6, GETDATE()),
-(6, 4, 'Mì Omachi', '8900000000043', 7000.00, 6, GETDATE()),
-(6, 4, 'Bún khô', '8900000000044', 15000.00, 6, GETDATE()),
-(6, 4, 'Phở ăn liền', '8900000000045', 10000.00, 6, GETDATE()),
-(7, 10, 'Tai nghe Bluetooth', '8900000000069', 300000.00, 1, GETDATE()),
-(7, 10, 'Sạc dự phòng', '8900000000070', 200000.00, 1, GETDATE()),
-(7, 10, 'Cáp sạc nhanh', '8900000000071', 50000.00, 1, GETDATE()),
-(8, 12, 'Bàn chải Colgate', '8900000000036', 25000.00, 1, GETDATE()),
-(8, 12, 'Kem đánh răng P/S', '8900000000037', 35000.00, 5, GETDATE()),
-(8, 12, 'Nước súc miệng Listerine', '8900000000038', 45000.00, 3, GETDATE()),
-(8, 12, 'Bông tẩy trang', '8900000000039', 20000.00, 6, GETDATE()),
-(8, 12, 'Khẩu trang 3M', '8900000000040', 50000.00, 6, GETDATE()),
-(8, 12, 'Vitamin C 500mg', '8900000000075', 80000.00, 6, GETDATE()),
-(8, 12, 'Paracetamol 500mg', '8900000000076', 15000.00, 6, GETDATE()),
-(8, 12, 'Băng gạc y tế', '8900000000077', 25000.00, 6, GETDATE()),
-(9, 11, 'Khăn giấy Tempo', '8900000000031', 20000.00, 6, GETDATE()),
-(9, 11, 'Giấy vệ sinh Pulppy', '8900000000032', 35000.00, 10, GETDATE()),
-(9, 11, 'Bút bi xanh', '8900000000072', 5000.00, 1, GETDATE()),
-(9, 11, 'Vở học sinh 96 trang', '8900000000073', 15000.00, 1, GETDATE()),
-(9, 11, 'Bút highlight', '8900000000074', 12000.00, 1, GETDATE()),
-(10, 13, 'Tôm sú tươi', '8900000000078', 280000.00, 7, GETDATE()),
-(10, 13, 'Mực ống', '8900000000079', 220000.00, 7, GETDATE()),
-(10, 13, 'Cá ngừ đại dương', '8900000000080', 320000.00, 7, GETDATE());
+(5, 7, N'Dầu gội Sunsilk', '8900000000023', 80000.00, 3, GETDATE()),
+(5, 7, N'Sữa tắm Dove', '8900000000024', 90000.00, 3, GETDATE()),
+(5, 7, N'Nước hoa Romano', '8900000000025', 250000.00, 3, GETDATE()),
+(5, 7, N'Serum chống lão hóa', '8900000000060', 350000.00, 3, GETDATE()),
+(5, 7, N'Mặt nạ dưỡng da', '8900000000061', 20000.00, 1, GETDATE()),
+(5, 7, N'Kem chống nắng SPF50', '8900000000062', 150000.00, 5, GETDATE()),
+(6, 4, N'Bánh mì sandwich', '8900000000041', 20000.00, 1, GETDATE()),
+(6, 4, N'Thịt bò tươi', '8900000000051', 250000.00, 7, GETDATE()),
+(6, 4, N'Cá hồi phi lê', '8900000000052', 350000.00, 7, GETDATE()),
+(6, 4, N'Rau củ đông lạnh', '8900000000053', 50000.00, 6, GETDATE()),
+(6, 4, N'Mì gói Hảo Hảo', '8900000000042', 5000.00, 6, GETDATE()),
+(6, 4, N'Mì Omachi', '8900000000043', 7000.00, 6, GETDATE()),
+(6, 4, N'Bún khô', '8900000000044', 15000.00, 6, GETDATE()),
+(6, 4, N'Phở ăn liền', '8900000000045', 10000.00, 6, GETDATE()),
+(7, 10, N'Tai nghe Bluetooth', '8900000000069', 300000.00, 1, GETDATE()),
+(7, 10, N'Sạc dự phòng', '8900000000070', 200000.00, 1, GETDATE()),
+(7, 10, N'Cáp sạc nhanh', '8900000000071', 50000.00, 1, GETDATE()),
+(8, 12, N'Bàn chải Colgate', '8900000000036', 25000.00, 1, GETDATE()),
+(8, 12, N'Kem đánh răng P/S', '8900000000037', 35000.00, 5, GETDATE()),
+(8, 12, N'Nước súc miệng Listerine', '8900000000038', 45000.00, 3, GETDATE()),
+(8, 12, N'Bông tẩy trang', '8900000000039', 20000.00, 6, GETDATE()),
+(8, 12, N'Khẩu trang 3M', '8900000000040', 50000.00, 6, GETDATE()),
+(8, 12, N'Vitamin C 500mg', '8900000000075', 80000.00, 6, GETDATE()),
+(8, 12, N'Paracetamol 500mg', '8900000000076', 15000.00, 6, GETDATE()),
+(8, 12, N'Băng gạc y tế', '8900000000077', 25000.00, 6, GETDATE()),
+(9, 11, N'Khăn giấy Tempo', '8900000000031', 20000.00, 6, GETDATE()),
+(9, 11, N'Giấy vệ sinh Pulppy', '8900000000032', 35000.00, 10, GETDATE()),
+(9, 11, N'Bút bi xanh', '8900000000072', 5000.00, 1, GETDATE()),
+(9, 11, N'Vở học sinh 96 trang', '8900000000073', 15000.00, 1, GETDATE()),
+(9, 11, N'Bút highlight', '8900000000074', 12000.00, 1, GETDATE()),
+(10, 13, N'Tôm sú tươi', '8900000000078', 280000.00, 7, GETDATE()),
+(10, 13, N'Mực ống', '8900000000079', 220000.00, 7, GETDATE()),
+(10, 13, N'Cá ngừ đại dương', '8900000000080', 320000.00, 7, GETDATE());
 
 -- ===== INVENTORY (product_id, quantity) =====
 INSERT INTO inventory (product_id, quantity, updated_at)
@@ -634,37 +688,36 @@ VALUES
 
 -- ===== PROMOTIONS =====
 INSERT INTO promotions
-(code, name, type, description, start_date, end_date, status, max_discount, usage_limit, used_count, created_at)
+(code, name, type, discount_type, discount_value, description, start_date, end_date, status, max_discount, usage_limit, used_count, created_at)
 VALUES
-('SALE10', N'Giảm 10%', 'event', N'Giảm 10% cho đơn hàng đủ điều kiện', '2025-01-01', '2025-12-31', 'expired', 50000, NULL, 0, GETDATE()),
-('FREESHIP50K', N'Giảm 50K', 'event', N'Giảm 50.000 cho đơn từ 300.000', '2025-03-01', '2025-12-31', 'expired', 50000, 500, 0, GETDATE()),
-('NEWUSER', N'Khách hàng mới', 'voucher', N'Giảm 20% cho khách hàng mới', '2025-01-01', '2025-06-30', 'expired', 100000, 1, 0, GETDATE()),
-('SUMMER15', N'Khuyến mãi mùa hè', 'event', N'Giảm 15% mùa hè', '2025-06-01', '2025-08-31', 'expired', 100000, 1000, 0, GETDATE()),
-('VIP100K', N'Khách VIP', 'voucher', N'Giảm 100.000 cho khách VIP', '2025-01-01', '2025-12-31', 'expired', 100000, 200, 0, GETDATE()),
-('PROD15', N'Giảm 15% Coca/Pepsi', 'product', N'Giảm 15% cho một số sản phẩm đồ uống', '2025-01-01', '2025-12-31', 'expired', 100000, 500, 0, GETDATE());
+('SALE10', N'Giảm 10%', 'event', 'percent', 10, N'Giảm 10% cho đơn hàng đủ điều kiện', '2025-01-01', '2025-12-31', 'expired', 50000, NULL, 0, GETDATE()),
+('FREESHIP50K', N'Giảm 50K', 'event', 'fixed', 50000, N'Giảm 50.000 cho đơn từ 300.000', '2025-03-01', '2025-12-31', 'expired', NULL, 500, 0, GETDATE()),
+('NEWUSER', N'Khách hàng mới', 'voucher', 'percent', 20, N'Giảm 20% cho khách hàng mới', '2025-01-01', '2025-06-30', 'expired', 100000, 1, 0, GETDATE()),
+('SUMMER15', N'Khuyến mãi mùa hè', 'event', 'percent', 15, N'Giảm 15% mùa hè', '2025-06-01', '2025-08-31', 'expired', 100000, 1000, 0, GETDATE()),
+('VIP100K', N'Khách VIP', 'voucher', 'fixed', 100000, N'Giảm 100.000 cho khách VIP', '2025-01-01', '2025-12-31', 'expired', NULL, 200, 0, GETDATE()),
+('PROD15', N'Giảm 15% Coca/Pepsi', 'product', 'percent', 15, N'Giảm 15% cho một số sản phẩm đồ uống', '2025-01-01', '2025-12-31', 'expired', 100000, 500, 0, GETDATE());
 
 -- Chi tiết event promotion
-INSERT INTO event_promotions (promotion_id, min_order_amount, discount_percent, max_discount_amount)
+INSERT INTO event_promotions (promotion_id, min_order_amount)
 VALUES
-(1, 0, 10, 50000),
-(2, 300000, 0, 50000),
-(4, 50000, 15, 100000);
+(1, 0),
+(2, 300000),
+(4, 50000);
 
 -- Chi tiết voucher promotion
-INSERT INTO voucher_promotions
-(promotion_id, voucher_code, discount_percent, max_discount_amount, usage_limit, used_count)
+INSERT INTO voucher_promotions (promotion_id, voucher_code)
 VALUES
-(3, 'NEWUSER20', 20, 100000, 1, 0),
-(5, 'VIP100K', 0, 100000, 200, 0);
+(3, 'NEWUSER20'),
+(5, 'VIP100K');
 
 -- Khuyến mãi áp dụng trực tiếp cho sản phẩm
-INSERT INTO product_promotions (promotion_id, product_id, discount_percent)
+INSERT INTO product_promotions (promotion_id, product_id)
 VALUES
-(6, 1, 15),
-(6, 2, 15);
+(6, 1),
+(6, 2);
 
 -- ===== ORDERS với giá mới hợp lý =====
-INSERT INTO orders (order_number, customer_id, employee_id, order_type, status, subtotal, discount, total_amount, promotion_id, payment_method, payment_status, created_at)
+INSERT INTO orders (order_number, customer_id, user_id, order_type, status, subtotal, discount, total_amount, promotion_id, payment_method, payment_status, created_at)
 VALUES
 (CONVERT(varchar(36), NEWID()), 5, 3, 'pos', 'completed', 285000, 28500, 256500, 1, 'cash', 'paid', GETDATE()), -- Order 1: 10% discount
 (CONVERT(varchar(36), NEWID()), 17, 3, 'pos', 'completed', 420000, 0, 420000, NULL, 'e_wallet', 'paid', GETDATE()), -- Order 2: No discount
@@ -772,6 +825,23 @@ VALUES
 (29, 28, 1, 25000.00, 25000.00, GETDATE()),
 (30, 25, 1, 250000.00, 250000.00, GETDATE());
 
+-- Seed invoice snapshots after the sample orders and their items have been inserted.
+INSERT INTO invoices (order_id, invoice_number, invoice_status, payment_status, payment_method,
+  customer_name, customer_phone, customer_email, customer_address, subtotal, discount_amount, total_amount, issued_at, updated_at)
+SELECT o.id, CONCAT('HD-', o.order_number), 'issued', o.payment_status, o.payment_method,
+  COALESCE(c.full_name,N'Khách lẻ'), c.phone, c.email, c.address,
+  o.subtotal, o.discount, o.total_amount, o.created_at, o.updated_at
+FROM [orders] o LEFT JOIN customers c ON c.id=o.customer_id
+WHERE o.status IN ('processing','completed') OR o.payment_status='paid';
+
+INSERT INTO invoice_items (invoice_id, product_id, product_name, sku, quantity, unit_price, total_price)
+SELECT i.id, oi.product_id, COALESCE(p.product_name,N'Sản phẩm'), p.sku, oi.quantity, oi.unit_price, oi.total_price
+FROM invoices i JOIN [orders] o ON o.id=i.order_id
+JOIN order_items oi ON oi.order_id=o.id LEFT JOIN products p ON p.id=oi.product_id;
+
+UPDATE i SET invoice_status='paid'
+FROM invoices i JOIN [orders] o ON o.id=i.order_id WHERE o.payment_status='paid';
+
 -- ===== PAYMENTS với số tiền mới =====
 INSERT INTO payments (order_id, amount, method, transaction_ref, status, created_at)
 VALUES
@@ -808,29 +878,6 @@ VALUES
 
 
 
--- ===== AI CONVERSATIONS & MESSAGES =====
-CREATE TABLE ai_conversations (
-  id INT IDENTITY(1,1) PRIMARY KEY,
-  user_id INT NOT NULL,
-  title VARCHAR(255),
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_ai_conversations_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
-);
-CREATE INDEX idx_ai_conversations_user ON ai_conversations (user_id);
-
-CREATE TABLE ai_messages (
-  id BIGINT IDENTITY(1,1) PRIMARY KEY,
-  conversation_id INT NOT NULL,
-  role VARCHAR(20) NOT NULL,
-  content NVARCHAR(MAX) NOT NULL,
-  function_called VARCHAR(100),
-  function_data NVARCHAR(MAX),
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_ai_messages_conversation FOREIGN KEY (conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE ON UPDATE CASCADE
-);
-CREATE INDEX idx_ai_messages_conversation ON ai_messages (conversation_id);
-
 -- ===== VERIFICATION =====
 SELECT DB_NAME() AS current_database;
 SELECT name FROM sys.tables ORDER BY name;
@@ -839,6 +886,120 @@ SELECT COUNT(*) AS products_count FROM products;
 SELECT COUNT(*) AS orders_count FROM [orders];
 SELECT COUNT(*) AS purchase_orders_count FROM purchase_orders;
 SELECT COUNT(*) AS promotions_count FROM promotions;
-SELECT COUNT(*) AS employees_count FROM users WHERE role = 'staff';
+SELECT COUNT(*) AS staff_count FROM users WHERE role = 'staff';
 SELECT COUNT(*) AS admins_count FROM users WHERE role = 'admin';
+GO
+
+/*
+  INVOICE UPGRADE BLOCK
+  This idempotent block is included here so the invoice database update lives in
+  this file too. On an existing database, execute this block (from this comment
+  to the final GO) instead of rerunning the full bootstrap script above.
+*/
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
+
+IF OBJECT_ID(N'dbo.invoices', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.invoices (
+    id INT IDENTITY(1,1) NOT NULL CONSTRAINT pk_invoices PRIMARY KEY,
+    order_id INT NOT NULL,
+    invoice_number VARCHAR(120) NOT NULL,
+    invoice_status VARCHAR(20) NOT NULL CONSTRAINT df_invoices_invoice_status DEFAULT 'issued',
+    payment_status VARCHAR(20) NOT NULL CONSTRAINT df_invoices_payment_status DEFAULT 'pending',
+    payment_method VARCHAR(20) NULL,
+    customer_name NVARCHAR(255) NOT NULL CONSTRAINT df_invoices_customer_name DEFAULT N'Khách lẻ',
+    customer_phone VARCHAR(50) NULL,
+    customer_email VARCHAR(255) NULL,
+    customer_address NVARCHAR(MAX) NULL,
+    subtotal DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_subtotal DEFAULT 0,
+    tax_amount DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_tax DEFAULT 0,
+    shipping_fee DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_shipping DEFAULT 0,
+    discount_amount DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_discount DEFAULT 0,
+    total_amount DECIMAL(12,2) NOT NULL CONSTRAINT df_invoices_total DEFAULT 0,
+    issued_at DATETIME2 NOT NULL CONSTRAINT df_invoices_issued_at DEFAULT SYSUTCDATETIME(),
+    updated_at DATETIME2 NOT NULL CONSTRAINT df_invoices_updated_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT ux_invoices_order UNIQUE (order_id),
+    CONSTRAINT ux_invoices_number UNIQUE (invoice_number),
+    CONSTRAINT fk_invoices_order FOREIGN KEY (order_id) REFERENCES dbo.[orders](id) ON DELETE NO ACTION,
+    CONSTRAINT ck_invoices_status CHECK (invoice_status IN ('issued','paid','voided','refunded')),
+    CONSTRAINT ck_invoices_payment_status CHECK (payment_status IN ('pending','paid','failed','refunded')),
+    CONSTRAINT ck_invoices_amounts CHECK (subtotal >= 0 AND tax_amount >= 0 AND shipping_fee >= 0 AND discount_amount >= 0 AND total_amount >= 0)
+  );
+END;
+
+IF OBJECT_ID(N'dbo.invoice_items', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.invoice_items (
+    id INT IDENTITY(1,1) NOT NULL CONSTRAINT pk_invoice_items PRIMARY KEY,
+    invoice_id INT NOT NULL,
+    product_id INT NULL,
+    product_name NVARCHAR(255) NOT NULL,
+    sku VARCHAR(100) NULL,
+    quantity INT NOT NULL,
+    unit_price DECIMAL(12,2) NOT NULL,
+    total_price DECIMAL(12,2) NOT NULL,
+    CONSTRAINT fk_invoice_items_invoice FOREIGN KEY (invoice_id) REFERENCES dbo.invoices(id) ON DELETE NO ACTION,
+    CONSTRAINT fk_invoice_items_product FOREIGN KEY (product_id) REFERENCES dbo.products(id) ON DELETE SET NULL,
+    CONSTRAINT ck_invoice_items_quantity CHECK (quantity > 0),
+    CONSTRAINT ck_invoice_items_amounts CHECK (unit_price >= 0 AND total_price >= 0)
+  );
+END;
+
+/* Backfill eligible orders and historical line snapshots, without duplicates. */
+INSERT dbo.invoices (order_id, invoice_number, invoice_status, payment_status, payment_method,
+  customer_name, customer_phone, customer_email, customer_address, subtotal, discount_amount, total_amount, issued_at, updated_at)
+SELECT o.id, CONCAT('HD-', o.order_number), 'issued', o.payment_status, o.payment_method,
+  COALESCE(c.full_name,N'Khách lẻ'), c.phone, c.email, c.address,
+  o.subtotal, o.discount, o.total_amount, o.created_at, o.updated_at
+FROM dbo.[orders] o LEFT JOIN dbo.customers c ON c.id=o.customer_id
+WHERE o.status <> 'cancelled' AND (o.status IN ('processing','completed') OR o.payment_status='paid')
+  AND NOT EXISTS (SELECT 1 FROM dbo.invoices i WHERE i.order_id=o.id);
+
+INSERT dbo.invoice_items (invoice_id, product_id, product_name, sku, quantity, unit_price, total_price)
+SELECT i.id, oi.product_id, COALESCE(p.product_name,N'Sản phẩm'), p.sku, oi.quantity, oi.unit_price, oi.total_price
+FROM dbo.invoices i JOIN dbo.order_items oi ON oi.order_id=i.order_id
+LEFT JOIN dbo.products p ON p.id=oi.product_id
+WHERE NOT EXISTS (SELECT 1 FROM dbo.invoice_items ii WHERE ii.invoice_id=i.id);
+
+UPDATE i SET invoice_status=CASE WHEN o.status='cancelled' THEN 'voided'
+                                 WHEN o.payment_status='refunded' OR o.status='refunded' THEN 'refunded'
+                                 WHEN o.payment_status='paid' THEN 'paid' ELSE 'issued' END,
+             payment_status=CASE WHEN o.payment_status='refunded' OR o.status='refunded' THEN 'refunded' ELSE o.payment_status END
+FROM dbo.invoices i JOIN dbo.[orders] o ON o.id=i.order_id;
+
+IF OBJECT_ID(N'dbo.ck_orders_status', N'C') IS NOT NULL
+  ALTER TABLE dbo.[orders] DROP CONSTRAINT ck_orders_status;
+ALTER TABLE dbo.[orders] ADD CONSTRAINT ck_orders_status CHECK (status IN ('pending','processing','completed','cancelled','refunded'));
+
+IF OBJECT_ID(N'dbo.ck_orders_payment_status', N'C') IS NOT NULL
+  ALTER TABLE dbo.[orders] DROP CONSTRAINT ck_orders_payment_status;
+ALTER TABLE dbo.[orders] ADD CONSTRAINT ck_orders_payment_status CHECK (payment_status IN ('pending','paid','failed','refunded'));
+
+COMMIT TRANSACTION;
+GO
+
+CREATE OR ALTER TRIGGER dbo.trg_invoices_lock_paid_amounts ON dbo.invoices
+AFTER UPDATE AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM inserted n JOIN deleted o ON o.id=n.id
+    WHERE o.invoice_status='paid' AND (n.subtotal<>o.subtotal OR n.tax_amount<>o.tax_amount OR
+      n.shipping_fee<>o.shipping_fee OR n.discount_amount<>o.discount_amount OR n.total_amount<>o.total_amount))
+  BEGIN
+    THROW 51001, 'Amounts on a paid invoice are immutable; void and issue an adjustment instead.', 1;
+  END;
+END;
+GO
+
+CREATE OR ALTER TRIGGER dbo.trg_invoice_items_lock_paid_snapshot ON dbo.invoice_items
+AFTER INSERT, UPDATE, DELETE AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM deleted d JOIN dbo.invoices i ON i.id=d.invoice_id WHERE i.invoice_status='paid')
+    OR EXISTS (SELECT 1 FROM inserted n JOIN dbo.invoices i ON i.id=n.invoice_id WHERE i.invoice_status='paid')
+  BEGIN
+    THROW 51002, 'Items on a paid invoice are immutable.', 1;
+  END;
+END;
 GO

@@ -11,7 +11,7 @@ namespace backend.DTO
 
         public string ProductName { get; set; } = string.Empty;
 
-        // public string? Barcode { get; set; }
+        public string? Barcode { get; set; }
 
         public int? CategoryId { get; set; }
 
@@ -20,9 +20,20 @@ namespace backend.DTO
         // Money values use decimal
         public decimal Price { get; set; }
 
+        // Calculated from the currently active product promotion. The base price
+        // remains unchanged so product promotions continue to be the single source
+        // of truth for sale pricing.
+        public decimal? DiscountPrice { get; set; }
+        public decimal? DiscountAmount { get; set; }
+        public string? PromotionName { get; set; }
+
         public decimal? Cost { get; set; }
 
         public int? UnitId { get; set; }
+
+        public string? UnitName { get; set; }
+
+        public string? UnitCode { get; set; }
 
         public string? Description { get; set; }
 

@@ -36,6 +36,19 @@ namespace backend.Repository
             }
         }
 
+        public async Task UpdateOrderPaymentAsync(int orderId, string paymentStatus, string? newOrderStatus = null)
+        {
+            var order = await _context.Orders.FindAsync(orderId);
+            if (order != null)
+            {
+                order.PaymentStatus = paymentStatus;
+                if (!string.IsNullOrEmpty(newOrderStatus))
+                    order.Status = newOrderStatus;
+                order.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+        }
+
         //3. Lấy max Id hiện tại trong bảng Orders => nếu chưa có đơn hàng nào thì trả về 0
         public async Task<int> GetMaxIdAsync()
         {
@@ -95,7 +108,7 @@ namespace backend.Repository
 
                 query = query.Where(o =>
                     (o.Customer != null && EF.Functions.Like(o.Customer.FullName, keyword)) ||
-                    (o.User != null && EF.Functions.Like(o.User.FirstName + " " + o.User.LastName, keyword))
+                    (o.User != null && EF.Functions.Like(o.User.FullName, keyword))
                 );
             }
 
@@ -116,6 +129,8 @@ namespace backend.Repository
                     CustomerId = o.CustomerId,
                     UserId = o.UserId,
                     Status = o.Status,
+                    PaymentStatus = o.PaymentStatus,
+                    PaymentMethod = o.PaymentMethod,
                     Subtotal = o.Subtotal,
                     Discount = o.Discount,
                     TotalAmount = o.TotalAmount,
@@ -124,7 +139,7 @@ namespace backend.Repository
                     CreatedAt = o.CreatedAt,
                     UpdatedAt = o.UpdatedAt,
                     CustomerName = o.Customer != null ? o.Customer.FullName : null,
-                    UserName = o.User != null ? o.User.FirstName + " " + o.User.LastName : null,
+                    UserName = o.User != null ? o.User.FullName : null,
                     PromotionCode = o.Promotion != null ? o.Promotion.Code : null
                 })
                 .ToListAsync();
@@ -199,6 +214,19 @@ namespace backend.Repository
                 await transaction.RollbackAsync();
                 throw;
             }
+        }
+
+        public async Task<bool> CompletePendingOrderAsync(int orderId, int userId)
+        {
+            var now = DateTime.UtcNow;
+            var updated = await _context.Orders
+                .Where(order => order.Id == orderId && order.Status == "pending")
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(order => order.Status, "completed")
+                    .SetProperty(order => order.UserId, (int?)userId)
+                    .SetProperty(order => order.UpdatedAt, now));
+
+            return updated == 1;
         }
 
 

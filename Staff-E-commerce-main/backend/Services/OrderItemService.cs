@@ -19,6 +19,15 @@ namespace backend.Services
             if (items == null || !items.Any())
                 return false;
 
+            // Do not rely on the caller to provide a value compatible with the
+            // legacy SQL Server DATETIME column.
+            var now = DateTime.UtcNow;
+            foreach (var item in items)
+            {
+                item.Id = 0;
+                item.CreatedAt = now;
+            }
+
             await _orderItemRepository.AddOrderItemsAsync(items);
             return true;
         }

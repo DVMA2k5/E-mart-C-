@@ -6,13 +6,9 @@ using Microsoft.AspNetCore.Authorization;
 using backend.Data;
 using backend.Repository;
 using backend.Services;
-using backend.Services.AI;
-using backend.Services.AI.Chat;
-using backend.Services.AI.Embeddings;
-using backend.Services.AI.SemanticSearch;
-using backend.Services.AI.VectorStore;
 
 using backend.Middlewares;
+using backend.Hubs;
 using Microsoft.Extensions.FileProviders;
 using System.Text;
 using System.Text.Json;
@@ -48,6 +44,7 @@ builder.Services.AddControllers()
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSignalR();
 builder.Services.AddAuthorization(options =>
 {
     // Yêu cầu đăng nhập cho tất cả endpoint trừ khi đánh dấu [AllowAnonymous]
@@ -59,13 +56,9 @@ builder.Services.AddAuthorization(options =>
 // Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(connectionString, sqlOptions =>
-    {
-        sqlOptions.EnableRetryOnFailure();
-    })
+    options.UseSqlServer(connectionString)
 // .EnableSensitiveDataLogging() // Dev only
 );
-
 // -------------------------
 // Register Repositories
 // -------------------------
@@ -83,7 +76,6 @@ builder.Services.AddScoped<CategoryRepository>();
 builder.Services.AddScoped<SupplierRepository>();
 builder.Services.AddScoped<ReportsRepository>();
 builder.Services.AddScoped<UnitRepository>();
-builder.Services.AddScoped<AiRepository>();
 builder.Services.AddScoped<PurchaseOrderRepository>();
 
 builder.Services.AddHttpContextAccessor();
@@ -96,6 +88,7 @@ builder.Services.AddHttpContextAccessor();
 // -------------------------
 builder.Services.AddScoped<ProductService>();
 builder.Services.AddScoped<OrderService>();
+builder.Services.AddScoped<InvoiceService>();
 builder.Services.AddScoped<ActivityLogService>();
 builder.Services.AddScoped<CustomerService>();
 builder.Services.AddScoped<CategoryService>();
@@ -112,23 +105,6 @@ builder.Services.AddScoped<ReportsService>();
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<UnitService>();
 builder.Services.AddScoped<PurchaseOrderService>();
-
-// AI Service - Semantic Kernel + Chat
-builder.Services.AddSingleton<TokenizerService>();
-builder.Services.AddSingleton<RateLimitService>();
-builder.Services.AddScoped<ContextManager>();
-builder.Services.AddScoped<SemanticKernelService>();
-
-// AI Services - Embeddings, VectorStore, SemanticSearch
-builder.Services.AddScoped<IEmbeddingService, EmbeddingService>();
-builder.Services.AddSingleton<IVectorStoreService, QdrantVectorStoreService>();
-builder.Services.AddScoped<ISemanticSearchService, ProductSemanticSearchService>();
-
-// AI Indexing Services
-builder.Services.AddScoped<IProductIndexingService, ProductIndexingService>();
-
-// [AUTO-INDEX] Tự động index Products khi server khởi động 
-// builder.Services.AddHostedService<SemanticIndexingHostedService>();
 
 builder.Services.AddHttpClient();
 
@@ -166,12 +142,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReact", policy =>
     {
-        policy.WithOrigins(
-                "http://localhost:5173",
-                "https://localhost:5173",
-                "http://localhost:3000",
-                "https://localhost:3000"
-            )
+        policy.SetIsOriginAllowed(_ => true)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -193,6 +164,15 @@ app.UseRouting();
 
 app.UseCors("AllowReact");
 
+// Product images are public files and cannot send the API's bearer token via <img>.
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(
+        Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")),
+    RequestPath = "", // Serve /assets/... directly.
+    ServeUnknownFileTypes = false
+});
+
 // Xác thực JWT
 app.UseAuthentication();
 app.UseAuthorization();
@@ -202,14 +182,7 @@ app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseHttpsRedirection();
 
 app.MapControllers();
-
-app.UseStaticFiles(new StaticFileOptions
-{
-    FileProvider = new PhysicalFileProvider(
-        Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")),
-    RequestPath = "", // Để trống để serve trực tiếp /assets/...
-    ServeUnknownFileTypes = false // Bảo mật: chỉ serve các MIME types đã biết
-});
+app.MapHub<OrderHub>("/hub/orders").AllowAnonymous();
 
 // -------------------------
 // Serve frontend SPA (Vite)

@@ -660,3 +660,15 @@
 [2026-10-17 19:21:50] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
 [2026-10-17 19:22:02] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
 [2026-10-17 19:25:39] [User:1] [Action:CREATE_Promotions] [Entity:Promotions#0] [IP:127.0.0.1] {"name":"kakaws","type":"event","discountType":"percent","value":5,"minOrderAmount":50000,"voucherCode":null,"productIds":[],"maxDiscount":null,"usageLimit":null,"description":"","startDate":"2026-10-17","endDate":"2026-10-30","active":true,"status":"active"}
+[2026-10-17 21:25:07] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-17 21:25:12] [User:2] [Action:CREATE_Auth] [Entity:Auth#login] [IP:127.0.0.1] {"username":"admin","password":"[REDACTED]"}
+[2026-10-17 21:27:39] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-17 21:27:39] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-17 21:27:41] [User:1] [Action:CREATE_Orders] [Entity:Orders#create-temp] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-17 21:29:40] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#login] [IP:192.168.1.2] {"username":"haha","password":"[REDACTED]"}
+[2026-10-17 21:29:43] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#login] [IP:192.168.1.2] {"username":"haha","password":"[REDACTED]"}
+[2026-10-17 21:30:26] [User:1] [Action:UPDATE_Users] [Entity:Users#4] [IP:127.0.0.1] {"username":"haha","role":"customer","isActive":true,"customerId":1,"password":"[REDACTED]"}
+[2026-10-17 21:30:28] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#login] [IP:192.168.1.2] {"username":"haha","password":"[REDACTED]"}
+[2026-10-17 21:30:31] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#login] [IP:192.168.1.2] {"username":"haha","password":"[REDACTED]"}
+[2026-10-17 21:40:15] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#promotions] [IP:192.168.1.2] {"code":"","eventPromotionId":7,"orderAmount":25000}
+[2026-10-17 21:43:41] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#promotions] [IP:192.168.1.2] {"code":"","eventPromotionId":7,"orderAmount":50000}

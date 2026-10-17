@@ -74,6 +74,11 @@ function ProductStock({ product, style = styles.stockLabel }) {
 }
 
 const productDiscountAmount = (product) => Math.max(0, product.discountAmount ?? ((product.originalPrice ?? product.price) - product.price));
+const eventPromotionIssue = (promotion, orderAmount) => {
+  if (orderAmount <= 0) return "Thêm sản phẩm vào giỏ để sử dụng ưu đãi.";
+  const minimum = Number(promotion.minOrderAmount) || 0;
+  return orderAmount < minimum ? `Mua thêm ${money(minimum - orderAmount)} để sử dụng ưu đãi.` : "";
+};
 
 const QUICK_TAGS = ["Thịt tươi", "Rau sạch", "Cá hồi", "Bia Tiger", "Dầu ăn", "Mì Hảo Hảo", "Nước ngọt"];
 
@@ -766,27 +771,32 @@ export default function App() {
       const response = await fetch(`${API_URL}/storefront/promotions`);
       if (!response.ok) throw new Error(await readError(response));
       const data = await response.json();
-      setVoucherList(Array.isArray(data) ? data : []);
+      setVoucherList(Array.isArray(data) ? data.filter((promotion) => promotion.type === "event") : []);
     } catch (error) {
       setVoucherMessage(error.message || "Không tải được phiếu mua hàng.");
     }
   };
 
-  const applyVoucher = async (code = voucherCode) => {
+  const applyVoucher = async (code = voucherCode, eventPromotionId = null) => {
     const normalizedCode = code.trim();
-    if (!normalizedCode) { setVoucherMessage("Nhập mã phiếu mua hàng."); return; }
+    if (!eventPromotionId && !normalizedCode) { setVoucherMessage("Nhập mã voucher."); return; }
+    if (eventPromotionId) {
+      const promotion = voucherList.find((item) => item.id === eventPromotionId);
+      const issue = promotion ? eventPromotionIssue(promotion, subtotal) : "Ưu đãi không còn khả dụng. Vui lòng mở lại danh sách.";
+      if (issue) { setVoucherMessage(issue); return; }
+    }
     setVoucherBusy(true);
     setVoucherMessage("");
     try {
       const response = await fetch(`${API_URL}/storefront/promotions/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: normalizedCode, orderAmount: subtotal }),
+        body: JSON.stringify({ code: eventPromotionId ? "" : normalizedCode, eventPromotionId, orderAmount: subtotal }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.isValid) throw new Error(result.message || "Phiếu mua hàng không hợp lệ.");
-      setAppliedVoucher({ code: normalizedCode, discountAmount: result.discountAmount, promotion: result.promotion });
-      setVoucherCode(normalizedCode);
+      setAppliedVoucher({ code: eventPromotionId ? null : normalizedCode, eventPromotionId, discountAmount: result.discountAmount, promotion: result.promotion });
+      if (!eventPromotionId) setVoucherCode(normalizedCode);
       setVoucherMessage(`Đã áp dụng ${money(result.discountAmount)} giảm giá.`);
       setVoucherOpen(false);
     } catch (error) {
@@ -894,6 +904,7 @@ export default function App() {
           pointsUsed: useRewardPoints ? maxPointsUsable : 0,
           items: cart.map((item) => ({ productId: item.id, quantity: item.quantity })),
           promotionCode: appliedVoucher?.code || null,
+          eventPromotionId: appliedVoucher?.eventPromotionId || null,
         }),
       });
       if (!response.ok) throw new Error(await readError(response));
@@ -960,14 +971,10 @@ export default function App() {
             <Text style={styles.bannerSubtitle} numberOfLines={2}>{currentBanner.subtitle}</Text>
 
             <Pressable
-              onPress={() => {
-                if (currentBanner.code) {
-                  applyVoucher(currentBanner.code);
-                }
-              }}
+              onPress={openVouchers}
               style={styles.bannerCtaBtn}
             >
-              <Text style={styles.bannerCtaText}>Nhận mã ngay  ›</Text>
+              <Text style={styles.bannerCtaText}>Xem ưu đãi  ›</Text>
             </Pressable>
           </View>
 
@@ -1964,7 +1971,7 @@ export default function App() {
               <TextInput
                 value={voucherCode}
                 onChangeText={setVoucherCode}
-                placeholder="Nhập mã ưu đãi..."
+                placeholder="Nhập mã voucher..."
                 autoCapitalize="characters"
                 style={styles.voucherInput}
               />
@@ -1973,28 +1980,33 @@ export default function App() {
               </Pressable>
             </View>
 
-            <Text style={styles.voucherSubheading}>Mã ưu đãi đang có sẵn</Text>
+            <Text style={styles.voucherSubheading}>Ưu đãi sự kiện đang có sẵn</Text>
             <ScrollView style={styles.voucherList} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              {voucherList.map((voucher) => (
-                <View key={voucher.id} style={styles.voucherCard}>
+              {voucherList.map((voucher) => {
+                const issue = eventPromotionIssue(voucher, subtotal);
+                const disabled = voucherBusy || !!issue;
+                return (
+                <View key={voucher.id} style={[styles.voucherCard, !!issue && styles.voucherCardUnavailable]}>
                   <View style={styles.voucherCardTop}>
                     <View style={styles.voucherBadge}>
                       <Text style={styles.voucherBadgeText}>{voucher.discountType === "percent" ? `${voucher.value}%` : money(voucher.value)}</Text>
                     </View>
                     <View style={styles.voucherInfo}>
-                      <Text style={styles.voucherName}>{voucher.name || "Phiếu mua hàng"}</Text>
-                      <Text style={styles.voucherExpiry}>{voucher.code}{voucher.endDate ? ` · Hạn ${new Date(voucher.endDate).toLocaleDateString("vi-VN")}` : ""}</Text>
+                      <Text style={styles.voucherName}>{voucher.name || "Ưu đãi sự kiện"}</Text>
+                      {voucher.endDate && <Text style={styles.voucherExpiry}>Hạn {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>}
                     </View>
-                    <Pressable onPress={() => applyVoucher(voucher.code)} style={styles.voucherUseBtn}>
+                    <Pressable disabled={disabled} accessibilityRole="button" accessibilityLabel={`Dùng ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled }} onPress={() => applyVoucher("", voucher.id)} style={[styles.voucherUseBtn, !!issue && styles.voucherUseBtnUnavailable, voucherBusy && styles.buttonDisabled]}>
                       <Text style={styles.voucherUseText}>Dùng</Text>
                     </Pressable>
                   </View>
                   {voucher.description && <Text style={styles.voucherDescription}>{voucher.description}</Text>}
                   {voucher.minOrderAmount > 0 && <Text style={styles.voucherExpiry}>Đơn tối thiểu {money(voucher.minOrderAmount)}</Text>}
+                  {!!issue && <Text style={styles.voucherUnavailableText}>{issue}</Text>}
                 </View>
-              ))}
+                );
+              })}
               {!voucherList.length && !voucherMessage && (
-                <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có mã công khai nào khác.</Text></View>
+                <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có ưu đãi sự kiện. Nếu có voucher, bạn có thể nhập mã ở trên.</Text></View>
               )}
               {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
             </ScrollView>
@@ -2338,6 +2350,9 @@ const styles = StyleSheet.create({
   voucherSubheading: { color: "#59636f", fontSize: 13, fontWeight: "800", marginBottom: 8 },
   voucherList: { flex: 1 },
   voucherCard: { backgroundColor: "#fff", borderRadius: 12, borderColor: "#e2e8ef", borderWidth: 1, padding: 12, marginBottom: 9 },
+  voucherCardUnavailable: { backgroundColor: "#dfe3e8", borderColor: "#c3cbd5" },
+  voucherUseBtnUnavailable: { backgroundColor: "#87929e" },
+  voucherUnavailableText: { color: "#526071", fontSize: 11, lineHeight: 16, fontWeight: "600", marginTop: 8 },
   voucherCardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   voucherBadge: { minWidth: 58, minHeight: 45, paddingHorizontal: 5, borderRadius: 7, backgroundColor: "#e9edf5", alignItems: "center", justifyContent: "center" },
   voucherBadgeText: { color: "#49576a", fontWeight: "900", fontSize: 13 },

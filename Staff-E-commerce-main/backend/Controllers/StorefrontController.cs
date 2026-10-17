@@ -48,15 +48,20 @@ namespace backend.Controllers
         public async Task<IActionResult> GetStorefrontPromotions()
         {
             var promotions = await _promotions.GetActivePromotionsAsync();
-            return Ok(promotions.Where(item => item.Type == "voucher"));
+            return Ok(promotions.Where(item => item.Type == "event"));
         }
 
         [HttpPost("promotions/validate")]
         [AllowAnonymous]
         public async Task<IActionResult> ValidateStorefrontPromotion([FromBody] StorefrontPromotionRequest request)
         {
-            if (string.IsNullOrWhiteSpace(request.Code)) return BadRequest(new { message = "Nhập mã phiếu mua hàng." });
-            var result = await _promotions.ValidatePromotionAsync(request.Code, request.OrderAmount);
+            if (request.EventPromotionId.HasValue && !string.IsNullOrWhiteSpace(request.Code))
+                return BadRequest(new { message = "Chỉ chọn một ưu đãi sự kiện hoặc nhập một mã voucher." });
+            if (!request.EventPromotionId.HasValue && string.IsNullOrWhiteSpace(request.Code))
+                return BadRequest(new { message = "Nhập mã voucher hoặc chọn ưu đãi sự kiện." });
+            var result = request.EventPromotionId.HasValue
+                ? await _promotions.ValidateEventPromotionAsync(request.EventPromotionId.Value, request.OrderAmount)
+                : await _promotions.ValidatePromotionAsync(request.Code, request.OrderAmount);
             return Ok(result);
         }
 
@@ -393,6 +398,8 @@ namespace backend.Controllers
                 .Select(group => new { ProductId = group.Key, Quantity = group.Sum(line => line.Quantity) })
                 .ToList();
 
+            if (request.EventPromotionId.HasValue && !string.IsNullOrWhiteSpace(request.PromotionCode))
+                return BadRequest(new { message = "Chỉ chọn một ưu đãi sự kiện hoặc nhập một mã voucher." });
             if (requestedLines.Any(line => line.Quantity > 1000))
                 return BadRequest(new { message = "Số lượng mỗi sản phẩm không được vượt quá 1.000." });
 
@@ -462,9 +469,11 @@ namespace backend.Controllers
                 var subtotal = items.Sum(item => item.TotalPrice);
                 var discount = 0m;
                 Promotion? appliedPromotion = null;
-                if (!string.IsNullOrWhiteSpace(request.PromotionCode))
+                if (request.EventPromotionId.HasValue || !string.IsNullOrWhiteSpace(request.PromotionCode))
                 {
-                    var validation = await _promotions.ValidatePromotionAsync(request.PromotionCode, subtotal);
+                    var validation = request.EventPromotionId.HasValue
+                        ? await _promotions.ValidateEventPromotionAsync(request.EventPromotionId.Value, subtotal)
+                        : await _promotions.ValidatePromotionAsync(request.PromotionCode!, subtotal);
                     if (!validation.IsValid || validation.Promotion == null)
                         return BadRequest(new { message = validation.Message });
                     discount = Math.Min(subtotal, validation.DiscountAmount);
@@ -744,6 +753,9 @@ namespace backend.Controllers
 
         public string? PromotionCode { get; set; }
 
+        [Range(1, int.MaxValue)]
+        public int? EventPromotionId { get; set; }
+
         /// <summary>Số điểm thưởng muốn dùng để giảm giá (1 điểm = 1.000 VNĐ)</summary>
         public int PointsUsed { get; set; } = 0;
 
@@ -766,7 +778,10 @@ namespace backend.Controllers
 
     public class StorefrontPromotionRequest
     {
+        [Range(1, int.MaxValue)]
+        public int? EventPromotionId { get; set; }
         public string Code { get; set; } = string.Empty;
+        [Range(typeof(decimal), "0", "79228162514264337593543950335")]
         public decimal OrderAmount { get; set; }
     }
 }

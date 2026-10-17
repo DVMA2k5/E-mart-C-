@@ -69,13 +69,21 @@ public class InvoiceService
         }
     }
 
-    public async Task<PagedResult<InvoiceDTO>> GetInvoicesAsync(int page, int pageSize, DateTime? from, DateTime? to, string? paymentStatus)
+    public async Task<PagedResult<InvoiceDTO>> GetInvoicesAsync(int page, int pageSize, DateTime? from, DateTime? to, string? paymentStatus, string? customerSearch = null)
     {
         page = Math.Max(1, page); pageSize = Math.Clamp(pageSize, 1, 100);
         var query = _db.Invoices.AsNoTracking().AsQueryable();
         if (from.HasValue) query = query.Where(i => i.IssuedAt >= from.Value);
         if (to.HasValue) query = query.Where(i => i.IssuedAt < to.Value.Date.AddDays(1));
         if (!string.IsNullOrWhiteSpace(paymentStatus)) query = query.Where(i => i.PaymentStatus == paymentStatus);
+        if (!string.IsNullOrWhiteSpace(customerSearch))
+        {
+            var keyword = customerSearch.Trim();
+            query = query.Where(i =>
+                (i.CustomerName != null && i.CustomerName.Contains(keyword)) ||
+                (i.CustomerPhone != null && i.CustomerPhone.Contains(keyword)) ||
+                (i.CustomerEmail != null && i.CustomerEmail.Contains(keyword)));
+        }
         var total = await query.CountAsync();
         var items = await query.OrderByDescending(i => i.IssuedAt).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(i => new InvoiceDTO { InvoiceId = i.Id, OrderId = i.OrderId, InvoiceNumber = i.InvoiceNumber,

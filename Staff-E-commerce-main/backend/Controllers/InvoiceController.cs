@@ -14,8 +14,9 @@ public class InvoiceController : ControllerBase
 
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] int page = 1, [FromQuery] int pageSize = 10,
-        [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null, [FromQuery] string? paymentStatus = null)
-        => Ok(await _service.GetInvoicesAsync(page, pageSize, from, to, paymentStatus));
+        [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null, [FromQuery] string? paymentStatus = null,
+        [FromQuery] string? customerSearch = null)
+        => Ok(await _service.GetInvoicesAsync(page, pageSize, from, to, paymentStatus, customerSearch));
 
     [HttpGet("{orderId:int}")]
     public async Task<IActionResult> Detail(int orderId)

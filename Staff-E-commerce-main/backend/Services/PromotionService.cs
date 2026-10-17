@@ -188,7 +188,17 @@ namespace backend.Services
         public async Task<ValidatePromotionResult> ValidatePromotionAsync(string code, decimal orderAmount)
         {
             var promotion = await _promotionRepository.GetByCodeAsync(code);
+            return ValidateOrderPromotion(promotion, orderAmount, "voucher");
+        }
 
+        public async Task<ValidatePromotionResult> ValidateEventPromotionAsync(int id, decimal orderAmount)
+        {
+            var promotion = await _promotionRepository.GetByIdAsync(id);
+            return ValidateOrderPromotion(promotion, orderAmount, "event");
+        }
+
+        private ValidatePromotionResult ValidateOrderPromotion(Promotion? promotion, decimal orderAmount, string requiredType)
+        {
             if (promotion == null)
             {
                 return new ValidatePromotionResult
@@ -199,12 +209,12 @@ namespace backend.Services
                 };
             }
 
-            if (promotion.Type != "voucher")
+            if (promotion.Type != requiredType)
             {
                 return new ValidatePromotionResult
                 {
                     IsValid = false,
-                    Message = "Khuyến mãi này áp dụng trực tiếp cho sản phẩm, không áp dụng bằng mã đơn hàng",
+                    Message = requiredType == "event" ? "Ưu đãi được chọn không phải khuyến mãi sự kiện" : "Vui lòng nhập mã voucher hợp lệ",
                     DiscountAmount = 0
                 };
             }

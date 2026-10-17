@@ -27,7 +27,6 @@ import {
   IconClose,
   IconCloseCircle,
   IconHome,
-  IconCategoryGrid,
   IconReceipt,
   IconUser,
   IconPlus,
@@ -39,9 +38,7 @@ import {
   IconSort,
   CategoryAll,
   getCategoryIcon,
-  getSubCategoryIcon,
 } from "./components/Icons";
-import { BHX_CATEGORIES } from "./constants/bhxData";
 
 const defaultHost = typeof window !== "undefined" && window.location?.hostname
   ? `http://${window.location.hostname}:5099/api`
@@ -68,6 +65,15 @@ const BG_PAGE = "#f1f5f9";
 
 const imageUrl = (path) => !path ? null : path.startsWith("http") ? path : `${API_ORIGIN}${path.startsWith("/") ? "" : "/"}${path}`;
 const money = (value) => new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(value || 0);
+const productPriceLabel = (product, price = product.price) => `${money(price)}${product.unitName ? `/${product.unitName}` : ""}`;
+const stockLimit = (product) => Number.isFinite(product?.stockQuantity) ? Math.max(0, Math.floor(product.stockQuantity)) : 0;
+
+function ProductStock({ product, style = styles.stockLabel }) {
+  if (product.stockQuantity == null) return null;
+  return <Text style={style}>Còn: {product.stockQuantity}{product.unitName ? ` ${product.unitName}` : ""}</Text>;
+}
+
+const productDiscountAmount = (product) => Math.max(0, product.discountAmount ?? ((product.originalPrice ?? product.price) - product.price));
 
 const QUICK_TAGS = ["Thịt tươi", "Rau sạch", "Cá hồi", "Bia Tiger", "Dầu ăn", "Mì Hảo Hảo", "Nước ngọt"];
 
@@ -148,14 +154,14 @@ function AppButton({ title, onPress, secondary = false, disabled = false, style 
   );
 }
 
-function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, cardWidthStyle }) {
-  const originalPrice = Math.round((product.price * 1.15) / 1000) * 1000;
+function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, onOpen, cardWidthStyle }) {
+  const originalPrice = product.originalPrice ?? product.price;
   const isHot = (product.id % 2 === 0);
-  const discountPercent = Math.max(10, Math.round(((originalPrice - product.price) / originalPrice) * 100));
+  const discountPercent = originalPrice > 0 ? Math.max(0, Math.round(((originalPrice - product.price) / originalPrice) * 100)) : 0;
 
   return (
     <View style={[styles.productCard, cardWidthStyle, cartQty > 0 && styles.productCardActive]}>
-      <View style={styles.productImageBox}>
+      <Pressable style={styles.productImageBox} onPress={() => onOpen(product)} accessibilityRole="button" accessibilityLabel={`Xem chi tiết ${product.productName}`}>
         <ProductImage
           imagePath={product.imageUrl}
           productId={product.id}
@@ -174,31 +180,27 @@ function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, cardWidthS
             </View>
           )}
         </View>
-      </View>
+      </Pressable>
 
       <View style={styles.productBody}>
         <Text style={styles.productCategory} numberOfLines={1}>{product.categoryName || "BÁCH HÓA"}</Text>
         <Text style={styles.productName} numberOfLines={2}>{product.productName}</Text>
-
-        <View style={styles.fastDeliveryTag}>
-          <IconFlash size={10} color={BHX_ORANGE} />
-          <Text style={styles.fastDeliveryText}>Giao nhanh 2h</Text>
-        </View>
-
         <View style={styles.priceContainer}>
-          <Text style={styles.productPrice}>{money(product.price)}</Text>
+          <Text style={styles.productPrice}>{productPriceLabel(product)}</Text>
           {originalPrice > product.price && (
-            <Text style={styles.originalPrice}>{money(originalPrice)}</Text>
+            <Text style={styles.originalPrice}>{productPriceLabel(product, originalPrice)}</Text>
           )}
         </View>
 
+        <ProductStock product={product} />
         {/* Smart Stepper Control */}
         <View style={styles.stepperContainer}>
           {cartQty === 0 ? (
             <Pressable
               accessibilityLabel={`Thêm ${product.productName} vào giỏ`}
               onPress={() => onAdd(product)}
-              style={styles.addCartBtn}
+              disabled={stockLimit(product) === 0}
+              style={[styles.addCartBtn, stockLimit(product) === 0 && styles.buttonDisabled]}
             >
               <IconCart size={13} color="#ffffff" />
               <Text style={styles.addCartBtnText}>CHỌN MUA</Text>
@@ -216,7 +218,8 @@ function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, cardWidthS
               <Pressable
                 accessibilityLabel={`Thêm ${product.productName}`}
                 onPress={() => onQuantityChange(product.id, 1)}
-                style={[styles.stepperBtn, styles.stepperBtnPlus]}
+                disabled={cartQty >= stockLimit(product)}
+                style={[styles.stepperBtn, styles.stepperBtnPlus, cartQty >= stockLimit(product) && styles.buttonDisabled]}
               >
                 <IconPlus size={12} color="#ffffff" />
               </Pressable>
@@ -225,6 +228,73 @@ function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, cardWidthS
         </View>
       </View>
     </View>
+  );
+}
+
+function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQuantityChange, onViewCart, onOpen }) {
+  const relatedProducts = product.categoryId == null ? [] : products.filter((item) => (
+    String(item.categoryId) === String(product.categoryId) && String(item.id) !== String(product.id)
+  ));
+  return (
+    <SafeAreaView style={styles.productDetailScreen}>
+      <View style={styles.productDetailHeader}>
+        <Pressable onPress={onClose} style={styles.productDetailBack} accessibilityRole="button" accessibilityLabel="Quay lại">
+          <View style={{ transform: [{ rotate: "180deg" }] }}><IconChevronRight size={24} color={TEXT_DARK} /></View>
+        </Pressable>
+        <Text style={styles.productDetailHeaderTitle}>Chi tiết sản phẩm</Text>
+      </View>
+      <ScrollView contentContainerStyle={styles.productDetailContent}>
+        <View style={styles.productDetailImageBox}>
+          <ProductImage imagePath={product.imageUrl} productId={product.id} categoryName={product.categoryName} style={styles.productDetailImage} />
+        </View>
+        <View style={styles.productDetailInfo}>
+          <Text style={styles.eyebrow}>{product.categoryName || "Sản phẩm"}</Text>
+          <Text style={styles.productDetailName}>{product.productName}</Text>
+          <View style={styles.productDetailPriceBlock}>
+            <View style={styles.productDetailPriceRow}>
+              <Text style={styles.productDetailPrice}>{productPriceLabel(product)}</Text>
+              {product.originalPrice > product.price && <Text style={styles.productDetailOriginalPrice}>{productPriceLabel(product, product.originalPrice)}</Text>}
+            </View>
+            {productDiscountAmount(product) > 0 && <Text style={styles.productDetailSaving}>Tiết kiệm {money(productDiscountAmount(product))}</Text>}
+          </View>
+          <ProductStock product={product} style={styles.productDetailStock} />
+          {product.promotionName && <Text style={styles.productDetailStock}>{product.promotionName}</Text>}
+          {product.description && <Text style={styles.productDetailDescription}>{product.description}</Text>}
+        </View>
+        <View style={styles.relatedProductsSection}>
+          <Text style={styles.relatedProductsTitle}>Sản phẩm liên quan</Text>
+          {relatedProducts.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.relatedProductsRow}>
+              {relatedProducts.map((item) => (
+                <Pressable key={item.id} onPress={() => onOpen(item)} style={styles.relatedProductCard} accessibilityRole="button" accessibilityLabel={`Xem chi tiết ${item.productName}`}>
+                  <View style={styles.relatedProductImageBox}>
+                    <ProductImage imagePath={item.imageUrl} productId={item.id} categoryName={item.categoryName} style={styles.productImage} />
+                  </View>
+                  <Text style={styles.relatedProductName} numberOfLines={2}>{item.productName}</Text>
+                  <Text style={styles.relatedProductPrice}>{productPriceLabel(item)}</Text>
+                  <ProductStock product={item} />
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : <Text style={styles.productDetailDescription}>Chưa có sản phẩm cùng loại khác.</Text>}
+        </View>
+      </ScrollView>
+      <View style={styles.productDetailAction}>
+        {quantity > 0 ? (
+          <View style={styles.productDetailQuantityControl}>
+            <Pressable onPress={() => onQuantityChange(product.id, -1)} style={styles.productDetailQuantityButton} accessibilityRole="button" accessibilityLabel="Giảm số lượng">
+              <IconMinus size={20} color={BHX_GREEN} />
+            </Pressable>
+            <Text style={styles.productDetailQuantityValue}>{quantity}</Text>
+            <Pressable onPress={() => onAdd(product)} disabled={quantity >= stockLimit(product)} style={[styles.productDetailQuantityButton, quantity >= stockLimit(product) && styles.buttonDisabled]} accessibilityRole="button" accessibilityLabel="Tăng số lượng">
+              <IconPlus size={20} color={BHX_GREEN} />
+            </Pressable>
+          </View>
+        ) : <AppButton title="Thêm vào giỏ hàng" disabled={stockLimit(product) === 0} onPress={() => onAdd(product)} />}
+        {quantity > 0 && quantity >= stockLimit(product) && <Text style={styles.stateText}>Đã chọn tối đa số lượng còn trong kho.</Text>}
+        {quantity > 0 && <AppButton title="Xem giỏ hàng" onPress={onViewCart} />}
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -247,7 +317,7 @@ export default function App() {
   // Bộ lọc & Sắp xếp
   const [sortOption, setSortOption] = useState("default");
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
-  const [selectedDrawerCatId, setSelectedDrawerCatId] = useState(5);
+  const [selectedDrawerCatId, setSelectedDrawerCatId] = useState("all");
   const [drawerSearchText, setDrawerSearchText] = useState("");
 
   const [checkoutOpen, setCheckoutOpen] = useState(false);
@@ -343,6 +413,17 @@ export default function App() {
   useEffect(() => {
     if (cartLoaded) AsyncStorage.setItem(CART_KEY, JSON.stringify(cart)).catch(() => { });
   }, [cart, cartLoaded]);
+
+  useEffect(() => {
+    if (!cartLoaded || loading || loadError) return;
+    setCart((current) => {
+      const adjusted = current.map((item) => ({
+        ...item,
+        quantity: Math.min(item.quantity, stockLimit(products.find((product) => product.id === item.id))),
+      })).filter((item) => item.quantity > 0);
+      return adjusted.length === current.length && adjusted.every((item, index) => item.quantity === current[index].quantity) ? current : adjusted;
+    });
+  }, [products, cartLoaded, loading, loadError]);
 
   useEffect(() => {
     let active = true;
@@ -567,20 +648,17 @@ export default function App() {
     return result;
   }, [products, query, categoryId, sortOption]);
 
-  // Danh mục BHX đang chọn trong Drawer
-  const activeBhxCategory = useMemo(() => {
-    return BHX_CATEGORIES.find((c) => c.id === selectedDrawerCatId) || BHX_CATEGORIES[0];
-  }, [selectedDrawerCatId]);
+  const activeDrawerCategory = useMemo(() => (
+    categories.find((category) => String(category.id) === String(selectedDrawerCatId))
+  ), [categories, selectedDrawerCatId]);
 
-  // Các nhóm hàng con Sub-categories được lọc theo từ khóa tìm kiếm trong Drawer
-  const filteredSubCategories = useMemo(() => {
-    if (!activeBhxCategory?.subCategories) return [];
-    if (!drawerSearchText.trim()) return activeBhxCategory.subCategories;
-    const kw = drawerSearchText.trim().toLowerCase();
-    return activeBhxCategory.subCategories.filter((sub) =>
-      sub.name.toLowerCase().includes(kw) || (sub.keyword && sub.keyword.toLowerCase().includes(kw))
-    );
-  }, [activeBhxCategory, drawerSearchText]);
+  const drawerProducts = useMemo(() => {
+    const keyword = drawerSearchText.trim().toLocaleLowerCase("vi-VN");
+    return products.filter((product) => (
+      (selectedDrawerCatId === "all" || String(product.categoryId) === String(selectedDrawerCatId))
+      && (product.productName || "").toLocaleLowerCase("vi-VN").includes(keyword)
+    ));
+  }, [products, selectedDrawerCatId, drawerSearchText]);
 
   const cartItemMap = useMemo(() => {
     const map = {};
@@ -646,11 +724,16 @@ export default function App() {
   };
 
   const addToCart = (product) => {
+    if (loading || loadError) return;
+    const available = stockLimit(products.find((item) => item.id === product.id));
+    if (available === 0) return;
     setCart((current) => {
       const found = current.find((item) => item.id === product.id);
+      if (found && found.quantity >= available) return current;
       if (found) return current.map((item) => item.id === product.id ? {
         ...item,
         price: product.price,
+        unitName: product.unitName,
         originalPrice: product.originalPrice,
         discountAmount: productDiscountAmount(product),
         quantity: item.quantity + 1,
@@ -659,6 +742,7 @@ export default function App() {
         id: product.id,
         name: product.productName,
         price: product.price,
+        unitName: product.unitName,
         originalPrice: product.originalPrice,
         discountAmount: productDiscountAmount(product),
         image: product.imageUrl,
@@ -667,11 +751,36 @@ export default function App() {
     });
   };
 
-  const changeQuantity = (id, amount) => setCart((current) => current
-    .map((item) => item.id === id ? { ...item, quantity: item.quantity + amount } : item)
-    .filter((item) => item.quantity > 0));
+  const changeQuantity = (id, amount) => {
+    if (amount > 0 && (loading || loadError)) return;
+    const available = stockLimit(products.find((product) => product.id === id));
+    setCart((current) => current
+      .map((item) => item.id === id ? {
+        ...item,
+        quantity: amount > 0 ? Math.min(item.quantity + amount, available) : item.quantity + amount,
+      } : item)
+      .filter((item) => item.quantity > 0));
+  };
 
   const getCartQuantity = (productId) => cart.find((item) => item.id === productId)?.quantity || 0;
+
+  const renderProductDetails = () => selectedProduct && (
+    <ProductDetails
+      key={selectedProduct.id}
+      product={products.find((product) => product.id === selectedProduct.id) || { ...selectedProduct, stockQuantity: 0 }}
+      products={products}
+      onOpen={setSelectedProduct}
+      quantity={getCartQuantity(selectedProduct.id)}
+      onClose={() => setSelectedProduct(null)}
+      onAdd={addToCart}
+      onQuantityChange={changeQuantity}
+      onViewCart={() => {
+        setSelectedProduct(null);
+        setCategoryModalOpen(false);
+        setTab("cart");
+      }}
+    />
+  );
 
   const submitOrder = async () => {
     if (!requireAuthenticatedCustomer()) {
@@ -734,6 +843,7 @@ export default function App() {
       };
       setCustomerOrders((current) => [placedOrder, ...current.filter((order) => order.id !== placedOrder.id)]);
       setCart([]);
+      void loadStore();
       setUseRewardPoints(false);
     } catch (error) {
       setOrderError(error.message || "Không thể gửi đơn hàng. Kiểm tra kết nối rồi thử lại.");
@@ -795,27 +905,7 @@ export default function App() {
         </View>
 
         {/* 2. DẢI CAM KẾT VÀNG SIÊU THỊ */}
-        <View style={styles.trustBar}>
-          <View style={styles.trustItem}>
-            <IconFlash size={16} color={BHX_ORANGE} />
-            <Text style={styles.trustLabel}>Giao siêu tốc 2h</Text>
-          </View>
-          <View style={styles.trustDivider} />
-          <View style={styles.trustItem}>
-            <IconCheck size={16} color={BHX_GREEN} />
-            <Text style={styles.trustLabel}>100% Chính hãng</Text>
-          </View>
-          <View style={styles.trustDivider} />
-          <View style={styles.trustItem}>
-            <IconStar size={16} color="#f59e0b" />
-            <Text style={styles.trustLabel}>Tích điểm đổi quà</Text>
-          </View>
-          <View style={styles.trustDivider} />
-          <View style={styles.trustItem}>
-            <IconShield size={16} color={BHX_GREEN} />
-            <Text style={styles.trustLabel}>Đổi trả tận nơi</Text>
-          </View>
-        </View>
+  
 
         {/* 3. MENU PHÂN LOẠI NGÀNH HÀNG GRID 10 Ô */}
         <View style={styles.categorySectionHeader}>
@@ -927,6 +1017,7 @@ export default function App() {
                 cartQty={cartItemMap[product.id] || 0}
                 onAdd={addToCart}
                 onQuantityChange={changeQuantity}
+                onOpen={setSelectedProduct}
                 cardWidthStyle={cardWidthStyle}
               />
             ))}
@@ -961,13 +1052,13 @@ export default function App() {
                   </View>
                   <View style={styles.cartInfo}>
                     <Text style={styles.cartName} numberOfLines={2}>{item.name}</Text>
-                    <Text style={styles.cartPrice}>{money(item.price)}</Text>
+                    <Text style={styles.cartPrice}>{productPriceLabel({ ...item, unitName: products.find((product) => product.id === item.id)?.unitName || item.unitName })}</Text>
                     <View style={styles.cartStepperRow}>
                       <Pressable onPress={() => changeQuantity(item.id, -1)} style={styles.cartStepperBtn}>
                         <IconMinus size={12} color="#334155" />
                       </Pressable>
                       <Text style={styles.cartStepperQty}>{item.quantity}</Text>
-                      <Pressable onPress={() => changeQuantity(item.id, 1)} style={[styles.cartStepperBtn, styles.cartStepperBtnPlus]}>
+                      <Pressable onPress={() => changeQuantity(item.id, 1)} disabled={loading || !!loadError || item.quantity >= stockLimit(products.find((product) => product.id === item.id))} style={[styles.cartStepperBtn, styles.cartStepperBtnPlus, (loading || !!loadError || item.quantity >= stockLimit(products.find((product) => product.id === item.id))) && styles.buttonDisabled]}>
                         <IconPlus size={12} color="#ffffff" />
                       </Pressable>
                     </View>
@@ -1233,17 +1324,17 @@ export default function App() {
       </> : <>
         <Text style={styles.eyebrow}>E-MART</Text>
         <Text style={styles.pageTitle}>Tài khoản</Text>
-        {!accountReady ? <View style={styles.centerState}><ActivityIndicator color={GREEN} /><Text style={styles.stateText}>Đang tải tài khoản...</Text></View> : customer ? <>
+        {!accountReady ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /><Text style={styles.stateText}>Đang tải tài khoản...</Text></View> : customer ? <>
           <View style={styles.profileCard}>
             <Text style={styles.profileEmoji}>👋</Text>
             <Text style={styles.emptyTitle}>{customer.fullName || "Chào mừng bạn"}</Text>
             <Text style={styles.stateText}>{customer.phone}</Text>
             <View style={{ marginTop: 10, backgroundColor: "#eef7ef", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, flexDirection: "row", alignItems: "center", gap: 6 }}>
               <Text style={{ fontSize: 14 }}>⭐</Text>
-              <Text style={{ fontSize: 13, fontWeight: "800", color: GREEN }}>
+              <Text style={{ fontSize: 13, fontWeight: "800", color: BHX_GREEN }}>
                 {customer.rewardPoints || 0} điểm thưởng
               </Text>
-              <Text style={{ fontSize: 11, color: MUTED }}>
+              <Text style={{ fontSize: 11, color: TEXT_MUTED }}>
                 (đổi được {money((customer.rewardPoints || 0) * 1000)})
               </Text>
             </View>
@@ -1321,42 +1412,21 @@ export default function App() {
             </View>
           </Pressable>
 
-          {/* Dòng 1: Logo + Nút Danh Mục + Giỏ Hàng */}
-          <View style={styles.headerTopLine}>
-            {/* Logo Bách Hóa Xanh E-Mart */}
-            <Pressable onPress={() => { setCategoryId("all"); setTab("home"); }} style={styles.brandRow}>
-              <Text style={styles.brandTextE}>E-MART</Text>
-              <View style={styles.brandTagBox}>
-                <Text style={styles.brandTextXanh}>XANH</Text>
-              </View>
-            </Pressable>
-
-            {/* Cụm Action: Danh mục + Giỏ hàng */}
-            <View style={styles.headerRightGroup}>
-              <Pressable
-                onPress={() => {
-                  setSelectedDrawerCatId(categoryId === "all" ? "all" : categoryId);
-                  setCategoryModalOpen(true);
-                }}
-                style={styles.categoryMenuBtn}
-              >
-                <IconMenu size={15} color="#ffffff" />
-                <Text style={styles.categoryMenuBtnText}>Danh mục</Text>
-              </Pressable>
-
-              <Pressable onPress={() => setTab("cart")} style={styles.headerCart}>
-                <IconCart size={20} color="#ffffff" />
-                {itemCount > 0 && (
-                  <View style={styles.cartBadge}>
-                    <Text style={styles.cartBadgeText}>{itemCount > 99 ? "99+" : itemCount}</Text>
-                  </View>
-                )}
-              </Pressable>
-            </View>
-          </View>
+    
 
           {/* Dòng 2: Thanh Tìm Kiếm 100% Full Width Không Bao Giờ Bị Tràn */}
           <View style={styles.searchBar}>
+            <Pressable
+              onPress={() => {
+                setSelectedDrawerCatId(categoryId === "all" ? "all" : categoryId);
+                setCategoryModalOpen(true);
+              }}
+              style={styles.searchCategoryBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Mở danh mục sản phẩm"
+            >
+              <IconMenu size={18} color="#ffffff" />
+            </Pressable>
             <TextInput
               value={query}
               onChangeText={setQuery}
@@ -1377,7 +1447,7 @@ export default function App() {
           </View>
 
           {/* Quick Search Tags */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow}>
+          <ScrollView horizontal style={styles.quickTagsScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow}>
             {QUICK_TAGS.map((tag) => (
               <Pressable
                 key={tag}
@@ -1396,49 +1466,6 @@ export default function App() {
       {/* NỘI DUNG MÀN HÌNH CHÍNH */}
       <View style={styles.screen}>
         {tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
-      </View>
-
-      {/* BOTTOM NAVIGATION CHUẨN APP (5 TABS ĐẦY ĐỦ CÓ GIỎ HÀNG KÈM BADGE ĐỎ CHỐNG MẤT GIỎ) */}
-      <View style={styles.bottomNav}>
-        <View style={styles.bottomNavInner}>
-          {[
-            { key: "home", label: "Trang chủ", icon: (active) => <IconHome size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
-            { key: "categories", label: "Danh mục", icon: (active) => <IconCategoryGrid size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
-            { 
-              key: "cart", 
-              label: "Giỏ hàng", 
-              badge: itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
-              icon: (active) => <IconCart size={20} color={active ? BHX_GREEN : "#64748b"} /> 
-            },
-            { key: "orders", label: "Đơn hàng", icon: (active) => <IconReceipt size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
-            { key: "profile", label: "Tài khoản", icon: (active) => <IconUser size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
-          ].map((item) => {
-            const isActive = tab === item.key;
-            return (
-              <Pressable
-                key={item.key}
-                onPress={() => {
-                  if (item.key === "categories") {
-                    setCategoryModalOpen(true);
-                  } else {
-                    setTab(item.key);
-                  }
-                }}
-                style={styles.navItem}
-              >
-                <View style={styles.navIconWrapper}>
-                  {item.icon(isActive)}
-                  {item.badge && (
-                    <View style={styles.bottomNavBadge}>
-                      <Text style={styles.bottomNavBadgeText}>{item.badge}</Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>{item.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
       </View>
 
       {/* THANH GIỎ HÀNG NỔI Ở ĐÁY KHI CÓ MẶT HÀNG TRONG GIỎ */}
@@ -1466,15 +1493,52 @@ export default function App() {
         </Pressable>
       )}
 
+      {/* Thanh điều hướng: Trang chủ, Giỏ hàng, Đơn hàng, Tài khoản */}
+      <View style={styles.bottomNav}>
+        <View style={styles.bottomNavInner}>
+          {[
+            { key: "home", label: "Trang chủ", icon: (active) => <IconHome size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
+            { 
+              key: "cart", 
+              label: "Giỏ hàng", 
+              badge: itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
+              icon: (active) => <IconCart size={20} color={active ? BHX_GREEN : "#64748b"} /> 
+            },
+            { key: "orders", label: "Đơn hàng", icon: (active) => <IconReceipt size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
+            { key: "profile", label: "Tài khoản", icon: (active) => <IconUser size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
+          ].map((item) => {
+            const isActive = tab === item.key;
+            return (
+              <Pressable
+                key={item.key}
+                onPress={() => setTab(item.key)}
+                style={styles.navItem}
+              >
+                <View style={styles.navIconWrapper}>
+                  {item.icon(isActive)}
+                  {item.badge && (
+                    <View style={styles.bottomNavBadge}>
+                      <Text style={styles.bottomNavBadgeText}>{item.badge}</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>{item.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
       {/* ========================================================================= */}
-      {/* MODAL MENU PHÂN LOẠI CHUẨN 100% BÁCH HÓA XANH (LƯỚI SUB-CATEGORIES 3 CỘT) */}
+      {/* Danh mục loại sản phẩm và sản phẩm của cửa hàng. */}
       {/* ========================================================================= */}
       <Modal
         visible={categoryModalOpen}
         animationType="fade"
         transparent={isDesktop}
-        onRequestClose={() => setCategoryModalOpen(false)}
+        onRequestClose={() => selectedProduct ? setSelectedProduct(null) : setCategoryModalOpen(false)}
       >
+        {selectedProduct ? renderProductDetails() : (
         <SafeAreaView style={isDesktop ? styles.drawerDesktopBackdrop : styles.drawerSafeArea}>
           <View style={isDesktop ? styles.drawerDesktopDialog : styles.drawerMobileContainer}>
             {/* Header màu xanh lá cây chuẩn Bách Hóa Xanh: [Đóng] [Trang chủ] + [Ô tìm kiếm bo tròn] */}
@@ -1506,7 +1570,7 @@ export default function App() {
                 <TextInput
                   value={drawerSearchText}
                   onChangeText={setDrawerSearchText}
-                  placeholder="Tìm nhanh trong nhóm hàng"
+                  placeholder="Tìm sản phẩm trong loại đang chọn"
                   placeholderTextColor="#94a3b8"
                   style={styles.bhxModalSearchInput}
                   returnKeyType="search"
@@ -1519,18 +1583,20 @@ export default function App() {
               </View>
             </View>
 
-            {/* Layout 2 Cột chuẩn ảnh: Cột Trái 105px (Sidebar Ngành), Cột Phải (Lưới Sub-Categories 3 Cột) */}
+            {/* Chọn loại sản phẩm ở trái, mua sản phẩm ở phải. */}
             <View style={styles.drawerBody}>
-              {/* CỘT TRÁI: SIDEBAR CÁC NGÀNH HÀNG */}
+              {/* Cột trái: các loại sản phẩm từ cửa hàng. */}
               <View style={[styles.drawerSidebarWrapper, isDesktop ? { width: 200, maxWidth: 200 } : { width: 105, maxWidth: 105, flexBasis: 105 }]}>
                 <ScrollView style={styles.drawerSidebar} showsVerticalScrollIndicator={false}>
-                  {BHX_CATEGORIES.map((cat) => {
-                    const isCur = selectedDrawerCatId === cat.id;
+                  {[{ id: "all", name: "Tất cả" }, ...categories].map((cat) => {
+                    const isCur = String(selectedDrawerCatId) === String(cat.id);
                     return (
                       <Pressable
                         key={cat.id}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isCur }}
                         onPress={() => {
-                          setSelectedDrawerCatId(cat.id);
+                          setSelectedDrawerCatId(String(cat.id));
                           setDrawerSearchText("");
                         }}
                         style={[styles.bhxSidebarItem, isCur && styles.bhxSidebarItemActive]}
@@ -1542,7 +1608,7 @@ export default function App() {
                           style={[styles.bhxSidebarName, isCur && styles.bhxSidebarNameActive]}
                           numberOfLines={2}
                         >
-                          {cat.shortName || cat.name}
+                          {cat.name}
                         </Text>
                         {isCur && <View style={styles.bhxSidebarActiveBar} />}
                       </Pressable>
@@ -1552,60 +1618,48 @@ export default function App() {
                 </ScrollView>
               </View>
 
-              {/* CỘT PHẢI: LƯỚI SUB-CATEGORIES 3 CỘT (CHUẨN ẢNH BÁCH HÓA XANH) */}
+              {/* Sản phẩm thuộc loại đang chọn. */}
               <View style={styles.drawerContentCol}>
-                {/* Header nhóm ngành & Nút xem tất cả */}
                 <View style={styles.bhxSubHeaderRow}>
                   <Text style={styles.bhxSubHeaderTitle} numberOfLines={1}>
-                    {activeBhxCategory?.name || "Nhóm hàng"}
+                    {activeDrawerCategory?.name || "Tất cả"} · {drawerProducts.length}
                   </Text>
-                  <Pressable
-                    onPress={() => {
-                      setCategoryId(String(activeBhxCategory?.dbCategoryId || "all"));
-                      setQuery("");
-                      setCategoryModalOpen(false);
-                      setTab("home");
-                    }}
-                    style={styles.bhxViewAllCategoryBtn}
-                  >
-                    <Text style={styles.bhxViewAllCategoryText}>Xem tất cả ›</Text>
-                  </Pressable>
                 </View>
 
-                {/* Lưới Grid 3 Cột nhóm hàng con */}
-                <ScrollView contentContainerStyle={styles.bhxSubGridContainer} showsVerticalScrollIndicator={false}>
-                  {filteredSubCategories.map((sub) => (
+                <ScrollView key={selectedDrawerCatId} contentContainerStyle={styles.drawerProductGrid} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                  {loading ? (
+                    <View style={styles.bhxEmptySubState}>
+                      <ActivityIndicator color={BHX_GREEN} />
+                      <Text style={styles.stateText}>Đang tải sản phẩm...</Text>
+                    </View>
+                  ) : loadError ? (
+                    <View style={styles.bhxEmptySubState}>
+                      <Text style={styles.errorText}>{loadError}</Text>
+                      <AppButton title="Thử lại" onPress={loadStore} />
+                    </View>
+                  ) : drawerProducts.map((product) => (
                     <Pressable
-                      key={sub.id}
-                      onPress={() => {
-                        setCategoryId(String(activeBhxCategory?.dbCategoryId || "all"));
-                        setQuery(sub.keyword || sub.name);
-                        setCategoryModalOpen(false);
-                        setTab("home");
-                      }}
-                      style={styles.bhxSubGridItem}
+                      key={product.id}
+                      onPress={() => setSelectedProduct(product)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Xem chi tiết ${product.productName}`}
+                      style={[styles.drawerProductTile, { width: isDesktop ? "25%" : "33.333%" }]}
                     >
-                      <View style={styles.bhxSubImageBox}>
-                        {getSubCategoryIcon(sub.iconType, 36)}
-                        {sub.tag && (
-                          <View style={styles.bhxSubTagBadge}>
-                            <Text style={styles.bhxSubTagText}>{sub.tag}</Text>
-                          </View>
-                        )}
+                      <View style={styles.drawerProductImageBox}>
+                        <ProductImage imagePath={product.imageUrl} productId={product.id} categoryName={product.categoryName} style={styles.productImage} />
                       </View>
-                      <Text style={styles.bhxSubName} numberOfLines={2}>
-                        {sub.name}
-                      </Text>
+                      <Text style={styles.drawerProductName} numberOfLines={2}>{product.productName}</Text>
+                      <Text style={styles.drawerProductPrice}>{productPriceLabel(product)}</Text>
+                      <ProductStock product={product} style={styles.drawerProductStock} />
                     </Pressable>
                   ))}
 
-                  {filteredSubCategories.length === 0 && (
+                  {!loading && !loadError && drawerProducts.length === 0 && (
                     <View style={styles.bhxEmptySubState}>
                       <IconCart size={40} color="#cbd5e1" />
-                      <Text style={styles.stateText}>Không tìm thấy nhóm hàng phù hợp.</Text>
+                      <Text style={styles.stateText}>{drawerSearchText.trim() ? "Không tìm thấy sản phẩm phù hợp." : "Loại này chưa có sản phẩm."}</Text>
                     </View>
                   )}
-                  <View style={{ height: 90 }} />
                 </ScrollView>
               </View>
             </View>
@@ -1639,6 +1693,11 @@ export default function App() {
             )}
           </View>
         </SafeAreaView>
+        )}
+      </Modal>
+
+      <Modal visible={!!selectedProduct && !categoryModalOpen} animationType="slide" onRequestClose={() => setSelectedProduct(null)}>
+        {!categoryModalOpen && renderProductDetails()}
       </Modal>
 
       {/* MODAL CHECKOUT & THANH TOÁN */}
@@ -1882,23 +1941,159 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#f6f8f4" },
-  header: { backgroundColor: "#fff", paddingHorizontal: 18, paddingTop: 7, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: "#edf0ec" },
+  drawerSafeArea: { flex: 1, backgroundColor: BHX_GREEN },
+  drawerMobileContainer: { flex: 1, backgroundColor: "#fff" },
+  drawerDesktopBackdrop: { flex: 1, backgroundColor: "#14221988", alignItems: "center", justifyContent: "center", padding: 24 },
+  drawerDesktopDialog: { width: "100%", maxWidth: 1000, height: "90%", borderRadius: 16, backgroundColor: "#fff", overflow: "hidden" },
+  bhxModalHeader: { backgroundColor: BHX_GREEN, padding: 12, gap: 10 },
+  bhxHeaderActionGroup: { flexDirection: "row", alignItems: "center", gap: 20 },
+  bhxHeaderCircleBtn: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 36 },
+  bhxHeaderBtnLabel: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  bhxModalSearchBox: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 42, backgroundColor: "#fff", borderRadius: 8, paddingHorizontal: 10 },
+  bhxModalSearchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 12, paddingVertical: 8 },
+  drawerBody: { flex: 1, minHeight: 0, flexDirection: "row" },
+  drawerSidebarWrapper: { backgroundColor: "#f1f5f9", flexShrink: 0 },
+  drawerSidebar: { flex: 1 },
+  bhxSidebarItem: { alignItems: "center", justifyContent: "center", minHeight: 88, paddingHorizontal: 6, paddingVertical: 10, gap: 5, borderBottomWidth: 1, borderBottomColor: BORDER_COLOR },
+  bhxSidebarItemActive: { backgroundColor: "#fff" },
+  bhxSidebarIconBox: { width: 38, height: 36, alignItems: "center", justifyContent: "center" },
+  bhxSidebarIconBoxActive: { backgroundColor: "#eef8f1", borderRadius: 8 },
+  bhxSidebarName: { color: TEXT_MUTED, fontSize: 10, lineHeight: 14, textAlign: "center" },
+  bhxSidebarNameActive: { color: BHX_GREEN, fontWeight: "800" },
+  bhxSidebarActiveBar: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, backgroundColor: BHX_GREEN },
+  drawerContentCol: { flex: 1, minWidth: 0 },
+  drawerColumnTitle: { color: TEXT_DARK, fontSize: 12, fontWeight: "800", paddingHorizontal: 6, paddingVertical: 12, textAlign: "center", borderBottomWidth: 1, borderBottomColor: BORDER_COLOR },
+  drawerProductsTitle: { color: TEXT_DARK, fontSize: 14, fontWeight: "900" },
+  drawerProductGrid: { flexDirection: "row", flexWrap: "wrap", padding: 6, paddingBottom: 20, rowGap: 10 },
+  drawerProductTile: { paddingHorizontal: 3, paddingVertical: 6, alignItems: "center" },
+  drawerProductImageBox: { width: "100%", aspectRatio: 1, maxHeight: 110, alignItems: "center", justifyContent: "center", backgroundColor: "#f7faf8", borderRadius: 8, overflow: "hidden" },
+  drawerProductName: { color: TEXT_DARK, fontSize: 10, lineHeight: 14, minHeight: 28, textAlign: "center", marginTop: 5 },
+  drawerProductPrice: { color: BHX_GREEN, fontSize: 10, fontWeight: "800", textAlign: "center", marginTop: 4 },
+  drawerProductStock: { color: TEXT_MUTED, fontSize: 9, textAlign: "center", marginTop: 4 },
+  bhxSubHeaderRow: { padding: 10, gap: 7, borderBottomWidth: 1, borderBottomColor: BORDER_COLOR },
+  bhxSubHeaderTitle: { color: TEXT_DARK, fontSize: 13, fontWeight: "800" },
+  bhxViewAllCategoryBtn: { alignSelf: "flex-start", paddingVertical: 5 },
+  bhxViewAllCategoryText: { color: BHX_GREEN, fontSize: 11, fontWeight: "700" },
+  bhxSubGridContainer: { flexDirection: "row", flexWrap: "wrap", padding: 6, paddingBottom: 20, rowGap: 10 },
+  bhxSubGridItem: { width: "33.333%", paddingHorizontal: 3, paddingVertical: 6, alignItems: "center" },
+  bhxSubImageBox: { width: "100%", height: 62, alignItems: "center", justifyContent: "center", backgroundColor: "#f7faf8", borderRadius: 8 },
+  bhxSubTagBadge: { position: "absolute", top: 0, right: 0, borderRadius: 3, backgroundColor: BHX_RED, paddingHorizontal: 3, paddingVertical: 2 },
+  bhxSubTagText: { color: "#fff", fontSize: 7, fontWeight: "800" },
+  bhxSubName: { color: TEXT_DARK, fontSize: 10, lineHeight: 14, textAlign: "center", marginTop: 5 },
+  bhxEmptySubState: { width: "100%", alignItems: "center", paddingVertical: 35, paddingHorizontal: 10 },
+  drawerFloatingCart: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: BHX_GREEN, paddingHorizontal: 12, paddingVertical: 10, flexShrink: 0 },
+  checkoutSheetDesktop: { width: "100%", maxWidth: 560, alignSelf: "center", borderRadius: 22 },
+  voucherSheetDesktop: { width: "100%", maxWidth: 560, alignSelf: "center", borderRadius: 22 },
+  successBadgeCircle: { width: 56, height: 56, borderRadius: 28, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", alignSelf: "center", marginVertical: 16 },
+  paymentBoxMomo: { backgroundColor: "#fff1f8", borderRadius: 12, padding: 14, gap: 8, marginTop: 12 },
+  paymentBoxMomoTitle: { color: "#a50064", fontSize: 14, fontWeight: "800" },
+  paymentBoxMomoDesc: { color: TEXT_MUTED, fontSize: 12, lineHeight: 18 },
+  momoActionBtn: { backgroundColor: "#a50064", borderRadius: 8, padding: 12, alignItems: "center" },
+  momoActionText: { color: "#fff", fontSize: 12, fontWeight: "800", textAlign: "center" },
+  paymentWaitText: { color: TEXT_MUTED, fontSize: 12 },
+  paymentBoxBank: { backgroundColor: "#eff6ff", borderRadius: 12, padding: 14, gap: 8, marginTop: 12 },
+  paymentBoxBankTitle: { color: "#1d4ed8", fontSize: 14, fontWeight: "800" },
+  paymentBoxBankDesc: { color: TEXT_MUTED, fontSize: 12, lineHeight: 18 },
+  vietQrImage: { width: "100%", height: 230, alignSelf: "center" },
+  bankDetailCard: { backgroundColor: "#fff", padding: 12, borderRadius: 8, gap: 6 },
+  bankDetailLine: { color: TEXT_MUTED, fontSize: 12, lineHeight: 18 },
+  bankBold: { color: TEXT_DARK, fontWeight: "800" },
+  bankMoney: { color: BHX_GREEN, fontWeight: "800" },
+  bankContent: { color: "#1d4ed8", fontWeight: "800" },
+  paymentMethodOption: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderWidth: 1, borderColor: BORDER_COLOR, borderRadius: 10 },
+  paymentMethodOptionActive: { borderColor: BHX_GREEN, backgroundColor: "#eef8f1" },
+  paymentMethodLabel: { color: TEXT_DARK, fontSize: 12, fontWeight: "700" },
+  paymentMethodLabelActive: { color: BHX_GREEN },
+  paymentMethodDesc: { color: TEXT_MUTED, fontSize: 10, lineHeight: 15, marginTop: 4 },
+  radioCircle: { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: BORDER_COLOR, alignItems: "center", justifyContent: "center" },
+  radioCircleActive: { borderColor: BHX_GREEN },
+  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: BHX_GREEN },
+  rewardPointsCard: { flexDirection: "row", alignItems: "center", padding: 12, borderWidth: 1, borderColor: BORDER_COLOR, borderRadius: 10, marginVertical: 10 },
+  rewardPointsCardActive: { borderColor: BHX_GREEN, backgroundColor: "#eef8f1" },
+  rewardPointsTitle: { color: TEXT_DARK, fontSize: 12, fontWeight: "700" },
+  rewardPointsDesc: { color: TEXT_MUTED, fontSize: 10, lineHeight: 15, marginTop: 4 },
+  checkSquare: { width: 20, height: 20, borderRadius: 4, borderWidth: 1, borderColor: BORDER_COLOR, alignItems: "center", justifyContent: "center" },
+  checkSquareActive: { backgroundColor: BHX_GREEN, borderColor: BHX_GREEN },
+  voucherUseBtn: { backgroundColor: BHX_GREEN, borderRadius: 7, paddingHorizontal: 12, paddingVertical: 9 },
+  voucherUseText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  header: { backgroundColor: BHX_GREEN, paddingHorizontal: 14, paddingTop: 7, paddingBottom: 10, flexShrink: 0 },
+  headerResponsiveInner: { width: "100%", maxWidth: 1200, alignSelf: "center" },
+  locationBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingBottom: 8 },
+  locationLeft: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 4 },
+  locationLabel: { color: "#fff", fontSize: 11 },
+  locationAddress: { flex: 1, color: "#fff", fontSize: 11, fontWeight: "700" },
+  locationRight: { flexDirection: "row", alignItems: "center", gap: 3 },
+  speedText: { color: BHX_YELLOW, fontSize: 10, fontWeight: "800" },
+  headerTopLine: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1 },
+  brandTextE: { color: "#fff", fontSize: 20, fontWeight: "900", letterSpacing: -1 },
+  brandTagBox: { backgroundColor: BHX_YELLOW, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 3 },
+  brandTextXanh: { color: BHX_DARK_GREEN, fontSize: 11, fontWeight: "900" },
+  headerRightGroup: { flexDirection: "row", alignItems: "center", gap: 8 },
+  categoryMenuBtn: { flexDirection: "row", alignItems: "center", gap: 5, minHeight: 40, paddingHorizontal: 8, borderWidth: 1, borderColor: "#ffffff55", borderRadius: 8 },
+  categoryMenuBtnText: { color: "#fff", fontSize: 11, fontWeight: "700" },
+  clearSearchBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  searchSubmitBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center" },
+  quickTagsScroll: { flexGrow: 0, flexShrink: 0, height: 34 },
+  quickTagsRow: { flexDirection: "row", alignItems: "center", gap: 7, paddingTop: 8 },
+  quickTagChip: { borderRadius: 12, backgroundColor: "#ffffff1f", paddingHorizontal: 10, paddingVertical: 5 },
+  quickTagChipActive: { backgroundColor: BHX_YELLOW },
+  quickTagText: { color: "#fff", fontSize: 10 },
+  quickTagTextActive: { color: BHX_DARK_GREEN, fontWeight: "800" },
   headerTop: { flexDirection: "row", alignItems: "center" },
-  brandIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: GREEN, alignItems: "center", justifyContent: "center", marginRight: 9 },
+  brandIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", marginRight: 9 },
   brandLetter: { color: "#fff", fontSize: 25, fontWeight: "900", fontStyle: "italic" },
-  brandName: { color: GREEN, fontWeight: "900", fontSize: 20, letterSpacing: -0.7 },
+  brandName: { color: BHX_GREEN, fontWeight: "900", fontSize: 20, letterSpacing: -0.7 },
   brandTagline: { color: "#8b978e", fontSize: 8, letterSpacing: 1.2, fontWeight: "800", marginTop: -1 },
-  headerCart: { marginLeft: "auto", backgroundColor: "#f0f6ef", borderRadius: 12, width: 42, height: 42, alignItems: "center", justifyContent: "center" },
+  headerCart: { backgroundColor: BHX_DARK_GREEN, borderRadius: 10, width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   headerCartIcon: { fontSize: 20 },
   cartBadge: { position: "absolute", right: -4, top: -4, minWidth: 18, height: 18, borderRadius: 10, backgroundColor: "#dc5a42", alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
   cartBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
   searchBar: { height: 44, backgroundColor: "#f4f6f2", borderRadius: 11, marginTop: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center" },
   searchIcon: { color: "#7f8a81", fontSize: 24, marginRight: 7 },
-  searchInput: { flex: 1, color: DARK, fontSize: 13, paddingVertical: 0 },
+  searchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 13, paddingVertical: 0 },
+  searchCategoryBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", marginRight: 8 },
   promises: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: 9, gap: 9 },
   promiseText: { color: "#708077", fontSize: 10, fontWeight: "600" },
   promiseDot: { color: "#b6c0b8" },
-  screen: { flex: 1 },
+  screen: { flex: 1, minHeight: 0 },
+  responsiveContainer: { width: "100%", maxWidth: 1200, alignSelf: "center" },
+  heroBanner: { borderRadius: 14, padding: 18, minHeight: 170, justifyContent: "center", overflow: "hidden" },
+  bannerInfo: { gap: 8 },
+  bannerBadgePill: { flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "flex-start", backgroundColor: "#ffffff22", borderRadius: 20, paddingHorizontal: 9, paddingVertical: 5 },
+  bannerBadgeText: { color: BHX_YELLOW, fontSize: 10, fontWeight: "800" },
+  bannerTitle: { color: "#fff", fontSize: 20, fontWeight: "900" },
+  bannerSubtitle: { color: "#fff", fontSize: 12, lineHeight: 18 },
+  bannerCtaBtn: { backgroundColor: BHX_YELLOW, alignSelf: "flex-start", borderRadius: 7, paddingHorizontal: 12, paddingVertical: 9 },
+  bannerCtaText: { color: BHX_DARK_GREEN, fontSize: 11, fontWeight: "800" },
+  bannerDots: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 12 },
+  bannerDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#ffffff66" },
+  bannerDotActive: { width: 20, backgroundColor: BHX_YELLOW },
+  trustBar: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 10, paddingVertical: 12, marginTop: 10 },
+  trustItem: { flex: 1, minWidth: 0, alignItems: "center", gap: 5, paddingHorizontal: 3 },
+  trustLabel: { color: TEXT_MUTED, fontSize: 9, textAlign: "center" },
+  trustDivider: { width: 1, height: 26, backgroundColor: BORDER_COLOR },
+  categorySectionHeader: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 20, marginBottom: 12 },
+  categorySectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
+  greenBar: { width: 4, height: 18, borderRadius: 2, backgroundColor: BHX_GREEN },
+  categorySectionTitle: { color: TEXT_DARK, fontSize: 12, fontWeight: "900" },
+  openCategoryDrawerBtn: { flexDirection: "row", alignItems: "center", gap: 3, paddingVertical: 5 },
+  openCategoryDrawerText: { color: BHX_GREEN, fontSize: 10, fontWeight: "700" },
+  categoryGridContainer: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 8 },
+  categoryGridItem: { alignItems: "center", paddingHorizontal: 3, paddingVertical: 9, backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#edf0ec" },
+  categoryGridItemActive: { borderColor: BHX_GREEN, backgroundColor: "#eef8f1" },
+  categoryIconWrap: { height: 40, alignItems: "center", justifyContent: "center" },
+  categoryGridText: { color: TEXT_DARK, fontSize: 10, lineHeight: 14, minHeight: 28, textAlign: "center" },
+  categoryGridTextActive: { color: BHX_GREEN, fontWeight: "800" },
+  filterToolbar: { gap: 10, marginTop: 18, marginBottom: 12 },
+  filterLeft: { flexDirection: "row", alignItems: "center" },
+  filterResultCount: { color: TEXT_MUTED, fontSize: 12 },
+  filterNumber: { color: BHX_GREEN, fontWeight: "800" },
+  sortPillsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  sortPill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 16, backgroundColor: "#fff", borderWidth: 1, borderColor: BORDER_COLOR },
+  sortPillActive: { backgroundColor: BHX_GREEN, borderColor: BHX_GREEN },
+  sortPillText: { color: TEXT_MUTED, fontSize: 10 },
+  sortPillTextActive: { color: "#fff", fontWeight: "700" },
   scrollContent: { padding: 16, paddingBottom: 20 },
   hero: { minHeight: 176, borderRadius: 18, backgroundColor: "#e8f2e5", padding: 19, overflow: "hidden", justifyContent: "center" },
   heroKicker: { color: "#57936e", fontSize: 9, fontWeight: "900", letterSpacing: 1.1, marginBottom: 8 },
@@ -1909,16 +2104,32 @@ const styles = StyleSheet.create({
   heroBag: { fontSize: 55 },
   sectionHeading: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 23, marginBottom: 11 },
   eyebrow: { color: "#57936e", fontSize: 9, fontWeight: "900", letterSpacing: 1.1 },
-  sectionTitle: { color: DARK, fontSize: 17, fontWeight: "900", marginTop: 3 },
+  sectionTitle: { color: TEXT_DARK, fontSize: 17, fontWeight: "900", marginTop: 3 },
   categoryRow: { gap: 8, paddingRight: 8 },
   categoryChip: { width: 83, height: 78, borderRadius: 12, backgroundColor: "#fff", borderColor: "#e9eee8", borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
   categoryChipActive: { backgroundColor: "#eef7ef", borderColor: "#78aa88" },
   categoryEmoji: { fontSize: 23, marginBottom: 4 },
   categoryName: { color: "#59665e", fontSize: 9, fontWeight: "700", textAlign: "center" },
   refreshButton: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#eaf3e9" },
-  refreshText: { color: GREEN, fontSize: 10, fontWeight: "800" },
+  refreshText: { color: BHX_GREEN, fontSize: 10, fontWeight: "800" },
   productGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10 },
   productCard: { width: "48.5%", backgroundColor: "#fff", borderColor: "#edf0ec", borderWidth: 1, borderRadius: 13, padding: 9 },
+  productCardActive: { borderColor: BHX_GREEN },
+  badgeRow: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  discountBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
+  hotBadge: { backgroundColor: BHX_YELLOW, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 3 },
+  hotBadgeText: { color: BHX_RED, fontSize: 9, fontWeight: "900" },
+  productBody: { flex: 1 },
+  fastDeliveryTag: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 5 },
+  fastDeliveryText: { color: BHX_ORANGE, fontSize: 9 },
+  priceContainer: { marginTop: 8 },
+  stepperContainer: { marginTop: "auto", paddingTop: 10 },
+  addCartBtn: { minHeight: 36, backgroundColor: BHX_GREEN, borderRadius: 7, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
+  addCartBtnText: { color: "#fff", fontSize: 10, fontWeight: "800" },
+  stepperBox: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: BHX_GREEN, borderRadius: 7, overflow: "hidden" },
+  stepperBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center", backgroundColor: "#eef8f1" },
+  stepperBtnPlus: { backgroundColor: BHX_GREEN },
+  stepperQtyText: { color: TEXT_DARK, fontSize: 13, fontWeight: "800", textAlign: "center" },
   productImageBox: { height: 123, borderRadius: 10, backgroundColor: "#f7f8f5", alignItems: "center", justifyContent: "center", overflow: "hidden", marginBottom: 9 },
   productImage: { width: "90%", height: "90%" },
   productEmoji: { fontSize: 40 },
@@ -1930,24 +2141,24 @@ const styles = StyleSheet.create({
   originalPrice: { color: "#8b95a1", fontSize: 10, marginTop: 2, textDecorationLine: "line-through" },
   productSaving: { color: "#df4c42", fontSize: 9, fontWeight: "800", marginTop: 2 },
   addButton: { width: 29, height: 29, borderRadius: 9, backgroundColor: "#eaf3ea", alignItems: "center", justifyContent: "center", marginLeft: 4 },
-  addButtonText: { color: GREEN, fontSize: 22, lineHeight: 25, fontWeight: "600" },
+  addButtonText: { color: BHX_GREEN, fontSize: 22, lineHeight: 25, fontWeight: "600" },
   centerState: { minHeight: 170, alignItems: "center", justifyContent: "center" },
-  stateText: { color: MUTED, fontSize: 12, lineHeight: 18, textAlign: "center", marginTop: 7 },
+  stateText: { color: TEXT_MUTED, fontSize: 12, lineHeight: 18, textAlign: "center", marginTop: 7 },
   emptyState: { alignItems: "center", justifyContent: "center", paddingVertical: 55, paddingHorizontal: 18 },
   emptyEmoji: { fontSize: 51, marginBottom: 9 },
-  emptyTitle: { color: DARK, fontSize: 16, fontWeight: "900", textAlign: "center" },
+  emptyTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "900", textAlign: "center" },
   emptyCta: { marginTop: 18, alignSelf: "stretch" },
   errorCard: { backgroundColor: "#fff", borderRadius: 13, padding: 17, borderWidth: 1, borderColor: "#f0dfda" },
   errorTitle: { color: "#a3443c", fontSize: 14, fontWeight: "900" },
   errorText: { color: "#785f5b", fontSize: 11, lineHeight: 17, marginTop: 6 },
   apiHint: { color: "#89948b", fontSize: 9, marginTop: 8 },
-  button: { minHeight: 45, borderRadius: 10, backgroundColor: GREEN, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, marginTop: 13 },
+  button: { minHeight: 45, borderRadius: 10, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, marginTop: 13 },
   buttonText: { color: "#fff", fontSize: 12, fontWeight: "900" },
   buttonSecondary: { backgroundColor: "#edf5ed" },
-  buttonSecondaryText: { color: GREEN },
+  buttonSecondaryText: { color: BHX_GREEN },
   buttonDisabled: { opacity: 0.65 },
   ordersScreen: { flex: 1, backgroundColor: "#f4f4f4" },
-  ordersTitle: { color: DARK, fontSize: 16, fontWeight: "900", textAlign: "center", paddingVertical: 13, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
+  ordersTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "900", textAlign: "center", paddingVertical: 13, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
   orderFilterScroll: { height: 48, flexGrow: 0, flexShrink: 0 },
   orderFilterRow: { paddingHorizontal: 14, alignItems: "center", gap: 8 },
   orderFilterChip: { paddingHorizontal: 14, paddingVertical: 4, borderRadius: 24, backgroundColor: "#e4eaf7" },
@@ -1957,7 +2168,7 @@ const styles = StyleSheet.create({
   orderListContent: { padding: 14, paddingTop: 4, paddingBottom: 20 },
   orderListCard: { backgroundColor: "#fff", borderRadius: 14, padding: 12, marginBottom: 12 },
   orderListHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 },
-  orderListNumber: { flex: 1, color: DARK, fontSize: 12, fontWeight: "900" },
+  orderListNumber: { flex: 1, color: TEXT_DARK, fontSize: 12, fontWeight: "900" },
   orderViewLink: { color: "#344054", fontSize: 10, fontWeight: "700" },
   orderPickup: { flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 9, backgroundColor: "#f0f3fa", padding: 10 },
   orderPickupIcon: { color: "#78857c", fontSize: 15 },
@@ -1968,22 +2179,22 @@ const styles = StyleSheet.create({
   orderMoreOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "#17202b99", alignItems: "center", justifyContent: "center" },
   orderMoreText: { color: "#fff", fontSize: 17, fontWeight: "900" },
   orderListTotals: { borderTopWidth: 1, borderTopColor: "#edf0ec", paddingTop: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 6 },
-  orderListStatus: { color: GREEN, fontSize: 11, fontWeight: "800", flexShrink: 1 },
-  orderListTotal: { color: DARK, fontSize: 11, fontWeight: "700" },
+  orderListStatus: { color: BHX_GREEN, fontSize: 11, fontWeight: "800", flexShrink: 1 },
+  orderListTotal: { color: TEXT_DARK, fontSize: 11, fontWeight: "700" },
   orderListActions: { flexDirection: "row", marginHorizontal: -12, marginTop: 12, borderTopWidth: 1, borderTopColor: "#edf0ec" },
   orderListAction: { flex: 1, alignItems: "center", paddingVertical: 12 },
-  orderListActionText: { color: DARK, fontSize: 10, fontWeight: "800" },
+  orderListActionText: { color: TEXT_DARK, fontSize: 10, fontWeight: "800" },
   orderDetailHeading: { minHeight: 52, backgroundColor: "#fff", flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 15, borderBottomWidth: 1, borderBottomColor: "#edf0ec" },
   orderBack: { position: "absolute", left: 13, height: 44, justifyContent: "center", paddingHorizontal: 5 },
-  orderBackText: { color: DARK, fontSize: 34, lineHeight: 38 },
-  orderDetailTitle: { color: DARK, fontSize: 15, fontWeight: "900", maxWidth: "82%" },
+  orderBackText: { color: TEXT_DARK, fontSize: 34, lineHeight: 38 },
+  orderDetailTitle: { color: TEXT_DARK, fontSize: 15, fontWeight: "900", maxWidth: "82%" },
   orderDetailContent: { padding: 14, paddingBottom: 20 },
   orderInfoCard: { backgroundColor: "#fff", borderRadius: 13, padding: 15, marginBottom: 12 },
   orderInfoTop: { flexDirection: "row", justifyContent: "space-between", gap: 8, marginBottom: 10 },
   orderInfoLabel: { color: "#59636f", fontSize: 13, fontWeight: "900" },
   orderInfoDate: { color: "#67717d", fontSize: 10, textAlign: "right" },
-  orderAddress: { color: DARK, fontSize: 14, lineHeight: 20 },
-  orderStatusText: { color: GREEN, fontSize: 11, fontWeight: "800", marginTop: 10 },
+  orderAddress: { color: TEXT_DARK, fontSize: 14, lineHeight: 20 },
+  orderStatusText: { color: BHX_GREEN, fontSize: 11, fontWeight: "800", marginTop: 10 },
   orderItemsCard: { backgroundColor: "#fff", borderRadius: 13, paddingHorizontal: 12, paddingTop: 5, paddingBottom: 12, marginBottom: 12 },
   orderItemRow: { flexDirection: "row", alignItems: "center", minHeight: 92, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#edf0ec", gap: 10 },
   orderItemImageBox: { width: 65, height: 72, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", borderRadius: 7, overflow: "hidden" },
@@ -1992,44 +2203,51 @@ const styles = StyleSheet.create({
   orderItemName: { color: "#344054", fontSize: 12, lineHeight: 18 },
   orderItemQuantity: { color: "#8b95a1", fontSize: 11, marginTop: 5 },
   orderItemAmount: { alignItems: "flex-end", maxWidth: 100 },
-  orderItemPrice: { color: DARK, fontSize: 13, fontWeight: "900" },
+  orderItemPrice: { color: TEXT_DARK, fontSize: 13, fontWeight: "900" },
   orderItemUnitPrice: { color: "#9aa2ad", fontSize: 10, marginTop: 5, textDecorationLine: "line-through" },
   orderTotals: { paddingTop: 10 },
   orderDetailActions: { flexDirection: "row", backgroundColor: "#fff", paddingHorizontal: 14, paddingVertical: 10, gap: 10, borderTopWidth: 1, borderTopColor: "#e8ebe8" },
   orderActionSecondary: { flex: 1, minHeight: 45, borderRadius: 10, borderWidth: 1, borderColor: "#cfd7d0", alignItems: "center", justifyContent: "center" },
   orderActionSecondaryText: { color: "#56615a", fontSize: 13, fontWeight: "700" },
-  orderActionPrimary: { flex: 1.3, minHeight: 45, borderRadius: 10, backgroundColor: GREEN, alignItems: "center", justifyContent: "center" },
+  orderActionPrimary: { flex: 1.3, minHeight: 45, borderRadius: 10, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center" },
   orderActionPrimaryText: { color: "#fff", fontSize: 13, fontWeight: "800" },
   pageContent: { padding: 18, paddingBottom: 25 },
-  pageTitle: { color: DARK, fontSize: 16, fontWeight: "900", marginTop: 4, marginBottom: 17 },
+  pageTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "900", marginTop: 4, marginBottom: 17 },
   cartRow: { flexDirection: "row", gap: 12, backgroundColor: "#fff", borderRadius: 12, padding: 10, marginBottom: 9, borderWidth: 1, borderColor: "#edf0ec" },
   cartThumb: { width: 67, height: 67, backgroundColor: "#f5f7f3", borderRadius: 9, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   cartImage: { width: "90%", height: "90%" },
   cartInfo: { flex: 1, justifyContent: "center" },
+  cartDesktopLayout: { flexDirection: "row", alignItems: "flex-start", gap: 20 },
+  cartItemListCol: { flex: 1, minWidth: 0 },
+  cartSummaryCol: { width: 340, marginTop: 0 },
+  cartStepperRow: { flexDirection: "row", alignItems: "center", alignSelf: "flex-start", marginTop: 9, borderWidth: 1, borderColor: BORDER_COLOR, borderRadius: 7, overflow: "hidden" },
+  cartStepperBtn: { width: 36, height: 34, alignItems: "center", justifyContent: "center", backgroundColor: "#f1f5f9" },
+  cartStepperBtnPlus: { backgroundColor: BHX_GREEN },
+  cartStepperQty: { minWidth: 38, paddingHorizontal: 6, textAlign: "center", color: TEXT_DARK, fontSize: 13, fontWeight: "700" },
   cartName: { color: "#435349", fontSize: 11, fontWeight: "800" },
-  cartPrice: { color: GREEN, fontWeight: "900", fontSize: 12, marginTop: 4 },
+  cartPrice: { color: BHX_GREEN, fontWeight: "900", fontSize: 12, marginTop: 4 },
   cartSaving: { color: "#df4c42", fontSize: 10, fontWeight: "800", marginTop: 3 },
   quantityControl: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 7 },
   quantityButton: { width: 25, height: 25, borderWidth: 1, borderColor: "#e2e9e1", borderRadius: 7, alignItems: "center", justifyContent: "center" },
   quantityText: { color: "#526157", fontSize: 16 },
-  quantityValue: { color: DARK, fontSize: 11, fontWeight: "800" },
+  quantityValue: { color: TEXT_DARK, fontSize: 11, fontWeight: "800" },
   summaryCard: { backgroundColor: "#fff", borderRadius: 13, padding: 15, marginTop: 10, borderWidth: 1, borderColor: "#edf0ec" },
   summaryLine: { flexDirection: "row", justifyContent: "space-between", marginVertical: 5 },
-  summaryLabel: { color: MUTED, fontSize: 11 },
+  summaryLabel: { color: TEXT_MUTED, fontSize: 11 },
   summaryValue: { color: "#34463b", fontSize: 11, fontWeight: "800" },
   summaryDiscount: { color: "#df4c42", fontSize: 11, fontWeight: "800" },
   freeShipping: { color: "#258256", fontSize: 11, fontWeight: "800" },
   summaryTotal: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: "#edf0ec", marginTop: 10, paddingTop: 13 },
-  summaryTotalLabel: { color: DARK, fontSize: 12, fontWeight: "800" },
+  summaryTotalLabel: { color: TEXT_DARK, fontSize: 12, fontWeight: "800" },
   summaryTotalValue: { color: "#176843", fontSize: 17, fontWeight: "900" },
   orderCard: { backgroundColor: "#fff", borderRadius: 14, padding: 16, borderColor: "#e7eee6", borderWidth: 1 },
-  orderCheck: { width: 34, height: 34, lineHeight: 34, borderRadius: 17, overflow: "hidden", textAlign: "center", color: GREEN, backgroundColor: "#e8f5eb", fontWeight: "900", fontSize: 19, marginBottom: 10 },
-  orderTitle: { color: DARK, fontSize: 14, fontWeight: "900" },
-  orderCode: { color: GREEN, fontSize: 13, fontWeight: "900", marginVertical: 12 },
+  orderCheck: { width: 34, height: 34, lineHeight: 34, borderRadius: 17, overflow: "hidden", textAlign: "center", color: BHX_GREEN, backgroundColor: "#e8f5eb", fontWeight: "900", fontSize: 19, marginBottom: 10 },
+  orderTitle: { color: TEXT_DARK, fontSize: 14, fontWeight: "900" },
+  orderCode: { color: BHX_GREEN, fontSize: 13, fontWeight: "900", marginVertical: 12 },
   profileCard: { backgroundColor: "#e8f2e5", borderRadius: 15, alignItems: "center", padding: 20 },
   profileEmoji: { fontSize: 39, marginBottom: 8 },
   infoCard: { backgroundColor: "#fff", borderRadius: 13, padding: 16, marginTop: 13 },
-  infoTitle: { color: DARK, fontSize: 13, fontWeight: "900" },
+  infoTitle: { color: TEXT_DARK, fontSize: 13, fontWeight: "900" },
   voucherRow: { minHeight: 43, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: "#edf0ec", marginTop: 8, paddingTop: 7 },
   voucherLabel: { color: "#344054", fontSize: 13, fontWeight: "700" },
   voucherAction: { color: "#83909c", fontSize: 12 },
@@ -2037,12 +2255,12 @@ const styles = StyleSheet.create({
   voucherBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "#14221966" },
   voucherSheet: { height: "78%", backgroundColor: "#f8faff", borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 16, paddingBottom: 14 },
   voucherHeading: { height: 62, marginHorizontal: -16, paddingHorizontal: 20, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e7eaf0", borderTopLeftRadius: 22, borderTopRightRadius: 22, flexDirection: "row", alignItems: "center", justifyContent: "center" },
-  voucherTitle: { color: DARK, fontSize: 18, fontWeight: "900" },
+  voucherTitle: { color: TEXT_DARK, fontSize: 18, fontWeight: "900" },
   voucherCloseButton: { position: "absolute", right: 18, top: 15 },
   voucherClose: { color: "#fff", backgroundColor: "#9da8ba", overflow: "hidden", borderRadius: 20, width: 30, height: 30, textAlign: "center", lineHeight: 28, fontSize: 25 },
   voucherCodeRow: { flexDirection: "row", gap: 9, marginTop: 14, marginBottom: 14 },
-  voucherInput: { flex: 1, minHeight: 48, backgroundColor: "#fff", borderColor: "#dce3e9", borderWidth: 1, borderRadius: 10, paddingHorizontal: 13, color: DARK, fontSize: 14 },
-  voucherAdd: { width: 86, borderRadius: 10, backgroundColor: GREEN, alignItems: "center", justifyContent: "center" },
+  voucherInput: { flex: 1, minHeight: 48, backgroundColor: "#fff", borderColor: "#dce3e9", borderWidth: 1, borderRadius: 10, paddingHorizontal: 13, color: TEXT_DARK, fontSize: 14 },
+  voucherAdd: { width: 86, borderRadius: 10, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center" },
   voucherAddText: { color: "#fff", fontSize: 14, fontWeight: "900" },
   voucherSubheading: { color: "#59636f", fontSize: 13, fontWeight: "800", marginBottom: 8 },
   voucherList: { flex: 1 },
@@ -2058,29 +2276,44 @@ const styles = StyleSheet.create({
   voucherMessage: { color: "#b0443c", fontSize: 12, marginVertical: 8 },
   accountPageHeading: { minHeight: 54, backgroundColor: "#fff", flexDirection: "row", alignItems: "center", justifyContent: "center", borderRadius: 12, marginBottom: 10, position: "relative" },
   accountBackButton: { position: "absolute", left: 7, top: 5, zIndex: 1, width: 42, height: 44, justifyContent: "center" },
-  accountBack: { color: DARK, fontSize: 34, lineHeight: 40 },
-  accountPageTitle: { color: DARK, fontSize: 17, fontWeight: "900" },
+  accountBack: { color: TEXT_DARK, fontSize: 34, lineHeight: 40 },
+  accountPageTitle: { color: TEXT_DARK, fontSize: 17, fontWeight: "900" },
   profileMenuRow: { minHeight: 55, flexDirection: "row", alignItems: "center", borderTopWidth: 1, borderTopColor: "#edf0ec", marginTop: 12, paddingTop: 7 },
   profileMenuIcon: { width: 35, color: "#78857c", fontSize: 21 },
   profileMenuText: { flex: 1, color: "#29352f", fontSize: 14 },
   profileMenuArrow: { color: "#111", fontSize: 29, fontWeight: "700" },
   genderText: { color: "#293443", fontSize: 16 },
-  accountInput: { minHeight: 53, borderWidth: 1, borderColor: "#dce3e9", borderRadius: 10, paddingHorizontal: 14, color: DARK, fontSize: 16, marginBottom: 12, justifyContent: "center" },
+  accountInput: { minHeight: 53, borderWidth: 1, borderColor: "#dce3e9", borderRadius: 10, paddingHorizontal: 14, color: TEXT_DARK, fontSize: 16, marginBottom: 12, justifyContent: "center" },
   phoneReadonly: { backgroundColor: "#e5eaf6", borderColor: "#e5eaf6", paddingTop: 8, fontSize: 16 },
   phoneHint: { color: "#98a0ac", fontSize: 12 },
   deleteHint: { color: "#293443", fontSize: 14, lineHeight: 21, textAlign: "center", marginTop: 22 },
   deleteLink: { color: "#c44343", textDecorationLine: "underline", fontSize: 16, textAlign: "center", marginTop: 12, marginBottom: 5 },
   locationButton: { minHeight: 48, borderWidth: 1, borderColor: "#e1e5e1", borderRadius: 10, alignItems: "center", justifyContent: "center", marginBottom: 15 },
-  locationButtonText: { color: GREEN, fontSize: 16, fontWeight: "800" },
+  locationButtonText: { color: BHX_GREEN, fontSize: 16, fontWeight: "800" },
   receiverLine: { color: "#293443", fontSize: 15, marginTop: 5, marginBottom: 10 },
   receiverPhone: { fontWeight: "900" },
   receiverCheck: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 9 },
   checkBox: { color: "#75808c", fontSize: 21 },
-  bottomNav: { height: 62, backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#e9ede8", flexDirection: "row", justifyContent: "space-around", alignItems: "center", paddingBottom: 3 },
-  navItem: { minWidth: 60, alignItems: "center", justifyContent: "center", gap: 2 },
+  bottomNav: { backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#e9ede8", flexShrink: 0, paddingBottom: 3 },
+  bottomNavInner: { width: "100%", maxWidth: 1200, alignSelf: "center", flexDirection: "row", alignItems: "center", minHeight: 60 },
+  navItem: { flex: 1, minWidth: 0, minHeight: 56, alignItems: "center", justifyContent: "center", gap: 4 },
+  navIconWrapper: { width: 30, height: 24, alignItems: "center", justifyContent: "center" },
+  bottomNavBadge: { position: "absolute", top: -5, right: -6, minWidth: 16, height: 16, paddingHorizontal: 3, borderRadius: 8, backgroundColor: BHX_RED, alignItems: "center", justifyContent: "center" },
+  bottomNavBadgeText: { color: "#fff", fontSize: 9, fontWeight: "800" },
+  navLabelActive: { color: BHX_GREEN, fontWeight: "800" },
+  floatingHomeCartBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, backgroundColor: BHX_GREEN, paddingHorizontal: 16, paddingVertical: 10 },
+  floatingCartLeft: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
+  floatingCartIconCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: BHX_DARK_GREEN, alignItems: "center", justifyContent: "center" },
+  floatingCartBadge: { position: "absolute", top: -3, right: -4, backgroundColor: BHX_YELLOW, borderRadius: 8, paddingHorizontal: 4, minWidth: 16, alignItems: "center" },
+  floatingCartBadgeText: { color: BHX_DARK_GREEN, fontSize: 9, fontWeight: "800" },
+  floatingCartInfo: { flex: 1, minWidth: 0 },
+  floatingCartQtyText: { color: "#fff", fontSize: 10 },
+  floatingCartPriceText: { color: BHX_YELLOW, fontSize: 14, fontWeight: "900", marginTop: 3 },
+  floatingCartRight: { flexDirection: "row", alignItems: "center", gap: 4 },
+  floatingCartCtaText: { color: "#fff", fontSize: 11, fontWeight: "800" },
   navIcon: { color: "#849087", fontSize: 20, fontWeight: "700", height: 24 },
   navLabel: { color: "#849087", fontSize: 9, fontWeight: "600" },
-  navActive: { color: GREEN, fontWeight: "900" },
+  navActive: { color: BHX_GREEN, fontWeight: "900" },
   navBadge: { color: "#fff", backgroundColor: "#dc5a42", overflow: "hidden", borderRadius: 8, fontSize: 9, fontWeight: "900" },
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "#14221988" },
   productDetailScreen: { flex: 1, backgroundColor: "#f7f9f6" },
@@ -2088,51 +2321,59 @@ const styles = StyleSheet.create({
   productDetailSearchBar: { height: 44, backgroundColor: "#f4f6f2", borderRadius: 11, paddingLeft: 12, paddingRight: 5, flexDirection: "row", alignItems: "center" },
   productDetailHeader: { minHeight: 56, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e8ebe8", alignItems: "center", justifyContent: "center", paddingHorizontal: 56 },
   productDetailBack: { position: "absolute", left: 14, top: 6, width: 42, height: 44, justifyContent: "center", zIndex: 1 },
-  productDetailBackText: { color: DARK, fontSize: 37, lineHeight: 41 },
-  productDetailHeaderTitle: { color: DARK, fontSize: 16, fontWeight: "900" },
-  productDetailContent: { paddingBottom: 100 },
+  productDetailBackText: { color: TEXT_DARK, fontSize: 37, lineHeight: 41 },
+  productDetailHeaderTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "900" },
+  productDetailContent: { paddingBottom: 20 },
   productDetailImageBox: { height: 350, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" },
   productDetailImage: { width: "92%", height: "92%" },
   flashSaleBanner: { backgroundColor: "#ff8c19", paddingHorizontal: 18, paddingVertical: 13 },
   flashSaleTitle: { color: "#fff", fontSize: 17, fontWeight: "900" },
   flashSaleText: { color: "#fff", fontSize: 12, fontWeight: "700", marginTop: 4 },
   productDetailInfo: { backgroundColor: "#fff", padding: 18, marginTop: 10 },
-  productDetailName: { color: DARK, fontSize: 22, fontWeight: "900", lineHeight: 30, marginTop: 6 },
+  productDetailDescription: { color: TEXT_MUTED, fontSize: 14, lineHeight: 22, marginTop: 16 },
+  relatedProductsSection: { backgroundColor: "#fff", marginTop: 10, paddingVertical: 16 },
+  relatedProductsTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "800", paddingHorizontal: 18, marginBottom: 12 },
+  relatedProductsRow: { paddingHorizontal: 18, gap: 10 },
+  relatedProductCard: { width: 140, borderRadius: 10, borderWidth: 1, borderColor: BORDER_COLOR, padding: 8 },
+  relatedProductImageBox: { height: 110, backgroundColor: "#f7faf8", borderRadius: 8, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  relatedProductName: { color: TEXT_DARK, fontSize: 12, lineHeight: 17, minHeight: 34, marginTop: 8 },
+  relatedProductPrice: { color: BHX_GREEN, fontSize: 13, fontWeight: "800", marginTop: 5 },
+  productDetailName: { color: TEXT_DARK, fontSize: 22, fontWeight: "900", lineHeight: 30, marginTop: 6 },
   productDetailPriceBlock: { marginTop: 16 },
   productDetailPriceRow: { flexDirection: "row", alignItems: "baseline", flexWrap: "wrap", gap: 9 },
-  productDetailPrice: { color: GREEN, fontSize: 25, fontWeight: "900" },
+  productDetailPrice: { color: BHX_GREEN, fontSize: 25, fontWeight: "900" },
   productDetailOriginalPrice: { color: "#8b95a1", fontSize: 15, textDecorationLine: "line-through" },
   productDetailSaving: { color: "#df4c42", fontSize: 13, fontWeight: "800", marginTop: 7 },
-  discountBadge: { color: "#fff", backgroundColor: "#df4c42", overflow: "hidden", borderRadius: 5, paddingHorizontal: 6, paddingVertical: 3, fontSize: 12, fontWeight: "900" },
-  productDetailStock: { color: GREEN, fontSize: 13, fontWeight: "800", marginTop: 16 },
+  discountBadge: { backgroundColor: "#df4c42", overflow: "hidden", borderRadius: 5, paddingHorizontal: 6, paddingVertical: 3 },
+  productDetailStock: { color: BHX_GREEN, fontSize: 13, fontWeight: "800", marginTop: 16 },
   productDetailAction: { backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#e8ebe8", paddingHorizontal: 18, paddingTop: 12, paddingBottom: 16 },
   productDetailQuantityControl: { minHeight: 45, borderRadius: 10, backgroundColor: "#eaf3ea", flexDirection: "row", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   productDetailQuantityButton: { width: 58, height: 45, alignItems: "center", justifyContent: "center" },
-  productDetailQuantityButtonText: { color: GREEN, fontSize: 26, lineHeight: 30, fontWeight: "700" },
-  productDetailQuantityValue: { minWidth: 54, color: DARK, fontSize: 17, fontWeight: "900", textAlign: "center" },
+  productDetailQuantityButtonText: { color: BHX_GREEN, fontSize: 26, lineHeight: 30, fontWeight: "700" },
+  productDetailQuantityValue: { minWidth: 54, color: TEXT_DARK, fontSize: 17, fontWeight: "900", textAlign: "center" },
   checkoutSheet: { maxHeight: "92%", backgroundColor: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 18 },
   sheetHandle: { width: 38, height: 4, borderRadius: 2, backgroundColor: "#d7ded7", alignSelf: "center", marginBottom: 15 },
   checkoutContent: { paddingBottom: 10 },
-  checkoutTitle: { color: DARK, fontSize: 21, fontWeight: "900", marginTop: 4 },
-  checkoutDescription: { color: MUTED, fontSize: 11, marginTop: 5, marginBottom: 14 },
+  checkoutTitle: { color: TEXT_DARK, fontSize: 21, fontWeight: "900", marginTop: 4 },
+  checkoutDescription: { color: TEXT_MUTED, fontSize: 11, marginTop: 5, marginBottom: 14 },
   inputLabel: { color: "#536257", fontSize: 9, fontWeight: "900", letterSpacing: 0.7, marginTop: 12, marginBottom: 6 },
-  formInput: { minHeight: 43, backgroundColor: "#fbfcfa", borderWidth: 1, borderColor: "#dfe7df", borderRadius: 9, paddingHorizontal: 11, color: DARK, fontSize: 12 },
+  formInput: { minHeight: 43, backgroundColor: "#fbfcfa", borderWidth: 1, borderColor: "#dfe7df", borderRadius: 9, paddingHorizontal: 11, color: TEXT_DARK, fontSize: 12 },
   addressInput: { minHeight: 62, textAlignVertical: "top", paddingTop: 10 },
   noteInput: { minHeight: 48, textAlignVertical: "top", paddingTop: 9 },
   orderError: { color: "#a33e36", fontSize: 11, backgroundColor: "#fff1ef", borderRadius: 8, padding: 10, marginTop: 10 },
-  accountMessage: { color: GREEN, fontSize: 11, marginTop: 10, textAlign: "center" },
-  accountLink: { color: GREEN, fontSize: 13, fontWeight: "700", textAlign: "center", marginTop: 14 },
-  webDateInput: { width: "100%", minHeight: 53, borderWidth: 1, borderColor: "#dce3e9", borderRadius: 10, paddingLeft: 14, paddingRight: 14, color: DARK, fontSize: 16, marginBottom: 12, backgroundColor: "#fff" },
-  dateValue: { color: DARK, fontSize: 16 },
+  accountMessage: { color: BHX_GREEN, fontSize: 11, marginTop: 10, textAlign: "center" },
+  accountLink: { color: BHX_GREEN, fontSize: 13, fontWeight: "700", textAlign: "center", marginTop: 14 },
+  webDateInput: { width: "100%", minHeight: 53, borderWidth: 1, borderColor: "#dce3e9", borderRadius: 10, paddingLeft: 14, paddingRight: 14, color: TEXT_DARK, fontSize: 16, marginBottom: 12, backgroundColor: "#fff" },
+  dateValue: { color: TEXT_DARK, fontSize: 16 },
   datePlaceholder: { color: "#78857c", fontSize: 16 },
   dateModalBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#14221988", padding: 20 },
   dateModalCard: { width: "100%", maxWidth: 380, backgroundColor: "#fff", borderRadius: 14, padding: 18 },
   dateModalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 4 },
   checkoutTotal: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: "#edf0ec", paddingTop: 13, marginTop: 15 },
   cancelCheckout: { alignItems: "center", paddingVertical: 12 },
-  cancelText: { color: MUTED, fontSize: 11, fontWeight: "700" },
+  cancelText: { color: TEXT_MUTED, fontSize: 11, fontWeight: "700" },
   successContent: { alignItems: "stretch", paddingBottom: 10 },
-  successIcon: { width: 52, height: 52, lineHeight: 52, borderRadius: 26, overflow: "hidden", textAlign: "center", backgroundColor: "#e8f5eb", color: GREEN, fontSize: 27, fontWeight: "900", alignSelf: "center", marginBottom: 17 },
-  successTitle: { color: DARK, fontSize: 20, fontWeight: "900", textAlign: "center", marginTop: 8, marginBottom: 18 },
-  successCode: { color: GREEN, fontSize: 16, fontWeight: "900", textAlign: "center", padding: 12, backgroundColor: "#f2f7f1", borderRadius: 9 },
+  successIcon: { width: 52, height: 52, lineHeight: 52, borderRadius: 26, overflow: "hidden", textAlign: "center", backgroundColor: "#e8f5eb", color: BHX_GREEN, fontSize: 27, fontWeight: "900", alignSelf: "center", marginBottom: 17 },
+  successTitle: { color: TEXT_DARK, fontSize: 20, fontWeight: "900", textAlign: "center", marginTop: 8, marginBottom: 18 },
+  successCode: { color: BHX_GREEN, fontSize: 16, fontWeight: "900", textAlign: "center", padding: 12, backgroundColor: "#f2f7f1", borderRadius: 9 },
 });

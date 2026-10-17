@@ -288,6 +288,8 @@ namespace backend.Controllers
                     CategoryName = product.Category != null ? product.Category.Name : null,
                     Price = product.Price,
                     OriginalPrice = product.Price,
+                    UnitName = product.Unit != null ? product.Unit.Name : null,
+                    StockQuantity = product.Inventory != null ? product.Inventory.Quantity : 0,
                     ImageUrl = product.ImageUrl
                 })
                 .ToListAsync();
@@ -647,6 +649,8 @@ namespace backend.Controllers
         public string? CategoryName { get; set; }
         public decimal Price { get; set; }
         public decimal OriginalPrice { get; set; }
+        public string? UnitName { get; set; }
+        public int StockQuantity { get; set; }
         public decimal DiscountAmount { get; set; }
         public decimal DiscountPercent { get; set; }
         public string? PromotionName { get; set; }

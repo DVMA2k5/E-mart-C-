@@ -1,10 +1,11 @@
-using backend.DTO;
 using backend.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace backend.Controllers;
 
 [ApiController]
+[Authorize(Roles = "admin,staff")]
 [Route("api/[controller]")]
 public class InvoiceController : ControllerBase
 {
@@ -23,11 +24,4 @@ public class InvoiceController : ControllerBase
         return invoice == null ? NotFound() : Ok(invoice);
     }
 
-    [HttpPatch("{orderId:int}/payment-status")]
-    public async Task<IActionResult> UpdatePaymentStatus(int orderId, [FromBody] UpdateInvoicePaymentStatusDTO body)
-    {
-        try { return await _service.UpdatePaymentStatusAsync(orderId, body.Status) ? NoContent() : NotFound(); }
-        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
-        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
-    }
 }

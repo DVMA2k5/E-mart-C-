@@ -5,6 +5,8 @@
 -- Customer: tài khoản riêng cho App.
 -- Schema bám theo ERD: Users, Customers, Categories, Products,
 -- Suppliers, Purchase Orders, Promotions (3 loại), Orders, Payments...
+-- Đã tích hợp schema phân quyền: employees, roles, permissions,
+-- role_permissions và các khóa ngoại role_id/employee_id/customer_id của users.
 -- =========================================================
 -- IMPORTANT:
 -- 1) If you already have data in the original DB, adding constraints may fail. 
@@ -87,6 +89,7 @@ CREATE TABLE customers (
   phone VARCHAR(50),
   password_hash VARCHAR(512) DEFAULT NULL,
   email VARCHAR(255),
+  date_of_birth DATE NULL,
   reward_points INT NOT NULL DEFAULT 0,
   address NVARCHAR(MAX),
   note NVARCHAR(MAX),
@@ -110,6 +113,7 @@ CREATE TABLE employees (
   full_name NVARCHAR(255) NOT NULL,
   phone VARCHAR(50),
   email VARCHAR(255),
+  date_of_birth DATE NULL,
   address NVARCHAR(MAX),
   note NVARCHAR(MAX),
   is_active BIT NOT NULL DEFAULT 1,
@@ -959,8 +963,8 @@ SELECT COUNT(*) AS products_count FROM products;
 SELECT COUNT(*) AS orders_count FROM [orders];
 SELECT COUNT(*) AS purchase_orders_count FROM purchase_orders;
 SELECT COUNT(*) AS promotions_count FROM promotions;
-SELECT COUNT(*) AS staff_count FROM users WHERE role = 'staff';
-SELECT COUNT(*) AS admins_count FROM users WHERE role = 'admin';
+SELECT COUNT(*) AS staff_count FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = 'staff';
+SELECT COUNT(*) AS admins_count FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = 'admin';
 GO
 
 /*

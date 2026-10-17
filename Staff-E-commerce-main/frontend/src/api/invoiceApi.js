@@ -9,5 +9,3 @@ export function getInvoices({ page = 1, pageSize = 10, from = "", to = "", payme
 }
 
 export const getInvoice = (orderId) => request(`/invoice/${orderId}`);
-export const updateInvoicePaymentStatus = (orderId, status) =>
-  request(`/invoice/${orderId}/payment-status`, { method: "PATCH", body: { status } });

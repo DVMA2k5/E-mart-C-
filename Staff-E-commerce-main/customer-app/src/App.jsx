@@ -298,6 +298,86 @@ function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQu
   );
 }
 
+function CustomerInvoice({ order, token, onClose }) {
+  const [invoice, setInvoice] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    setInvoice(null);
+    const load = async () => {
+      try {
+        if (!token) throw new Error("Vui lòng đăng nhập để xem hóa đơn.");
+        const response = await fetch(`${API_URL}/storefront/orders/${order.id}/invoice`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error(await readError(response));
+        const data = await response.json();
+        if (active) setInvoice(data);
+      } catch (err) {
+        if (active) setError(err.message || "Không tải được hóa đơn.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [order.id, token, retry]);
+
+  const paymentLabels = { paid: "Đã thanh toán", pending: "Chờ thanh toán", failed: "Thất bại", refunded: "Đã hoàn tiền" };
+  const invoiceLabels = { issued: "Đã phát hành", paid: "Đã thanh toán", voided: "Đã hủy", refunded: "Đã hoàn tiền" };
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.ordersScreen}>
+        <View style={styles.orderDetailHeading}>
+          <Pressable onPress={onClose} style={styles.orderBack} accessibilityRole="button" accessibilityLabel="Đóng hóa đơn"><Text style={styles.orderBackText}>‹</Text></Pressable>
+          <Text style={styles.orderDetailTitle}>Hóa đơn</Text>
+        </View>
+        {loading ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /><Text style={styles.stateText}>Đang tải hóa đơn...</Text></View> : error ? (
+          <View style={styles.errorCard}><Text style={styles.errorText}>{error}</Text><AppButton title="Thử lại" onPress={() => setRetry((value) => value + 1)} /></View>
+        ) : invoice && (
+          <ScrollView contentContainerStyle={styles.orderDetailContent}>
+            <View style={styles.responsiveContainer}>
+              <View style={styles.orderInfoCard}>
+                <Text style={styles.pageTitle}>{invoice.invoiceNumber}</Text>
+                <Text style={styles.invoiceText}>Đơn hàng: {invoice.orderNumber}</Text>
+                <Text style={styles.invoiceText}>Ngày lập: {new Date(invoice.issuedAt).toLocaleString("vi-VN")}</Text>
+                <Text style={styles.invoiceText}>Hóa đơn: {invoiceLabels[invoice.invoiceStatus] || invoice.invoiceStatus}</Text>
+                <Text style={styles.invoiceText}>Thanh toán: {paymentLabels[invoice.paymentStatus] || invoice.paymentStatus}</Text>
+              </View>
+              <View style={styles.orderInfoCard}>
+                <Text style={styles.orderInfoLabel}>Thông tin khách hàng</Text>
+                <Text style={styles.invoiceText}>{invoice.customerName || "Khách lẻ"}</Text>
+                {!!invoice.customerPhone && <Text style={styles.invoiceText}>Điện thoại: {invoice.customerPhone}</Text>}
+                {!!invoice.customerEmail && <Text style={styles.invoiceText}>Email: {invoice.customerEmail}</Text>}
+                {!!invoice.customerAddress && <Text style={styles.invoiceText}>Địa chỉ: {invoice.customerAddress}</Text>}
+              </View>
+              <View style={styles.orderItemsCard}>
+                {(invoice.items || []).map((item, index) => (
+                  <View key={`${item.sku}-${index}`} style={styles.orderItemRow}>
+                    <View style={styles.orderItemInfo}><Text style={styles.orderItemName}>{item.productName}</Text><Text style={styles.orderItemQuantity}>{item.quantity} × {money(item.unitPrice)}</Text></View>
+                    <Text style={styles.orderItemPrice}>{money(item.totalPrice)}</Text>
+                  </View>
+                ))}
+                <View style={styles.orderTotals}>
+                  {[["Tạm tính", money(invoice.subtotal)], ["Thuế", money(invoice.taxAmount)], ["Phí giao hàng", money(invoice.feeAmount)], ["Giảm giá", `−${money(invoice.discount)}`]].map(([label, value]) => (
+                    <View key={label} style={styles.summaryLine}><Text style={styles.summaryLabel}>{label}</Text><Text style={styles.summaryValue}>{value}</Text></View>
+                  ))}
+                  <View style={styles.summaryTotal}><Text style={styles.summaryTotalLabel}>Tổng cộng</Text><Text style={styles.summaryTotalValue}>{money(invoice.totalAmount)}</Text></View>
+                </View>
+              </View>
+            </View>
+          </ScrollView>
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 export default function App() {
   const { width: windowWidth } = useWindowDimensions();
   const isDesktop = windowWidth >= 768;
@@ -331,6 +411,7 @@ export default function App() {
   const [ordersError, setOrdersError] = useState("");
   const [ordersRefreshKey, setOrdersRefreshKey] = useState(0);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [invoiceOrder, setInvoiceOrder] = useState(null);
   const [orderFilter, setOrderFilter] = useState("all");
 
   const [customer, setCustomer] = useState(null);
@@ -862,10 +943,8 @@ export default function App() {
   }, [isDesktop, isWide]);
 
   const categoryItemWidthStyle = useMemo(() => {
-    if (isWide) return { width: "9.2%" };
-    if (isDesktop) return { width: "15%" };
-    return { width: "19%" }; // 5 ô mỗi hàng trên mobile
-  }, [isDesktop, isWide]);
+    return { width: isDesktop ? 104 : 86 };
+  }, [isDesktop]);
 
   const renderHome = () => (
     <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
@@ -907,7 +986,7 @@ export default function App() {
         {/* 2. DẢI CAM KẾT VÀNG SIÊU THỊ */}
   
 
-        {/* 3. MENU PHÂN LOẠI NGÀNH HÀNG GRID 10 Ô */}
+        {/* Danh mục ngành hàng cuộn ngang */}
         <View style={styles.categorySectionHeader}>
           <View style={styles.categorySectionTitleRow}>
             <View style={styles.greenBar} />
@@ -919,7 +998,7 @@ export default function App() {
           </Pressable>
         </View>
 
-        <View style={styles.categoryGridContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll} contentContainerStyle={styles.categoryGridContainer}>
           {/* Nút Xem tất cả */}
           <Pressable
             onPress={() => setCategoryId("all")}
@@ -951,7 +1030,7 @@ export default function App() {
               </Pressable>
             );
           })}
-        </View>
+        </ScrollView>
 
         {/* 4. THANH TOOLBAR PHÂN LOẠI & SẮP XẾP SẢN PHẨM */}
         <View style={styles.filterToolbar}>
@@ -1142,7 +1221,7 @@ export default function App() {
       const purchasedAt = selectedOrder.createdAt
         ? new Date(selectedOrder.createdAt).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" })
         : "";
-      const paidAmount = String(selectedOrder.paymentStatus || "").toLowerCase() === "completed"
+      const paidAmount = String(selectedOrder.paymentStatus || "").toLowerCase() === "paid"
         ? selectedOrder.totalAmount
         : 0;
 
@@ -1192,6 +1271,7 @@ export default function App() {
                   </View>
                 </View>
               </View>
+              {String(selectedOrder.status).toLowerCase() === "completed" && <AppButton title="Xem hóa đơn" onPress={() => setInvoiceOrder(selectedOrder)} />}
             </View>
           </ScrollView>
         </View>
@@ -1272,6 +1352,7 @@ export default function App() {
                       <Text style={styles.orderListStatus}>{orderStatusLabel(order.status)}</Text>
                       <Text style={styles.orderListTotal}>Tổng tiền: {money(order.totalAmount)}</Text>
                     </View>
+                    {String(order.status).toLowerCase() === "completed" && <AppButton title="Xem hóa đơn" secondary onPress={() => setInvoiceOrder(order)} />}
                   </View>
                 );
               })}
@@ -1406,10 +1487,6 @@ export default function App() {
                 {deliveryAddress?.street ? `${deliveryAddress.street}, ${deliveryAddress.ward || ""}` : "Chọn địa chỉ nhận hàng"}
               </Text>
             </View>
-            <View style={styles.locationRight}>
-              <IconFlash size={10} color={BHX_YELLOW} />
-              <Text style={styles.speedText}>Giao 2h</Text>
-            </View>
           </Pressable>
 
     
@@ -1435,15 +1512,7 @@ export default function App() {
               style={styles.searchInput}
               returnKeyType="search"
             />
-            {query.length > 0 ? (
-              <Pressable onPress={() => setQuery("")} style={styles.clearSearchBtn}>
-                <IconClose size={14} color="#64748b" />
-              </Pressable>
-            ) : (
-              <Pressable style={styles.searchSubmitBtn}>
-                <IconSearch size={16} color="#ffffff" />
-              </Pressable>
-            )}
+       
           </View>
 
           {/* Quick Search Tags */}
@@ -1462,6 +1531,8 @@ export default function App() {
           </ScrollView>
         </View>
       </View>
+
+      {invoiceOrder && <CustomerInvoice key={`${customer?.id}-${invoiceOrder.id}`} order={invoiceOrder} token={customerToken} onClose={() => setInvoiceOrder(null)} />}
 
       {/* NỘI DUNG MÀN HÌNH CHÍNH */}
       <View style={styles.screen}>
@@ -2079,7 +2150,8 @@ const styles = StyleSheet.create({
   categorySectionTitle: { color: TEXT_DARK, fontSize: 12, fontWeight: "900" },
   openCategoryDrawerBtn: { flexDirection: "row", alignItems: "center", gap: 3, paddingVertical: 5 },
   openCategoryDrawerText: { color: BHX_GREEN, fontSize: 10, fontWeight: "700" },
-  categoryGridContainer: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 8 },
+  categoryScroll: { flexGrow: 0, flexShrink: 0 },
+  categoryGridContainer: { flexDirection: "row", gap: 8, paddingRight: 4 },
   categoryGridItem: { alignItems: "center", paddingHorizontal: 3, paddingVertical: 9, backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#edf0ec" },
   categoryGridItemActive: { borderColor: BHX_GREEN, backgroundColor: "#eef8f1" },
   categoryIconWrap: { height: 40, alignItems: "center", justifyContent: "center" },
@@ -2158,6 +2230,7 @@ const styles = StyleSheet.create({
   buttonSecondaryText: { color: BHX_GREEN },
   buttonDisabled: { opacity: 0.65 },
   ordersScreen: { flex: 1, backgroundColor: "#f4f4f4" },
+  invoiceText: { color: TEXT_DARK, fontSize: 13, lineHeight: 20, marginTop: 5 },
   ordersTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "900", textAlign: "center", paddingVertical: 13, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
   orderFilterScroll: { height: 48, flexGrow: 0, flexShrink: 0 },
   orderFilterRow: { paddingHorizontal: 14, alignItems: "center", gap: 8 },

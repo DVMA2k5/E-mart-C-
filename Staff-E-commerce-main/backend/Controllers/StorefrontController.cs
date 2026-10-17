@@ -22,6 +22,7 @@ namespace backend.Controllers
         private readonly PromotionService _promotions;
         private readonly PaymentService _paymentService;
         private readonly IConfiguration _config;
+        private readonly InvoiceService _invoiceService;
         private readonly IHubContext<OrderHub>? _orderHub;
 
         public StorefrontController(
@@ -30,6 +31,7 @@ namespace backend.Controllers
             PromotionService promotions,
             PaymentService paymentService,
             IConfiguration config,
+            InvoiceService invoiceService,
             IHubContext<OrderHub>? orderHub = null)
         {
             _db = db;
@@ -37,6 +39,7 @@ namespace backend.Controllers
             _promotions = promotions;
             _paymentService = paymentService;
             _config = config;
+            _invoiceService = invoiceService;
             _orderHub = orderHub;
         }
 
@@ -243,6 +246,29 @@ namespace backend.Controllers
                 .ToListAsync();
 
             return Ok(orders);
+        }
+
+        [HttpGet("orders/{id:int}/invoice")]
+        [Authorize(Roles = "customer")]
+        public async Task<IActionResult> GetCustomerInvoice(int id)
+        {
+            var customer = await GetAuthenticatedCustomerAsync();
+            if (customer == null)
+                return Unauthorized(new { message = "Phiên đăng nhập không hợp lệ." });
+
+            var order = await _db.Orders.AsNoTracking()
+                .Where(item => item.Id == id && item.CustomerId == customer.Id)
+                .Select(item => new { item.Status })
+                .FirstOrDefaultAsync();
+            if (order == null)
+                return NotFound(new { message = "Không tìm thấy đơn hàng." });
+            if (order.Status != "completed")
+                return Conflict(new { message = "Chỉ xem được hóa đơn của đơn hàng đã thành công." });
+
+            var invoice = await _invoiceService.GetInvoiceAsync(id);
+            return invoice == null
+                ? NotFound(new { message = "Hóa đơn chưa được phát hành. Vui lòng thử lại sau." })
+                : Ok(invoice);
         }
 
         private async Task<Customer?> GetAuthenticatedCustomerAsync()

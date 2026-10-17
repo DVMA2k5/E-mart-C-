@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { FileText, Printer, Search, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getInvoice, getInvoices, updateInvoicePaymentStatus } from "../../api/invoiceApi";
+import { getInvoice, getInvoices } from "../../api/invoiceApi";
 
 const money = (value) => new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(value || 0);
 const dateTime = (value) => new Date(value).toLocaleString("vi-VN");
-const statusLabel = { paid: "Đã thanh toán", pending: "Chờ thanh toán", failed: "Thất bại" };
+const statusLabel = { paid: "Đã thanh toán", pending: "Chờ thanh toán", failed: "Thất bại", refunded: "Đã hoàn tiền" };
 
 export default function InvoicePage() {
   const navigate = useNavigate();
@@ -31,11 +31,6 @@ export default function InvoicePage() {
     catch (e) { setError(e.message || "Không tải được hóa đơn."); }
   }, []);
   useEffect(() => { const orderId = Number(searchParams.get("orderId")); if (orderId > 0) open(orderId); }, [searchParams, open]);
-  const changeStatus = async (status) => {
-    await updateInvoicePaymentStatus(selected.orderId, status);
-    await open(selected.orderId);
-    await load();
-  };
   const printInvoice = () => window.print();
 
   return <main className="p-6 space-y-5">
@@ -55,7 +50,7 @@ export default function InvoicePage() {
       <div className="my-6 border-y py-4 text-sm"><p className="font-semibold">Khách hàng: {selected.customerName}</p><p>Điện thoại: {selected.customerPhone || "—"} · Email: {selected.customerEmail || "—"}</p><p>Địa chỉ: {selected.customerAddress || "—"}</p></div>
       <table className="w-full text-left text-sm"><thead><tr className="border-b text-gray-500"><th className="py-2">Sản phẩm</th><th className="py-2">SL</th><th className="py-2 text-right">Đơn giá</th><th className="py-2 text-right">Thành tiền</th></tr></thead><tbody>{selected.items.map((item, n) => <tr key={`${item.sku}-${n}`} className="border-b"><td className="py-3">{item.productName}</td><td>{item.quantity}</td><td className="text-right">{money(item.unitPrice)}</td><td className="text-right">{money(item.totalPrice)}</td></tr>)}</tbody></table>
       <div className="ml-auto mt-4 max-w-xs space-y-2 text-sm"><div className="flex justify-between"><span>Tạm tính</span><span>{money(selected.subtotal)}</span></div><div className="flex justify-between"><span>Thuế</span><span>{money(selected.taxAmount)}</span></div><div className="flex justify-between"><span>Phí giao hàng</span><span>{money(selected.feeAmount)}</span></div><div className="flex justify-between"><span>Giảm giá</span><span>−{money(selected.discount)}</span></div><div className="flex justify-between border-t pt-2 text-base font-bold"><span>Tổng cộng</span><span>{money(selected.totalAmount)}</span></div></div>
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-4 print:hidden"><label className="text-sm">Trạng thái thanh toán <select className="ml-2 rounded border px-2 py-2" value={selected.paymentStatus} onChange={e => changeStatus(e.target.value)}><option value="pending">Chờ thanh toán</option><option value="paid">Đã thanh toán</option><option value="failed">Thất bại</option></select></label><div className="flex gap-2"><button onClick={() => navigate("/orders", { state: { orderId: selected.orderId } })} className="rounded-lg border px-4 py-2 text-gray-700">Xem đơn hàng gốc</button><button onClick={printInvoice} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white"><Printer size={16} />In / Xuất PDF</button></div></div>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-4 print:hidden"><div className="text-sm"><p>Trạng thái thanh toán: <span className="font-semibold">{statusLabel[selected.paymentStatus] || selected.paymentStatus}</span></p><p className="mt-1 text-xs text-gray-500">Tự động cập nhật theo đơn hàng và giao dịch thanh toán.</p></div><div className="flex gap-2"><button onClick={() => navigate("/orders", { state: { orderId: selected.orderId } })} className="rounded-lg border px-4 py-2 text-gray-700">Xem đơn hàng gốc</button><button onClick={printInvoice} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white"><Printer size={16} />In / Xuất PDF</button></div></div>
       </article></div>}
     <style>{`@media print { body * { visibility: hidden !important; } .invoice-paper, .invoice-paper * { visibility: visible !important; } .invoice-paper { position: fixed !important; inset: 0 !important; width: 100% !important; max-width: none !important; max-height: none !important; overflow: visible !important; border-radius: 0 !important; box-shadow: none !important; } }`}</style>
   </main>;

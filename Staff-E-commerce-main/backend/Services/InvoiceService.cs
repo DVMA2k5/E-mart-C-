@@ -101,20 +101,4 @@ public class InvoiceService
                 Quantity = x.Quantity, UnitPrice = x.UnitPrice, TotalPrice = x.TotalPrice }).ToList() };
     }
 
-    public async Task<bool> UpdatePaymentStatusAsync(int orderId, string status)
-    {
-        var normalized = status.Trim().ToLowerInvariant();
-        if (normalized is not ("pending" or "paid" or "failed")) throw new ArgumentException("Trạng thái thanh toán không hợp lệ.");
-        var invoice = await _db.Invoices.FirstOrDefaultAsync(i => i.OrderId == orderId);
-        if (invoice == null) return false;
-        if (invoice.InvoiceStatus is "voided" or "refunded") throw new InvalidOperationException("Hóa đơn đã hủy/hoàn tiền, không thể cập nhật thanh toán.");
-        var order = await _db.Orders.FirstAsync(o => o.Id == orderId);
-        invoice.PaymentStatus = order.PaymentStatus = normalized;
-        if (normalized == "paid") invoice.InvoiceStatus = "paid";
-        else if (invoice.InvoiceStatus == "paid") invoice.InvoiceStatus = "issued";
-        invoice.PaymentMethod = order.PaymentMethod;
-        invoice.UpdatedAt = order.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-        return true;
-    }
 }

@@ -30,8 +30,3 @@ public class InvoiceItemDTO
     public decimal UnitPrice { get; set; }
     public decimal TotalPrice { get; set; }
 }
-
-public class UpdateInvoicePaymentStatusDTO
-{
-    public string Status { get; set; } = string.Empty;
-}

@@ -162,7 +162,12 @@ namespace backend.Data
                 .HasForeignKey(oi => oi.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-            // Payment -> Order
+            // Invoice tables have triggers; SQL Server disallows direct OUTPUT on them.
+            modelBuilder.Entity<Invoice>()
+                .ToTable(table => table.UseSqlOutputClause(false));
+            modelBuilder.Entity<InvoiceItem>()
+                .ToTable(table => table.UseSqlOutputClause(false));
+
             modelBuilder.Entity<Invoice>().HasIndex(i => i.OrderId).IsUnique();
             modelBuilder.Entity<Invoice>().HasIndex(i => i.InvoiceNumber).IsUnique();
             modelBuilder.Entity<Invoice>().HasOne(i => i.Order).WithOne(o => o.Invoice)

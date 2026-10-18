@@ -8,12 +8,12 @@ export function ProductDescriptionContent({ value }) {
   if (!document.text.trim() && !document.tables.length) return <p className="text-sm text-gray-500">Không có mô tả</p>;
   return <div className="space-y-4 text-sm text-gray-700">
     {document.text.trim() && <p className="whitespace-pre-wrap break-words">{document.text}</p>}
-    {document.tables.map((table, index) => <div key={index} className="overflow-x-auto rounded-lg border border-gray-200">
-      <table className="w-full border-collapse text-left" aria-label={`Bảng thông tin sản phẩm ${index + 1}`}><tbody>
+    {document.tables.map((table, index) => <div key={index} className="overflow-x-auto">
+      <table className="w-full border-collapse text-left" style={{ border: "1px solid #9ca3af" }} aria-label={`Bảng thông tin sản phẩm ${index + 1}`}><tbody>
         {table.rows.map((row, rowIndex) => <tr key={rowIndex} className={table.header && rowIndex === 0 ? "bg-gray-100 font-semibold" : rowIndex % 2 ? "bg-gray-50" : "bg-white"}>
           {row.map((cell, columnIndex) => {
             const Cell = table.header && rowIndex === 0 ? "th" : "td";
-            return <Cell key={columnIndex} scope={Cell === "th" ? "col" : undefined} className="min-w-36 max-w-80 whitespace-pre-wrap break-words border border-gray-200 px-3 py-2.5 align-top">{cell}</Cell>;
+            return <Cell key={columnIndex} scope={Cell === "th" ? "col" : undefined} style={{ border: "1px solid #9ca3af" }} className="min-w-28 whitespace-pre-wrap break-words px-3 py-2 align-top">{cell}</Cell>;
           })}
         </tr>)}
       </tbody></table>
@@ -81,6 +81,7 @@ export default function ProductDescriptionEditor({ value, onChange, disabled = f
     <div ref={editor} contentEditable={!disabled} suppressContentEditableWarning role="textbox" aria-multiline="true" aria-label="Mô tả sản phẩm, hỗ trợ dán bảng từ Word" onInput={save} onBlur={save} onPaste={paste} onDrop={(event) => event.preventDefault()}
       className={`min-h-40 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:min-w-28 [&_td]:border [&_td]:border-gray-300 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_th]:min-w-28 [&_th]:border [&_th]:border-gray-300 [&_th]:bg-gray-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left ${disabled ? "bg-gray-50 opacity-60" : "bg-white"}`} />
 
+    {pasteError && <p role="alert" className="text-xs text-red-600">{pasteError}</p>}
   </div>;
 }
 

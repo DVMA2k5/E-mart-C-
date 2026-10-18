@@ -18,6 +18,8 @@ const ProductModal = ({
 }) => {
   const [formData, setFormData] = useState({});
   const [errors, setErrors] = useState({});
+  const [descriptionLoading, setDescriptionLoading] = useState(false);
+  const [descriptionError, setDescriptionError] = useState("");
 
   // Fallback options nếu component cha chưa tải xong
   const [categoryList, setCategoryList] = useState(Array.isArray(categories) ? categories : []);
@@ -101,12 +103,15 @@ const ProductModal = ({
     }
   }, [mode, product]);
 
-  // Khi ở mode edit, tải thông tin chi tiết đầy đủ từ backend để đảm bảo không thiếu field nào
+  // Fetch the saved description in both detail and edit views.
   useEffect(() => {
-    if (mode === "edit" && product?.id) {
+    let active = true;
+    setDescriptionError("");
+    setDescriptionLoading(mode === "view" && !!product?.id);
+    if ((mode === "edit" || mode === "view") && product?.id) {
       request(`/products/${product.id}`)
         .then((detail) => {
-          if (detail) {
+          if (active && detail) {
             setFormData((prev) => ({
               ...prev,
               id: detail.id,
@@ -117,14 +122,18 @@ const ProductModal = ({
               unitId: prev.unitId || detail.unitId || detail.unit?.id || "",
               categoryId: prev.categoryId || detail.categoryId || detail.category?.id || "",
               supplierId: prev.supplierId || detail.supplierId || detail.supplier?.id || "",
-              description: prev.description !== undefined && prev.description !== "" ? prev.description : (detail.description || ""),
+              description: mode === "view" ? (detail.description || "") : (prev.description !== undefined && prev.description !== "" ? prev.description : (detail.description || "")),
               imageUrl: prev.imageUrl || detail.imageUrl || "",
               isActive: prev.isActive !== undefined ? prev.isActive : detail.isActive,
             }));
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          if (active && mode === "view") setDescriptionError("Không tải được mô tả mới nhất. Vui lòng mở lại chi tiết sản phẩm.");
+        })
+        .finally(() => { if (active) setDescriptionLoading(false); });
     }
+    return () => { active = false; };
   }, [mode, product?.id]);
 
   const modalTitle =
@@ -665,8 +674,11 @@ const ProductModal = ({
               <div className="col-span-2 min-w-0">
                 <label className="text-xs text-gray-600">Mô tả</label>
                 {isView ? (
-                  <div className="p-2 border rounded bg-gray-50">
-                    <ProductDescriptionContent value={formData.description} />
+                  <div className="mt-1 rounded-lg border border-gray-200 bg-white px-3 py-2" aria-busy={descriptionLoading}>
+                    {descriptionLoading ? <p className="text-sm text-gray-500">Đang tải mô tả sản phẩm...</p> : <>
+                      {descriptionError && <p role="alert" className="mb-2 text-sm text-red-600">{descriptionError}</p>}
+                      <ProductDescriptionContent value={formData.description} />
+                    </>}
                   </div>
                 ) : (
                   <ProductDescriptionEditor

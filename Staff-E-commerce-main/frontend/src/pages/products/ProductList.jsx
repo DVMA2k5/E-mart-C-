@@ -385,15 +385,7 @@ export default function ProductList() {
               onChange={(e) => setSearch(e.target.value)}
               className="px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300"
             />
-            <button
-              className="px-3 py-2 rounded-md bg-primary-600 text-white hover:bg-primary-700"
-              onClick={() => {
-                setPage(1);
-                fetchProducts(1, pageSize, search);
-              }}
-            >
-              Tìm kiếm
-            </button>
+      
             {!isStaff && (
               <>
                 <button

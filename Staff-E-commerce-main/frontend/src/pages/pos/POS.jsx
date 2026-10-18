@@ -17,7 +17,7 @@ import { formatPrice } from "../../utils/formatPrice";
 
 const STATUS_CONFIG = {
   pending:    { label: "Chờ xác nhận", color: "bg-amber-100 text-amber-800",    dot: "bg-amber-500"  },
-  processing: { label: "Đang xử lý",   color: "bg-blue-100 text-blue-800",      dot: "bg-blue-500"   },
+  processing: { label: "Đang xử lý",   color: "bg-primary-100 text-primary-800",      dot: "bg-primary-500"   },
   completed:  { label: "Hoàn thành",   color: "bg-emerald-100 text-emerald-800", dot: "bg-emerald-500"},
   cancelled:  { label: "Đã huỷ",       color: "bg-red-100 text-red-800",         dot: "bg-red-500"    },
 };
@@ -433,7 +433,7 @@ export default function POS() {
   const processingCount = orders.filter((o) => o.status === "processing").length;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-primary-50">
       {/* Toast */}
       {toast && (
         <div
@@ -448,32 +448,32 @@ export default function POS() {
 
       {/* Real-time Order Popup Banner */}
       {realtimeAlert && (
-        <div className="fixed top-20 right-5 z-[9998] max-w-sm bg-indigo-900 text-white rounded-2xl shadow-2xl p-4 border border-indigo-700 animate-bounce">
+        <div className="fixed top-20 right-5 z-[9998] max-w-sm bg-primary-900 text-white rounded-2xl shadow-2xl p-4 border border-primary-700 animate-bounce">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-2">
               <span className="text-2xl">🔔</span>
               <div>
-                <h4 className="font-bold text-sm text-yellow-300">Đơn hàng mới từ App!</h4>
-                <p className="text-xs text-indigo-200">Mã đơn: #{realtimeAlert.orderNumber}</p>
+                <h4 className="font-bold text-sm text-amber-300">Đơn hàng mới từ App!</h4>
+                <p className="text-xs text-primary-200">Mã đơn: #{realtimeAlert.orderNumber}</p>
               </div>
             </div>
             <button
               onClick={() => setRealtimeAlert(null)}
-              className="text-indigo-300 hover:text-white text-lg font-bold"
+              className="text-primary-300 hover:text-white text-lg font-bold"
             >
               ✕
             </button>
           </div>
-          <div className="mt-2 text-xs text-indigo-100 flex justify-between">
+          <div className="mt-2 text-xs text-primary-100 flex justify-between">
             <span>Khách: <strong>{realtimeAlert.customerName}</strong></span>
-            <span className="text-yellow-300 font-bold">{formatPrice(realtimeAlert.totalAmount)}</span>
+            <span className="text-amber-300 font-bold">{formatPrice(realtimeAlert.totalAmount)}</span>
           </div>
           <button
             onClick={() => {
               setActiveTab("online");
               setRealtimeAlert(null);
             }}
-            className="mt-3 w-full py-1.5 bg-yellow-400 hover:bg-yellow-300 text-indigo-950 font-bold text-xs rounded-lg transition"
+            className="mt-3 w-full py-1.5 bg-amber-400 hover:bg-amber-300 text-primary-950 font-bold text-xs rounded-lg transition"
           >
             Xem ngay trong danh sách →
           </button>
@@ -501,7 +501,7 @@ export default function POS() {
             onClick={() => setActiveTab("online")}
             className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 flex items-center gap-2 ${
               activeTab === "online"
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-200"
+                ? "bg-primary-600 text-white shadow-md shadow-primary-200"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
           >
@@ -516,7 +516,7 @@ export default function POS() {
             onClick={() => setActiveTab("pos")}
             className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 flex items-center gap-2 ${
               activeTab === "pos"
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-200"
+                ? "bg-primary-600 text-white shadow-md shadow-primary-200"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
           >
@@ -537,9 +537,9 @@ export default function POS() {
             {/* Stats row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               {[
-                { label: "Tổng đơn online", value: meta.totalItems, color: "border-indigo-500", text: "text-indigo-700" },
+                { label: "Tổng đơn online", value: meta.totalItems, color: "border-primary-500", text: "text-primary-700" },
                 { label: "Chờ xác nhận", value: pendingCount, color: "border-amber-500", text: "text-amber-700" },
-                { label: "Đang giao / xử lý", value: processingCount, color: "border-blue-500", text: "text-blue-700" },
+                { label: "Đang giao / xử lý", value: processingCount, color: "border-primary-500", text: "text-primary-700" },
                 { label: "Cần phục vụ gấp", value: pendingCount, color: "border-red-500", text: "text-red-700" },
               ].map((s) => (
                 <div key={s.label} className={`bg-white rounded-2xl p-4 shadow-sm border-l-4 ${s.color}`}>
@@ -556,7 +556,7 @@ export default function POS() {
                 placeholder="🔍 Tìm theo tên, SĐT, mã đơn..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="flex-1 min-w-[220px] px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                className="flex-1 min-w-[220px] px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-300"
               />
               <select
                 value={filterStatus}
@@ -564,7 +564,7 @@ export default function POS() {
                   setFilterStatus(e.target.value);
                   setPage(1);
                 }}
-                className="px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                className="px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-300"
               >
                 <option value="">Tất cả trạng thái</option>
                 <option value="pending">Chờ xác nhận</option>
@@ -587,7 +587,7 @@ export default function POS() {
             {/* Orders list */}
             {loading ? (
               <div className="flex items-center justify-center h-48">
-                <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                <div className="w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : orders.length === 0 ? (
               <div className="bg-white rounded-2xl p-12 text-center text-gray-400 border shadow-sm">
@@ -604,7 +604,7 @@ export default function POS() {
                   >
                     <div className="space-y-1.5 flex-1">
                       <div className="flex items-center gap-3">
-                        <span className="font-mono text-sm font-black text-indigo-700">#{o.orderNumber}</span>
+                        <span className="font-mono text-sm font-black text-primary-700">#{o.orderNumber}</span>
                         <StatusBadge status={o.status} />
                         <span className="text-xs text-gray-400">{formatDate(o.createdAt)}</span>
                       </div>
@@ -643,7 +643,7 @@ export default function POS() {
                             <button
                               onClick={() => handleConfirm(o.id)}
                               disabled={actionLoading}
-                              className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-sm transition disabled:opacity-50"
+                              className="px-3 py-1.5 text-xs bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold shadow-sm transition disabled:opacity-50"
                             >
                               ✓ Xác nhận
                             </button>
@@ -726,7 +726,7 @@ export default function POS() {
                     placeholder="Tìm tên sản phẩm..."
                     value={posProductSearch}
                     onChange={(e) => setPosProductSearch(e.target.value)}
-                    className="px-3 py-1.5 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 w-48"
+                    className="px-3 py-1.5 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-300 w-48"
                   />
                 </div>
 
@@ -837,7 +837,7 @@ export default function POS() {
                         placeholder="Tìm theo SĐT hoặc tên khách..."
                         value={customerSearch}
                         onChange={(e) => handleSearchCustomer(e.target.value)}
-                        className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary-300"
                       />
                       {customerSearchOpen && customerOptions.length > 0 && (
                         <div className="absolute left-0 right-0 top-full mt-1 bg-white border rounded-xl shadow-xl z-20 max-h-40 overflow-y-auto">
@@ -849,7 +849,7 @@ export default function POS() {
                                 setCustomerSearch("");
                                 setCustomerSearchOpen(false);
                               }}
-                              className="p-2.5 hover:bg-indigo-50 cursor-pointer text-xs flex justify-between items-center"
+                              className="p-2.5 hover:bg-primary-50 cursor-pointer text-xs flex justify-between items-center"
                             >
                               <div>
                                 <div className="font-bold text-gray-800">{c.fullName}</div>
@@ -864,9 +864,9 @@ export default function POS() {
                       )}
                     </div>
                   ) : (
-                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs space-y-2">
+                    <div className="bg-primary-50 border border-primary-200 rounded-xl p-3 text-xs space-y-2">
                       <div className="flex justify-between items-center">
-                        <span className="font-bold text-indigo-900">👤 {selectedCustomer.fullName}</span>
+                        <span className="font-bold text-primary-900">👤 {selectedCustomer.fullName}</span>
                         <span className="text-gray-500">{selectedCustomer.phone}</span>
                       </div>
                       <div className="flex justify-between items-center bg-white p-2 rounded-lg border">
@@ -891,7 +891,7 @@ export default function POS() {
                           />
                           <button
                             onClick={() => setPointsToUse(maxRedeemablePoints)}
-                            className="px-2 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 rounded text-xs font-semibold"
+                            className="px-2 py-1 bg-primary-100 hover:bg-primary-200 text-primary-800 rounded text-xs font-semibold"
                           >
                             Tối đa
                           </button>
@@ -916,7 +916,7 @@ export default function POS() {
                         onClick={() => setPaymentMethod(m.key)}
                         className={`py-2 px-1 text-xs rounded-xl font-bold border transition flex flex-col items-center gap-1 ${
                           paymentMethod === m.key
-                            ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                            ? "bg-primary-600 text-white border-primary-600 shadow-sm"
                             : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
                         }`}
                       >
@@ -939,7 +939,7 @@ export default function POS() {
                       <span>-{formatPrice(pointsDiscount)}</span>
                     </div>
                   )}
-                  <div className="flex justify-between font-black text-base text-indigo-700 pt-1 border-t">
+                  <div className="flex justify-between font-black text-base text-primary-700 pt-1 border-t">
                     <span>Khách phải trả:</span>
                     <span>{formatPrice(posTotalPayable)}</span>
                   </div>
@@ -964,7 +964,7 @@ export default function POS() {
                   )}
 
                   {selectedCustomer && (
-                    <div className="text-xs text-indigo-600 bg-indigo-50 p-2 rounded-lg text-center font-medium">
+                    <div className="text-xs text-primary-600 bg-primary-50 p-2 rounded-lg text-center font-medium">
                       ✨ Khách sẽ được tích lũy thêm: <strong>+{pointsToEarn} điểm</strong> sau đơn này
                     </div>
                   )}
@@ -1106,7 +1106,7 @@ export default function POS() {
                 )}
                 <div className="flex justify-between font-bold text-base pt-1 border-t">
                   <span>Tổng cộng:</span>
-                  <span className="text-indigo-600">{formatPrice(detailOrder.totalAmount)}</span>
+                  <span className="text-primary-600">{formatPrice(detailOrder.totalAmount)}</span>
                 </div>
               </div>
             </div>

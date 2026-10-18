@@ -108,7 +108,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="bg-blue-600 p-6 rounded-t-xl">
+        <div className="bg-primary-600 p-6 rounded-t-xl">
           <h2 className="text-2xl font-bold text-white">Chỉnh sửa khuyến mãi</h2>
           <p className="text-white mt-1 font-mono">{formData.code}</p>
         </div>
@@ -138,7 +138,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
                 name="type"
                 value={formData.type}
                 onChange={handleChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               >
                 <option value="event">Sự kiện</option>
                 <option value="voucher">Voucher</option>
@@ -157,7 +157,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
                 min="0"
                 step={formData.discountType === "percent" ? "1" : "1000"}
                 max={formData.discountType === "percent" ? "100" : undefined}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 required
               />
             </div>
@@ -177,7 +177,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
                 onChange={handleChange}
                 min="0"
                 step="1000"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 required
               />
             </div>
@@ -186,7 +186,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
           {formData.type === "product" && <div>
             <label className="mb-2 block text-sm font-medium text-gray-700">Sản phẩm áp dụng <span className="text-red-500">*</span></label>
             <div className="flex flex-wrap items-center gap-3">
-              <button type="button" onClick={() => setShowProductPicker(true)} className="rounded-lg border border-blue-600 px-4 py-2 font-medium text-blue-700 hover:bg-blue-50">Chọn sản phẩm</button>
+              <button type="button" onClick={() => setShowProductPicker(true)} className="rounded-lg border border-primary-600 px-4 py-2 font-medium text-primary-700 hover:bg-primary-50">Chọn sản phẩm</button>
               <span className="text-sm text-gray-600">Đã chọn {formData.productIdsText ? formData.productIdsText.split(",").filter(Boolean).length : 0} sản phẩm</span>
             </div>
           </div>}
@@ -202,7 +202,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
                 value={formData.startDate}
                 onChange={handleChange}
                 required
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
             </div>
             <div>
@@ -214,7 +214,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
                 onChange={handleChange}
                 required
                 min={formData.startDate}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
             </div>
           </div>
@@ -230,7 +230,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
               value={formData.usageLimit}
               onChange={handleChange}
               min={formData.usedCount}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             />
             <p className="text-xs text-gray-500 mt-1">
               Đã sử dụng: {formData.usedCount} lượt
@@ -246,7 +246,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
               onChange={handleChange}
               rows="3"
               placeholder="Mô tả chi tiết về chương trình khuyến mãi..."
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
 
@@ -257,7 +257,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
               name="active"
               checked={formData.active}
               onChange={handleChange}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
             />
             <label className="ml-2 block text-sm text-gray-700">Kích hoạt</label>
           </div>
@@ -275,7 +275,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold"
+              className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 font-semibold"
             >
               {loading ? "Đang cập nhật..." : "Cập nhật"}
             </button>

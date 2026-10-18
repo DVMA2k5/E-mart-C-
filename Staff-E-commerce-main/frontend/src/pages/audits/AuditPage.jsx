@@ -31,7 +31,7 @@ export default function AuditPage() {
             <div className="mb-8">
                 <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
                     <svg
-                        className="w-8 h-8 text-blue-600"
+                        className="w-8 h-8 text-primary-600"
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
@@ -60,7 +60,7 @@ export default function AuditPage() {
                             Nhân Viên
                         </label>
                         <select
-                            className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                            className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
                             onChange={(e) => {
                             const selectedId = e.target.value;
                             const user = listuser.find(u => u.id.toString() === selectedId);
@@ -87,7 +87,7 @@ export default function AuditPage() {
                         <input 
                             type="date"
                             onChange={(e) => setStartDate(e.target.value)}
-                            className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                            className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
                         />
                         </div>
 
@@ -99,7 +99,7 @@ export default function AuditPage() {
                         <input
                             type="date"
                             onChange={(e) => setEndDate(e.target.value)}
-                            className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                            className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
                         />
                     </div>
 
@@ -108,7 +108,7 @@ export default function AuditPage() {
                     <div className="flex items-end">
                         <button 
                         onClick={() => fetchListActivity(1)}
-                        className="w-full px-6 py-2.5 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700">
+                        className="w-full px-6 py-2.5 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700">
                             Lọc
                         </button>
                     </div>

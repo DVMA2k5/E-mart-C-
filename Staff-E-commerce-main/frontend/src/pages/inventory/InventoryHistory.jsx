@@ -69,7 +69,7 @@ export default function InventoryHistory() {
           placeholder="🔍 Tìm theo sản phẩm, SKU, lý do, nhân viên..."
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="flex-1 px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+          className="flex-1 px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-300"
         />
         <button
           onClick={() => fetchHistory(page)}
@@ -102,7 +102,7 @@ export default function InventoryHistory() {
             {loading ? (
               <tr>
                 <td colSpan={7} className="py-10 text-center">
-                  <div className="inline-block w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                  <div className="inline-block w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
                 </td>
               </tr>
             ) : error ? (
@@ -117,7 +117,7 @@ export default function InventoryHistory() {
               </tr>
             ) : (
               items.map((item, idx) => (
-                <tr key={item.id} className="hover:bg-indigo-50/30 transition-colors">
+                <tr key={item.id} className="hover:bg-primary-50/30 transition-colors">
                   <td className="px-4 py-3 text-gray-500">{(meta.currentPage - 1) * meta.pageSize + idx + 1}</td>
                   <td className="px-4 py-3 font-medium text-gray-800">{item.productName || "—"}</td>
                   <td className="px-4 py-3 text-gray-500 font-mono text-xs">{item.sku || "—"}</td>
@@ -155,7 +155,7 @@ export default function InventoryHistory() {
               disabled={page === 1}
               className="px-3 py-1 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-40"
             >Trước</button>
-            <span className="px-3 py-1 rounded-lg border bg-indigo-50 text-indigo-700 font-medium">
+            <span className="px-3 py-1 rounded-lg border bg-primary-50 text-primary-700 font-medium">
               {meta.currentPage}/{meta.totalPages}
             </span>
             <button

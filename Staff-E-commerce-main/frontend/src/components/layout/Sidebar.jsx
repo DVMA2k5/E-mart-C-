@@ -60,7 +60,7 @@ export default function Sidebar({ collapsed, onClose }) {
   };
   const linkClass = ({ isActive }) =>
     `flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-      isActive ? "bg-indigo-50 text-indigo-600 font-semibold" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+      isActive ? "bg-primary-50 text-primary-600 font-semibold" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
     }`;
 
   return (
@@ -97,7 +97,7 @@ export default function Sidebar({ collapsed, onClose }) {
           const isGroupActive = group.items.some((item) => matchesPath(item.to));
           return (
             <details key={`${group.id}-${pathname}`} open={isGroupActive} className="group/menu">
-              <summary className={`flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors hover:bg-gray-100 [&::-webkit-details-marker]:hidden ${isGroupActive ? "text-indigo-600" : "text-gray-700"}`}>
+              <summary className={`flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors hover:bg-gray-100 [&::-webkit-details-marker]:hidden ${isGroupActive ? "text-primary-600" : "text-gray-700"}`}>
                 <GroupIcon size={18} className="shrink-0" /><span className="flex-1">{group.label}</span>
                 <ChevronDown size={16} className="shrink-0 text-gray-400 transition-transform group-open/menu:rotate-180" />
               </summary>

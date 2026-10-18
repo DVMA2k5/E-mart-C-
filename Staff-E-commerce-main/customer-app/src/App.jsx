@@ -1,10 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Animated,
   Easing,
+  FlatList,
   Image,
   KeyboardAvoidingView,
   Linking,
@@ -38,7 +39,6 @@ import {
   IconShield,
   IconStar,
   IconSort,
-  CategoryAll,
   getCategoryIcon,
 } from "./components/Icons";
 
@@ -82,7 +82,6 @@ const eventPromotionIssue = (promotion, orderAmount) => {
   return orderAmount < minimum ? `Mua thêm ${money(minimum - orderAmount)} để sử dụng ưu đãi.` : "";
 };
 
-const QUICK_TAGS = ["Thịt tươi", "Rau sạch", "Cá hồi", "Bia Tiger", "Dầu ăn", "Mì Hảo Hảo", "Nước ngọt"];
 
 const BANNERS = [
   {
@@ -111,7 +110,7 @@ const BANNERS = [
   },
 ];
 
-function ProductImage({ imagePath, productId, categoryName, style }) {
+const ProductImage = memo(function ProductImage({ imagePath, productId, categoryName, style }) {
   // Loại bỏ hoàn toàn fallback default.jpg và các ảnh anime placeholder
   const isWaifuOrPlaceholder = (path) => {
     if (!path) return true;
@@ -146,7 +145,7 @@ function ProductImage({ imagePath, productId, categoryName, style }) {
       onError={() => setCandidateIndex((index) => index + 1)}
     />
   );
-}
+});
 
 async function readError(response) {
   const body = await response.json().catch(() => ({}));
@@ -161,7 +160,59 @@ function AppButton({ title, onPress, secondary = false, disabled = false, style 
   );
 }
 
-function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, onOpen, cardWidthStyle }) {
+function FlyingProduct({ flight, onComplete }) {
+  const host = useRef(null);
+  const progress = useRef(new Animated.Value(0)).current;
+  const [origin, setOrigin] = useState(null);
+  useEffect(() => {
+    let active = true;
+    const frame = requestAnimationFrame(() => {
+      host.current?.measureInWindow((x, y) => {
+        if (!active) return;
+        setOrigin({ x, y });
+        Animated.timing(progress, { toValue: 1, duration: 650, easing: Easing.inOut(Easing.quad), useNativeDriver: Platform.OS !== "web" })
+          .start(({ finished }) => { if (finished && active) onComplete(flight.id); });
+      });
+    });
+    return () => { active = false; cancelAnimationFrame(frame); progress.stopAnimation(); };
+  }, [flight, onComplete, progress]);
+  return <View ref={host} collapsable={false} pointerEvents="none" style={styles.flyingProductOverlay}>
+    {origin && <Animated.View style={[styles.flyingProduct, {
+      opacity: progress.interpolate({ inputRange: [0, 0.8, 1], outputRange: [1, 1, 0] }),
+      transform: [
+        { translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [flight.x - origin.x - 26, flight.targetX - origin.x - 26] }) },
+        { translateY: progress.interpolate({ inputRange: [0, 0.3, 1], outputRange: [flight.y - origin.y - 26, flight.y - origin.y - 100, flight.targetY - origin.y - 26] }) },
+        { scale: progress.interpolate({ inputRange: [0, 0.2, 1], outputRange: [1, 1.1, 0.25] }) },
+      ],
+    }]}>
+      <ProductImage imagePath={flight.product.imageUrl} productId={flight.product.id} categoryName={flight.product.categoryName} style={styles.flyingProductImage} />
+    </Animated.View>}
+  </View>;
+}
+
+function QuantityInput({ quantity, onCommit, style }) {
+  const [text, setText] = useState(String(quantity));
+  useEffect(() => setText(String(quantity)), [quantity]);
+  const commit = () => {
+    const value = Number(text);
+    setText(String(quantity));
+    if (text && Number.isSafeInteger(value) && value > 0) onCommit(value);
+  };
+  return <TextInput
+    value={text}
+    onChangeText={(value) => setText(value.replace(/[^0-9]/g, ""))}
+    onBlur={commit}
+    onSubmitEditing={commit}
+    keyboardType="number-pad"
+    returnKeyType="done"
+    selectTextOnFocus
+    maxLength={6}
+    accessibilityLabel="Nhập số lượng sản phẩm"
+    style={[styles.quantityInput, style]}
+  />;
+}
+
+const ProductCard = memo(function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, onQuantitySet, onOpen, cardWidthStyle }) {
   const originalPrice = product.originalPrice ?? product.price;
   const isHot = (product.id % 2 === 0);
   const discountPercent = originalPrice > 0 ? Math.max(0, Math.round(((originalPrice - product.price) / originalPrice) * 100)) : 0;
@@ -205,7 +256,7 @@ function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, onOpen, ca
           {cartQty === 0 ? (
             <Pressable
               accessibilityLabel={`Thêm ${product.productName} vào giỏ`}
-              onPress={() => onAdd(product)}
+              onPress={(event) => onAdd(product, event)}
               disabled={stockLimit(product) === 0}
               style={[styles.addCartBtn, stockLimit(product) === 0 && styles.buttonDisabled]}
             >
@@ -221,7 +272,7 @@ function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, onOpen, ca
               >
                 <IconMinus size={12} color={BHX_GREEN} />
               </Pressable>
-              <Text style={styles.stepperQtyText}>{cartQty}</Text>
+              <QuantityInput quantity={cartQty} onCommit={(value) => onQuantitySet(product.id, value)} style={styles.stepperQtyText} />
               <Pressable
                 accessibilityLabel={`Thêm ${product.productName}`}
                 onPress={() => onQuantityChange(product.id, 1)}
@@ -236,9 +287,9 @@ function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, onOpen, ca
       </View>
     </View>
   );
-}
+});
 
-function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQuantityChange, onViewCart, onOpen }) {
+function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQuantityChange, onQuantitySet, onViewCart, onOpen, flight, onFlightComplete }) {
   const relatedProducts = product.categoryId == null ? [] : products.filter((item) => (
     String(item.categoryId) === String(product.categoryId) && String(item.id) !== String(product.id)
   ));
@@ -265,7 +316,6 @@ function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQu
             {productDiscountAmount(product) > 0 && <Text style={styles.productDetailSaving}>Tiết kiệm {money(productDiscountAmount(product))}</Text>}
           </View>
           <ProductStock product={product} style={styles.productDetailStock} />
-          {product.promotionName && <Text style={styles.productDetailStock}>{product.promotionName}</Text>}
           {product.description && <Text style={styles.productDetailDescription}>{product.description}</Text>}
         </View>
         <View style={styles.relatedProductsSection}>
@@ -292,21 +342,24 @@ function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQu
             <Pressable onPress={() => onQuantityChange(product.id, -1)} style={styles.productDetailQuantityButton} accessibilityRole="button" accessibilityLabel="Giảm số lượng">
               <IconMinus size={20} color={BHX_GREEN} />
             </Pressable>
-            <Text style={styles.productDetailQuantityValue}>{quantity}</Text>
-            <Pressable onPress={() => onAdd(product)} disabled={quantity >= stockLimit(product)} style={[styles.productDetailQuantityButton, quantity >= stockLimit(product) && styles.buttonDisabled]} accessibilityRole="button" accessibilityLabel="Tăng số lượng">
+            <QuantityInput quantity={quantity} onCommit={(value) => onQuantitySet(product.id, value)} style={styles.productDetailQuantityValue} />
+            <Pressable onPress={() => onQuantityChange(product.id, 1)} disabled={quantity >= stockLimit(product)} style={[styles.productDetailQuantityButton, quantity >= stockLimit(product) && styles.buttonDisabled]} accessibilityRole="button" accessibilityLabel="Tăng số lượng">
               <IconPlus size={20} color={BHX_GREEN} />
             </Pressable>
           </View>
-        ) : <AppButton title="Thêm vào giỏ hàng" disabled={stockLimit(product) === 0} onPress={() => onAdd(product)} />}
+        ) : <AppButton title="Thêm vào giỏ hàng" disabled={stockLimit(product) === 0} onPress={(event) => onAdd(product, event)} />}
         {quantity > 0 && quantity >= stockLimit(product) && <Text style={styles.stateText}>Đã chọn tối đa số lượng còn trong kho.</Text>}
         {quantity > 0 && <AppButton title="Xem giỏ hàng" onPress={onViewCart} />}
       </View>
+      {flight && <FlyingProduct key={flight.id} flight={flight} onComplete={onFlightComplete} />}
     </SafeAreaView>
   );
 }
 
 function CategorySlideModal({ visible, onRequestClose, children }) {
   const [rendered, setRendered] = useState(visible);
+  const [ready, setReady] = useState(false);
+  const [animating, setAnimating] = useState(false);
   const progress = useRef(new Animated.Value(0)).current;
   const { width } = useWindowDimensions();
 
@@ -315,23 +368,40 @@ function CategorySlideModal({ visible, onRequestClose, children }) {
   }, [visible]);
 
   useEffect(() => {
-    if (!rendered) return undefined;
+    if (!rendered || !ready) return undefined;
+    setAnimating(true);
     const animation = Animated.timing(progress, {
       toValue: visible ? 1 : 0,
-      duration: visible ? 250 : 200,
-      easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      duration: visible ? 300 : 240,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: Platform.OS !== "web",
+      isInteraction: false,
     });
-    animation.start(({ finished }) => {
-      if (finished && !visible) setRendered(false);
+    const frame = requestAnimationFrame(() => {
+      animation.start(({ finished }) => {
+        if (finished) setAnimating(false);
+        if (finished && !visible) {
+          setRendered(false);
+          setReady(false);
+        }
+      });
     });
-    return () => animation.stop();
-  }, [visible, rendered, progress]);
+    return () => {
+      cancelAnimationFrame(frame);
+      animation.stop();
+    };
+  }, [visible, rendered, ready, progress]);
 
   if (!rendered) return null;
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onRequestClose}>
-      <Animated.View pointerEvents={visible ? "auto" : "none"} style={{ flex: 1, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] }) }] }}>
+    <Modal visible transparent hardwareAccelerated animationType="none" onShow={() => setReady(true)} onRequestClose={onRequestClose}>
+      <Animated.View
+        onLayout={Platform.OS === "web" ? () => setReady(true) : undefined}
+        renderToHardwareTextureAndroid={animating}
+        shouldRasterizeIOS={animating}
+        pointerEvents={visible ? "auto" : "none"}
+        style={{ flex: 1, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] }) }] }}
+      >
         {children}
       </Animated.View>
     </Modal>
@@ -427,10 +497,19 @@ export default function App() {
   const [categories, setCategories] = useState([]);
   const [cart, setCart] = useState([]);
   const [cartLoaded, setCartLoaded] = useState(false);
+  const cartSnapshot = useRef({ cart: [], loaded: false });
+  const lastFlightTime = useRef(0);
+  const cartIconRef = useRef(null);
+  const flightSequence = useRef(0);
+  const [cartFlight, setCartFlight] = useState(null);
+  const finishCartFlight = useCallback((id) => setCartFlight((current) => current?.id === id ? null : current), []);
+  const cartScale = useRef(new Animated.Value(1)).current;
+  const previousCartCount = useRef(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
   const [categoryId, setCategoryId] = useState("all");
+  const homeListRef = useRef(null);
   const [tab, setTab] = useState("home");
   const [bannerIndex, setBannerIndex] = useState(0);
 
@@ -481,6 +560,8 @@ export default function App() {
   const [voucherBusy, setVoucherBusy] = useState(false);
   const [voucherMessage, setVoucherMessage] = useState("");
   const [appliedVoucher, setAppliedVoucher] = useState(null);
+  const [draftVoucher, setDraftVoucher] = useState(null);
+  const [vouchersLoading, setVouchersLoading] = useState(false);
 
   const [paymentMethod, setPaymentMethod] = useState("cod");
   const [useRewardPoints, setUseRewardPoints] = useState(false);
@@ -533,8 +614,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (cartLoaded) AsyncStorage.setItem(CART_KEY, JSON.stringify(cart)).catch(() => { });
+    cartSnapshot.current = { cart, loaded: cartLoaded };
+    if (!cartLoaded) return;
+    const timer = setTimeout(() => {
+      AsyncStorage.setItem(CART_KEY, JSON.stringify(cart)).catch(() => { });
+    }, 250);
+    return () => clearTimeout(timer);
   }, [cart, cartLoaded]);
+
+  useEffect(() => () => {
+    const snapshot = cartSnapshot.current;
+    if (snapshot.loaded) AsyncStorage.setItem(CART_KEY, JSON.stringify(snapshot.cart)).catch(() => { });
+  }, []);
 
   useEffect(() => {
     if (!cartLoaded || loading || loadError) return;
@@ -820,6 +911,24 @@ export default function App() {
   }, [cart]);
 
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  useEffect(() => {
+    if (!cartLoaded) return;
+    const previousCount = previousCartCount.current;
+    previousCartCount.current = itemCount;
+    if (previousCount === null || itemCount <= previousCount) return;
+
+    cartScale.stopAnimation();
+    cartScale.setValue(1);
+    const animation = Animated.sequence([
+      Animated.timing(cartScale, { toValue: 1.2, duration: 130, easing: Easing.out(Easing.quad), useNativeDriver: Platform.OS !== "web" }),
+      Animated.timing(cartScale, { toValue: 1, duration: 180, easing: Easing.inOut(Easing.quad), useNativeDriver: Platform.OS !== "web" }),
+    ]);
+    animation.start();
+    return () => {
+      animation.stop();
+      cartScale.setValue(1);
+    };
+  }, [itemCount, cartLoaded, cartScale]);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const productDiscount = cart.reduce((sum, item) => sum + productDiscountAmount(item) * item.quantity, 0);
   const originalSubtotal = subtotal + productDiscount;
@@ -830,8 +939,10 @@ export default function App() {
   const payable = Math.max(0, afterVoucher - pointsDiscount);
 
   const openVouchers = async () => {
+    setDraftVoucher(appliedVoucher);
     setVoucherOpen(true);
     setVoucherMessage("");
+    setVouchersLoading(true);
     try {
       const response = await fetch(`${API_URL}/storefront/promotions`);
       if (!response.ok) throw new Error(await readError(response));
@@ -839,6 +950,8 @@ export default function App() {
       setVoucherList(Array.isArray(data) ? data.filter((promotion) => promotion.type === "event") : []);
     } catch (error) {
       setVoucherMessage(error.message || "Không tải được phiếu mua hàng.");
+    } finally {
+      setVouchersLoading(false);
     }
   };
 
@@ -860,29 +973,52 @@ export default function App() {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.isValid) throw new Error(result.message || "Phiếu mua hàng không hợp lệ.");
-      setAppliedVoucher({ code: eventPromotionId ? null : normalizedCode, eventPromotionId, discountAmount: result.discountAmount, promotion: result.promotion });
+      setDraftVoucher({ code: eventPromotionId ? null : normalizedCode, eventPromotionId, discountAmount: result.discountAmount, promotion: result.promotion });
       if (!eventPromotionId) setVoucherCode(normalizedCode);
-      setVoucherMessage(`Đã áp dụng ${money(result.discountAmount)} giảm giá.`);
-      setVoucherOpen(false);
+      setVoucherMessage("");
     } catch (error) {
-      setAppliedVoucher(null);
       setVoucherMessage(error.message || "Không thể áp dụng phiếu mua hàng.");
     } finally {
       setVoucherBusy(false);
     }
   };
 
-  const requireAuthenticatedCustomer = () => {
+  const requireAuthenticatedCustomer = useCallback(() => {
     if (customer && customerToken) return true;
+    setSelectedProduct(null);
+    setCategoryModalOpen(false);
     setProfilePage("");
+    setRegisterMode(false);
     setTab("profile");
     return false;
+  }, [customer, customerToken]);
+
+  const navigateToTab = (nextTab) => {
+    if ((nextTab === "cart" || nextTab === "orders") && !requireAuthenticatedCustomer()) return;
+    setTab(nextTab);
   };
 
-  const addToCart = (product) => {
+  const flyProductToCart = useCallback((product, event) => {
+    const x = event?.nativeEvent?.pageX;
+    const y = event?.nativeEvent?.pageY;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const now = Date.now();
+    if (now - lastFlightTime.current < 200) return;
+    lastFlightTime.current = now;
+    const id = ++flightSequence.current;
+    cartIconRef.current?.measureInWindow((targetX, targetY, width, height) => {
+      if (id !== flightSequence.current) return;
+      setCartFlight({ id, product, x, y, targetX: targetX + width / 2, targetY: targetY + height / 2 });
+    });
+  }, []);
+
+  const addToCart = useCallback((product, event) => {
+    if (!requireAuthenticatedCustomer()) return;
     if (loading || loadError) return;
     const available = stockLimit(products.find((item) => item.id === product.id));
     if (available === 0) return;
+    if ((cartSnapshot.current.cart.find((item) => item.id === product.id)?.quantity || 0) >= available) return;
+    flyProductToCart(product, event);
     setCart((current) => {
       const found = current.find((item) => item.id === product.id);
       if (found && found.quantity >= available) return current;
@@ -905,18 +1041,39 @@ export default function App() {
         quantity: 1,
       }];
     });
-  };
+  }, [requireAuthenticatedCustomer, loading, loadError, products, flyProductToCart]);
 
-  const changeQuantity = (id, amount) => {
+  const changeQuantity = useCallback((id, amount) => {
+    if (amount > 0 && !requireAuthenticatedCustomer()) return;
     if (amount > 0 && (loading || loadError)) return;
     const available = stockLimit(products.find((product) => product.id === id));
-    setCart((current) => current
-      .map((item) => item.id === id ? {
-        ...item,
-        quantity: amount > 0 ? Math.min(item.quantity + amount, available) : item.quantity + amount,
-      } : item)
-      .filter((item) => item.quantity > 0));
-  };
+    setCart((current) => {
+      const index = current.findIndex((item) => item.id === id);
+      if (index < 0) return current;
+      const item = current[index];
+      const quantity = amount > 0 ? Math.min(item.quantity + amount, available) : item.quantity + amount;
+      if (quantity === item.quantity) return current;
+      if (quantity <= 0) return current.filter((entry) => entry.id !== id);
+      const next = [...current];
+      next[index] = { ...item, quantity };
+      return next;
+    });
+  }, [requireAuthenticatedCustomer, loading, loadError, products]);
+
+  const setProductQuantity = useCallback((id, quantity) => {
+    if (!requireAuthenticatedCustomer() || loading || loadError) return;
+    if (!Number.isSafeInteger(quantity) || quantity < 1) return;
+    const available = Math.min(1000, stockLimit(products.find((product) => product.id === id)));
+    if (available < 1) return;
+    setCart((current) => {
+      const index = current.findIndex((item) => item.id === id);
+      const nextQuantity = Math.min(quantity, available);
+      if (index < 0 || current[index].quantity === nextQuantity) return current;
+      const next = [...current];
+      next[index] = { ...current[index], quantity: nextQuantity };
+      return next;
+    });
+  }, [requireAuthenticatedCustomer, loading, loadError, products]);
 
   const getCartQuantity = (productId) => cart.find((item) => item.id === productId)?.quantity || 0;
 
@@ -930,10 +1087,13 @@ export default function App() {
       onClose={() => setSelectedProduct(null)}
       onAdd={addToCart}
       onQuantityChange={changeQuantity}
+      onQuantitySet={setProductQuantity}
+      flight={cartFlight}
+      onFlightComplete={finishCartFlight}
       onViewCart={() => {
         setSelectedProduct(null);
         setCategoryModalOpen(false);
-        setTab("cart");
+        navigateToTab("cart");
       }}
     />
   );
@@ -1018,13 +1178,41 @@ export default function App() {
     return { width: "48.5%" }; // 2 cột trên điện thoại
   }, [isDesktop, isWide]);
 
-  const categoryItemWidthStyle = useMemo(() => {
-    return { width: isDesktop ? 104 : 86 };
-  }, [isDesktop]);
+  const selectHomeCategory = useCallback((id) => {
+    setCategoryId(String(id));
+    homeListRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, []);
+
+  const renderHomeProduct = useCallback(({ item: product }) => (
+    <ProductCard
+      product={product}
+      cartQty={cartItemMap[product.id] || 0}
+      onAdd={addToCart}
+      onQuantityChange={changeQuantity}
+      onQuantitySet={setProductQuantity}
+      onOpen={setSelectedProduct}
+      cardWidthStyle={cardWidthStyle}
+    />
+  ), [cartItemMap, addToCart, changeQuantity, setProductQuantity, cardWidthStyle]);
 
   const renderHome = () => (
-    <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      <View style={styles.responsiveContainer}>
+    <FlatList
+      ref={homeListRef}
+      key={isWide ? "wide" : isDesktop ? "desktop" : "mobile"}
+      data={loading || loadError ? [] : visibleProducts}
+      keyExtractor={(product) => String(product.id)}
+      renderItem={renderHomeProduct}
+      numColumns={isWide ? 5 : isDesktop ? 4 : 2}
+      initialNumToRender={8}
+      maxToRenderPerBatch={6}
+      updateCellsBatchingPeriod={32}
+      windowSize={5}
+      extraData={cartItemMap}
+      contentContainerStyle={[styles.scrollContent, styles.responsiveContainer]}
+      columnWrapperStyle={styles.homeProductRow}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      ListHeaderComponent={<>
         {/* 1. HERO BANNER BÁCH HÓA XANH */}
         <View style={[styles.heroBanner, { backgroundColor: currentBanner.bg }]}>
           <View style={styles.bannerInfo}>
@@ -1058,53 +1246,6 @@ export default function App() {
         {/* 2. DẢI CAM KẾT VÀNG SIÊU THỊ */}
   
 
-        {/* Danh mục ngành hàng cuộn ngang */}
-        <View style={styles.categorySectionHeader}>
-          <View style={styles.categorySectionTitleRow}>
-            <View style={styles.greenBar} />
-            <Text style={styles.categorySectionTitle}>DANH MỤC NGÀNH HÀNG</Text>
-          </View>
-          <Pressable onPress={() => { setSelectedDrawerCatId("all"); setCategoryModalOpen(true); }} style={styles.openCategoryDrawerBtn}>
-            <Text style={styles.openCategoryDrawerText}>Xem phân loại</Text>
-            <IconChevronRight size={14} color={BHX_GREEN} />
-          </Pressable>
-        </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll} contentContainerStyle={styles.categoryGridContainer}>
-          {/* Nút Xem tất cả */}
-          <Pressable
-            onPress={() => setCategoryId("all")}
-            style={[styles.categoryGridItem, categoryItemWidthStyle, categoryId === "all" && styles.categoryGridItemActive]}
-          >
-            <View style={styles.categoryIconWrap}>
-              <CategoryAll size={32} />
-            </View>
-            <Text style={[styles.categoryGridText, categoryId === "all" && styles.categoryGridTextActive]} numberOfLines={2}>
-              Tất cả
-            </Text>
-          </Pressable>
-
-          {/* 10 Ngành hàng thực tế từ CSDL */}
-          {categories.map((cat) => {
-            const isSelected = String(categoryId) === String(cat.id);
-            return (
-              <Pressable
-                key={cat.id}
-                onPress={() => setCategoryId(String(cat.id))}
-                style={[styles.categoryGridItem, categoryItemWidthStyle, isSelected && styles.categoryGridItemActive]}
-              >
-                <View style={styles.categoryIconWrap}>
-                  {getCategoryIcon(cat.name, 32)}
-                </View>
-                <Text style={[styles.categoryGridText, isSelected && styles.categoryGridTextActive]} numberOfLines={2}>
-                  {cat.name}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        {/* 4. THANH TOOLBAR PHÂN LOẠI & SẮP XẾP SẢN PHẨM */}
         <View style={styles.filterToolbar}>
           <View style={styles.filterLeft}>
             <Text style={styles.filterResultCount} numberOfLines={1}>
@@ -1139,8 +1280,8 @@ export default function App() {
           </View>
         </View>
 
-        {/* 5. DANH SÁCH SẢN PHẨM (PRODUCT GRID RESPONSIVE) */}
-        {loading ? (
+      </>}
+      ListEmptyComponent={loading ? (
           <View style={styles.centerState}>
             <ActivityIndicator size="large" color={BHX_GREEN} />
             <Text style={styles.stateText}>Đang cập nhật thực phẩm tươi ngon...</Text>
@@ -1152,38 +1293,21 @@ export default function App() {
             <Text style={styles.apiHint}>API: {API_URL}</Text>
             <AppButton title="Thử kết nối lại" onPress={loadStore} />
           </View>
-        ) : visibleProducts.length === 0 ? (
+        ) : (
           <View style={styles.emptyState}>
             <IconCart size={50} color="#cbd5e1" />
             <Text style={styles.emptyTitle}>Chưa có sản phẩm phù hợp</Text>
             <Text style={styles.stateText}>Hãy chọn ngành hàng khác hoặc bấm xem tất cả.</Text>
-            <AppButton title="Xem tất cả sản phẩm" onPress={() => { setQuery(""); setCategoryId("all"); }} style={styles.emptyCta} />
-          </View>
-        ) : (
-          <View style={styles.productGrid}>
-            {visibleProducts.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                cartQty={cartItemMap[product.id] || 0}
-                onAdd={addToCart}
-                onQuantityChange={changeQuantity}
-                onOpen={setSelectedProduct}
-                cardWidthStyle={cardWidthStyle}
-              />
-            ))}
+            <AppButton title="Xem tất cả sản phẩm" onPress={() => { setQuery(""); selectHomeCategory("all"); }} style={styles.emptyCta} />
           </View>
         )}
-
-        <View style={{ height: 35 }} />
-      </View>
-    </ScrollView>
+      ListFooterComponent={<View style={{ height: 35 }} />}
+    />
   );
 
   const renderCart = () => (
     <ScrollView contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
       <View style={styles.responsiveContainer}>
-        <Text style={styles.eyebrow}>GIỎ HÀNG BÁCH HÓA XANH</Text>
         <Text style={styles.pageTitle}>{itemCount} mặt hàng trong giỏ</Text>
 
         {!cart.length ? (
@@ -1208,7 +1332,7 @@ export default function App() {
                       <Pressable onPress={() => changeQuantity(item.id, -1)} style={styles.cartStepperBtn}>
                         <IconMinus size={12} color="#334155" />
                       </Pressable>
-                      <Text style={styles.cartStepperQty}>{item.quantity}</Text>
+                      <QuantityInput quantity={item.quantity} onCommit={(value) => setProductQuantity(item.id, value)} style={styles.cartStepperQty} />
                       <Pressable onPress={() => changeQuantity(item.id, 1)} disabled={loading || !!loadError || item.quantity >= stockLimit(products.find((product) => product.id === item.id))} style={[styles.cartStepperBtn, styles.cartStepperBtnPlus, (loading || !!loadError || item.quantity >= stockLimit(products.find((product) => product.id === item.id))) && styles.buttonDisabled]}>
                         <IconPlus size={12} color="#ffffff" />
                       </Pressable>
@@ -1248,7 +1372,7 @@ export default function App() {
                 <Text style={styles.summaryTotalValue}>{money(payable)}</Text>
               </View>
 
-              <AppButton title="Tiến hành đặt hàng  →" onPress={() => { setOrderError(""); setCompletedOrder(null); setCheckoutOpen(true); }} />
+              <AppButton title="Tiến hành đặt hàng  →" onPress={() => { if (!requireAuthenticatedCustomer()) return; setOrderError(""); setCompletedOrder(null); setCheckoutOpen(true); }} />
               <AppButton
                 title="Xóa hết giỏ hàng"
                 secondary
@@ -1475,7 +1599,6 @@ export default function App() {
           <AppButton title={addressBusy ? "Đang lưu..." : "Lưu địa chỉ"} onPress={saveDeliveryAddress} disabled={addressBusy || !accountReady} />
         </View>}
       </> : <>
-        <Text style={styles.eyebrow}>E-MART</Text>
         <Text style={styles.pageTitle}>Tài khoản</Text>
         {!accountReady ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /><Text style={styles.stateText}>Đang tải tài khoản...</Text></View> : customer ? <>
           <View style={styles.profileCard}>
@@ -1497,8 +1620,6 @@ export default function App() {
             <Pressable style={styles.profileMenuRow} onPress={() => { setAddressMessage(""); setProfilePage("address"); }}><Text style={styles.profileMenuIcon}>♧</Text><Text style={styles.profileMenuText}>Địa chỉ nhận hàng</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
           </View>
           <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Hỗ trợ khách hàng</Text>
-            <Text style={styles.stateText}>Đơn hàng hiện thanh toán khi nhận hàng.</Text>
             <AppButton title="Đăng xuất" secondary onPress={logoutCustomer} />
           </View>
         </> : <>
@@ -1535,7 +1656,6 @@ export default function App() {
             </View>
           </View>
         </Modal>
-        <View style={styles.infoCard}><Text style={styles.infoTitle}>Hỗ trợ khách hàng</Text><Text style={styles.stateText}>Đơn hàng hiện thanh toán khi nhận hàng.</Text></View>
       </>}
     </ScrollView>
   );
@@ -1553,11 +1673,15 @@ export default function App() {
             onPress={() => { setTab("profile"); setProfilePage("address"); }}
           >
             <View style={styles.locationLeft}>
-              <IconLocation size={13} color={BHX_YELLOW} />
+              <IconLocation size={13} color={BHX_GREEN} />
               <Text style={styles.locationLabel}>Giao tại: </Text>
               <Text style={styles.locationAddress} numberOfLines={1}>
                 {deliveryAddress?.street ? `${deliveryAddress.street}, ${deliveryAddress.ward || ""}` : "Chọn địa chỉ nhận hàng"}
               </Text>
+            </View>
+            <View style={styles.locationRight}>
+              <Text style={styles.locationChangeText}>Đổi</Text>
+              <IconChevronRight size={14} color={BHX_GREEN} />
             </View>
           </Pressable>
 
@@ -1584,23 +1708,34 @@ export default function App() {
               style={styles.searchInput}
               returnKeyType="search"
             />
-       
+            {query.length > 0 && (
+              <Pressable
+                onPress={() => setQuery("")}
+                style={styles.searchClearButton}
+                accessibilityRole="button"
+                accessibilityLabel="Xóa nội dung tìm kiếm"
+              >
+                <IconClose size={18} color="#64748b" />
+              </Pressable>
+            )}
           </View>
 
-          {/* Quick Search Tags */}
-          <ScrollView horizontal style={styles.quickTagsScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow}>
-            {QUICK_TAGS.map((tag) => (
+          {/* Lọc sản phẩm theo danh mục */}
+          {tab === "home" && <ScrollView horizontal style={styles.quickTagsScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow} keyboardShouldPersistTaps="handled">
+            {[{ id: "all", name: "Tất cả" }, ...categories].map((category) => (
               <Pressable
-                key={tag}
-                onPress={() => setQuery(query === tag ? "" : tag)}
-                style={[styles.quickTagChip, query === tag && styles.quickTagChipActive]}
+                key={category.id}
+                onPress={() => selectHomeCategory(category.id)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: String(categoryId) === String(category.id) }}
+                style={[styles.quickTagChip, String(categoryId) === String(category.id) && styles.quickTagChipActive]}
               >
-                <Text style={[styles.quickTagText, query === tag && styles.quickTagTextActive]}>
-                  {tag}
+                <Text style={[styles.quickTagText, String(categoryId) === String(category.id) && styles.quickTagTextActive]}>
+                  {category.name}
                 </Text>
               </Pressable>
             ))}
-          </ScrollView>
+          </ScrollView>}
         </View>
       </View>
 
@@ -1611,30 +1746,6 @@ export default function App() {
         {tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
       </View>
 
-      {/* THANH GIỎ HÀNG NỔI Ở ĐÁY KHI CÓ MẶT HÀNG TRONG GIỎ */}
-      {itemCount > 0 && tab === "home" && (
-        <Pressable
-          onPress={() => setTab("cart")}
-          style={styles.floatingHomeCartBar}
-        >
-          <View style={styles.floatingCartLeft}>
-            <View style={styles.floatingCartIconCircle}>
-              <IconCart size={18} color="#ffffff" />
-              <View style={styles.floatingCartBadge}>
-                <Text style={styles.floatingCartBadgeText}>{itemCount}</Text>
-              </View>
-            </View>
-            <View style={styles.floatingCartInfo}>
-              <Text style={styles.floatingCartQtyText}>Giỏ hàng • {itemCount} sản phẩm</Text>
-              <Text style={styles.floatingCartPriceText}>{money(payable)}</Text>
-            </View>
-          </View>
-          <View style={styles.floatingCartRight}>
-            <Text style={styles.floatingCartCtaText}>Xem giỏ hàng</Text>
-            <IconChevronRight size={14} color="#ffffff" />
-          </View>
-        </Pressable>
-      )}
 
       {/* Thanh điều hướng: Trang chủ, Giỏ hàng, Đơn hàng, Tài khoản */}
       <View style={styles.bottomNav}>
@@ -1654,17 +1765,17 @@ export default function App() {
             return (
               <Pressable
                 key={item.key}
-                onPress={() => setTab(item.key)}
+                onPress={() => navigateToTab(item.key)}
                 style={styles.navItem}
               >
-                <View style={styles.navIconWrapper}>
+                <Animated.View ref={item.key === "cart" ? cartIconRef : undefined} collapsable={false} style={[styles.navIconWrapper, item.key === "cart" && { transform: [{ scale: cartScale }] }]}>
                   {item.icon(isActive)}
                   {item.badge && (
                     <View style={styles.bottomNavBadge}>
                       <Text style={styles.bottomNavBadgeText}>{item.badge}</Text>
                     </View>
                   )}
-                </View>
+                </Animated.View>
                 <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>{item.label}</Text>
               </Pressable>
             );
@@ -1682,12 +1793,14 @@ export default function App() {
         {selectedProduct ? renderProductDetails() : (
         <SafeAreaView style={isDesktop ? styles.drawerDesktopBackdrop : styles.drawerSafeArea}>
           <View style={isDesktop ? styles.drawerDesktopDialog : styles.drawerMobileContainer}>
-            {/* Header màu xanh lá cây chuẩn Bách Hóa Xanh: [Đóng] [Trang chủ] + [Ô tìm kiếm bo tròn] */}
+            {/* Nút điều hướng và ô tìm kiếm cùng một hàng. */}
             <View style={styles.bhxModalHeader}>
               <View style={styles.bhxHeaderActionGroup}>
                 <Pressable
                   onPress={() => setCategoryModalOpen(false)}
                   style={styles.bhxHeaderCircleBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Đóng danh mục"
                 >
                   <IconCloseCircle size={22} color="#ffffff" />
                   <Text style={styles.bhxHeaderBtnLabel}>Đóng</Text>
@@ -1699,6 +1812,8 @@ export default function App() {
                     setTab("home");
                   }}
                   style={styles.bhxHeaderCircleBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Về trang chủ"
                 >
                   <IconHome size={22} color="#ffffff" active={true} />
                   <Text style={styles.bhxHeaderBtnLabel}>Trang chủ</Text>
@@ -1711,7 +1826,8 @@ export default function App() {
                 <TextInput
                   value={drawerSearchText}
                   onChangeText={setDrawerSearchText}
-                  placeholder="Tìm sản phẩm trong loại đang chọn"
+                  placeholder="Tìm sản phẩm..."
+                  accessibilityLabel="Tìm sản phẩm trong danh mục"
                   placeholderTextColor="#94a3b8"
                   style={styles.bhxModalSearchInput}
                   returnKeyType="search"
@@ -1805,33 +1921,6 @@ export default function App() {
               </View>
             </View>
 
-            {/* DƯỚI ĐÁY MODAL: THANH GIỎ HÀNG NỔI (STICKY BOTTOM CART) CHỐNG MẤT GIỎ */}
-            {itemCount > 0 && (
-              <Pressable
-                onPress={() => {
-                  setCategoryModalOpen(false);
-                  setTab("cart");
-                }}
-                style={styles.drawerFloatingCart}
-              >
-                <View style={styles.floatingCartLeft}>
-                  <View style={styles.floatingCartIconCircle}>
-                    <IconCart size={18} color="#ffffff" />
-                    <View style={styles.floatingCartBadge}>
-                      <Text style={styles.floatingCartBadgeText}>{itemCount}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.floatingCartInfo}>
-                    <Text style={styles.floatingCartQtyText}>Giỏ hàng • {itemCount} sản phẩm</Text>
-                    <Text style={styles.floatingCartPriceText}>{money(payable)}</Text>
-                  </View>
-                </View>
-                <View style={styles.floatingCartRight}>
-                  <Text style={styles.floatingCartCtaText}>Xem giỏ hàng</Text>
-                  <IconChevronRight size={14} color="#ffffff" />
-                </View>
-              </Pressable>
-            )}
           </View>
         </SafeAreaView>
         )}
@@ -1900,7 +1989,7 @@ export default function App() {
                   <Text style={styles.summaryTotalValue}>{money(completedOrder.totalAmount)}</Text>
                 </View>
 
-                <AppButton title="Hoàn tất & Xem đơn hàng" onPress={() => { setCheckoutOpen(false); setTab("orders"); }} />
+                <AppButton title="Hoàn tất & Xem đơn hàng" onPress={() => { setCheckoutOpen(false); navigateToTab("orders"); }} />
               </ScrollView>
             ) : (
               <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.checkoutContent} showsVerticalScrollIndicator={false}>
@@ -2024,10 +2113,10 @@ export default function App() {
         <View style={styles.voucherBackdrop}>
           <View style={[styles.voucherSheet, isDesktop ? styles.voucherSheetDesktop : null]}>
             <View style={styles.voucherHeading}>
-              <Text style={styles.voucherTitle}>Phiếu mua hàng & Ưu đãi</Text>
-              <Pressable style={styles.voucherCloseButton} onPress={() => setVoucherOpen(false)}>
-                <IconClose size={18} color="#64748b" />
+              <Pressable style={styles.voucherCloseButton} accessibilityRole="button" accessibilityLabel="Quay lại giỏ hàng" onPress={() => setVoucherOpen(false)}>
+                <View style={{ transform: [{ rotate: "180deg" }] }}><IconChevronRight size={24} color="#ee4d2d" /></View>
               </Pressable>
+              <Text style={styles.voucherTitle}>Chọn E-Mart Voucher</Text>
             </View>
 
             <View style={styles.voucherCodeRow}>
@@ -2043,59 +2132,82 @@ export default function App() {
               </Pressable>
             </View>
 
-            <Text style={styles.voucherSubheading}>Ưu đãi sự kiện đang có sẵn</Text>
-            <ScrollView style={styles.voucherList} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              {voucherList.map((voucher) => {
+            <ScrollView style={styles.voucherList} contentContainerStyle={styles.voucherListContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color="#ee4d2d" /><Text style={styles.stateText}>Đang tải voucher...</Text></View> : [false, true].map((unavailable) => {
+                const vouchers = voucherList.filter((voucher) => !!eventPromotionIssue(voucher, subtotal) === unavailable);
+                if (unavailable && !vouchers.length) return null;
+                return <View key={String(unavailable)} style={styles.voucherSection}>
+                <Text style={styles.voucherSubheading}>{unavailable ? "Voucher không khả dụng" : "Mã giảm giá"}</Text>
+                {!unavailable && !vouchers.length && voucherList.length > 0 && <Text style={styles.voucherEmptyText}>Chưa có mã phù hợp với đơn hàng này.</Text>}
+                {vouchers.map((voucher) => {
                 const issue = eventPromotionIssue(voucher, subtotal);
                 const disabled = voucherBusy || !!issue;
+                const selected = draftVoucher?.eventPromotionId === voucher.id;
+                const usagePercent = Number(voucher.usageLimit) > 0
+                  ? Math.min(100, Math.max(0, Math.round((Number(voucher.usedCount) || 0) / Number(voucher.usageLimit) * 100)))
+                  : null;
                 return (
-                <View key={voucher.id} style={[styles.voucherCard, !!issue && styles.voucherCardUnavailable]}>
+                <View key={voucher.id} style={styles.voucherCard}>
                   <View style={styles.voucherCardTop}>
-                    <View style={styles.voucherBadge}>
+                    <View style={[styles.voucherBadge, !!issue && styles.voucherBadgeUnavailable]}>
+                      {[12, 30, 48, 66, 84, 102].map((top) => <View key={top} style={[styles.voucherPerforation, { top }]} />)}
+                      <IconCart size={30} color="#fff" />
                       <Text style={styles.voucherBadgeText}>{voucher.discountType === "percent" ? `${voucher.value}%` : money(voucher.value)}</Text>
+                      <Text style={styles.voucherBrand}>E-MART</Text>
                     </View>
                     <View style={styles.voucherInfo}>
-                      <Text style={styles.voucherName}>{voucher.name || "Ưu đãi sự kiện"}</Text>
+                      <Text style={[styles.voucherName, !!issue && styles.voucherMuted]}>Giảm {voucher.discountType === "percent" ? `${voucher.value}%` : money(voucher.value)}</Text>
+                      <Text style={styles.voucherMinimum}>Đơn tối thiểu {money(voucher.minOrderAmount || 0)}</Text>
+                      <Text style={styles.voucherPromotionName} numberOfLines={2}>{voucher.name || "Ưu đãi sự kiện"}</Text>
                       {voucher.endDate && <Text style={styles.voucherExpiry}>Hạn {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>}
+                      <Text style={styles.voucherUsage}>{usagePercent !== null ? `Đã dùng ${usagePercent}%` : `Đã dùng ${voucher.usedCount || 0} lượt · Không giới hạn`}</Text>
                     </View>
-                    <Pressable disabled={disabled} accessibilityRole="button" accessibilityLabel={`Dùng ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled }} onPress={() => applyVoucher("", voucher.id)} style={[styles.voucherUseBtn, !!issue && styles.voucherUseBtnUnavailable, voucherBusy && styles.buttonDisabled]}>
-                      <Text style={styles.voucherUseText}>Dùng</Text>
+                    <Pressable disabled={disabled} accessibilityRole="radio" accessibilityLabel={`Chọn ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled, checked: selected }} onPress={() => { if (selected) { setDraftVoucher(null); setVoucherMessage(""); } else { applyVoucher("", voucher.id); } }} style={styles.voucherSelectTarget}>
+                      <View style={[styles.voucherRadio, selected && styles.voucherRadioSelected, !!issue && styles.voucherRadioUnavailable]}>
+                        {selected && <Text style={styles.voucherRadioCheck}>✓</Text>}
+                      </View>
                     </Pressable>
                   </View>
-                  {voucher.description && <Text style={styles.voucherDescription}>{voucher.description}</Text>}
-                  {voucher.minOrderAmount > 0 && <Text style={styles.voucherExpiry}>Đơn tối thiểu {money(voucher.minOrderAmount)}</Text>}
                   {!!issue && <Text style={styles.voucherUnavailableText}>{issue}</Text>}
                 </View>
                 );
+                })}</View>;
               })}
-              {!voucherList.length && !voucherMessage && (
+              {!vouchersLoading && !voucherList.length && !voucherMessage && (
                 <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có ưu đãi sự kiện. Nếu có voucher, bạn có thể nhập mã ở trên.</Text></View>
               )}
               {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
             </ScrollView>
 
-            <AppButton
-              title={appliedVoucher ? `Đang dùng · Giảm ${money(appliedVoucher.discountAmount)}` : "Đóng"}
-              onPress={() => setVoucherOpen(false)}
-            />
+            <View style={styles.voucherFooter}>
+              <Text style={styles.voucherFooterHint}>{draftVoucher ? "1 voucher đã được chọn." : "Chưa chọn voucher."}</Text>
+              {draftVoucher && <Text style={styles.voucherFooterSaving}>Giảm <Text style={styles.voucherSavingAmount}>-{money(draftVoucher.discountAmount)}</Text></Text>}
+              <AppButton title={voucherBusy ? "Đang kiểm tra..." : "Đồng ý"} disabled={voucherBusy} style={styles.voucherConfirm} onPress={() => { setAppliedVoucher(draftVoucher); setVoucherOpen(false); }} />
+            </View>
           </View>
         </View>
       </Modal>
+      {cartFlight && !selectedProduct && !categoryModalOpen && <FlyingProduct key={cartFlight.id} flight={cartFlight} onComplete={finishCartFlight} />}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  homeProductRow: { justifyContent: "space-between", marginBottom: 10 },
+  flyingProductOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 100, elevation: 100 },
+  flyingProduct: { position: "absolute", top: 0, left: 0, width: 52, height: 52, borderRadius: 26, backgroundColor: "#fff", borderWidth: 2, borderColor: BHX_GREEN, overflow: "hidden" },
+  flyingProductImage: { width: "100%", height: "100%" },
+  quantityInput: { minWidth: 34, maxWidth: 70, minHeight: 30, paddingVertical: 0, paddingHorizontal: 3, textAlign: "center" },
   safeArea: { flex: 1, backgroundColor: "#f6f8f4" },
   drawerSafeArea: { flex: 1, backgroundColor: BHX_GREEN },
   drawerMobileContainer: { flex: 1, backgroundColor: "#fff" },
   drawerDesktopBackdrop: { flex: 1, backgroundColor: "#14221988", alignItems: "center", justifyContent: "center", padding: 24 },
   drawerDesktopDialog: { width: "100%", maxWidth: 1000, height: "90%", borderRadius: 16, backgroundColor: "#fff", overflow: "hidden" },
-  bhxModalHeader: { backgroundColor: BHX_GREEN, padding: 12, gap: 10 },
-  bhxHeaderActionGroup: { flexDirection: "row", alignItems: "center", gap: 20 },
-  bhxHeaderCircleBtn: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 36 },
-  bhxHeaderBtnLabel: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  bhxModalSearchBox: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 42, backgroundColor: "#fff", borderRadius: 8, paddingHorizontal: 10 },
+  bhxModalHeader: { backgroundColor: BHX_GREEN, flexDirection: "row", alignItems: "center", padding: 10, gap: 10 },
+  bhxHeaderActionGroup: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
+  bhxHeaderCircleBtn: { alignItems: "center", justifyContent: "center", gap: 4, minHeight: 48, minWidth: 44, paddingHorizontal: 2 },
+  bhxHeaderBtnLabel: { color: "#fff", fontSize: 11, fontWeight: "700", textAlign: "center" },
+  bhxModalSearchBox: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8, minHeight: 42, backgroundColor: "#fff", borderRadius: 8, paddingHorizontal: 10 },
   bhxModalSearchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 12, paddingVertical: 8 },
   drawerBody: { flex: 1, minHeight: 0, flexDirection: "row" },
   drawerSidebarWrapper: { backgroundColor: "#f1f5f9", flexShrink: 0 },
@@ -2127,7 +2239,6 @@ const styles = StyleSheet.create({
   bhxSubTagText: { color: "#fff", fontSize: 7, fontWeight: "800" },
   bhxSubName: { color: TEXT_DARK, fontSize: 10, lineHeight: 14, textAlign: "center", marginTop: 5 },
   bhxEmptySubState: { width: "100%", alignItems: "center", paddingVertical: 35, paddingHorizontal: 10 },
-  drawerFloatingCart: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: BHX_GREEN, paddingHorizontal: 12, paddingVertical: 10, flexShrink: 0 },
   checkoutSheetDesktop: { width: "100%", maxWidth: 560, alignSelf: "center", borderRadius: 22 },
   voucherSheetDesktop: { width: "100%", maxWidth: 560, alignSelf: "center", borderRadius: 22 },
   successBadgeCircle: { width: 56, height: 56, borderRadius: 28, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", alignSelf: "center", marginVertical: 16 },
@@ -2164,11 +2275,12 @@ const styles = StyleSheet.create({
   voucherUseText: { color: "#fff", fontSize: 11, fontWeight: "800" },
   header: { backgroundColor: BHX_GREEN, paddingHorizontal: 14, paddingTop: 7, paddingBottom: 10, flexShrink: 0 },
   headerResponsiveInner: { width: "100%", maxWidth: 1200, alignSelf: "center" },
-  locationBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingBottom: 8 },
+  locationBar: { backgroundColor: "#fff", borderRadius: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingHorizontal: 12, paddingVertical: 10 },
   locationLeft: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 4 },
-  locationLabel: { color: "#fff", fontSize: 11 },
-  locationAddress: { flex: 1, color: "#fff", fontSize: 11, fontWeight: "700" },
+  locationLabel: { color: TEXT_DARK, fontSize: 11 },
+  locationAddress: { flex: 1, color: TEXT_DARK, fontSize: 11, fontWeight: "700" },
   locationRight: { flexDirection: "row", alignItems: "center", gap: 3 },
+  locationChangeText: { color: BHX_GREEN, fontSize: 11, fontWeight: "700" },
   speedText: { color: BHX_YELLOW, fontSize: 10, fontWeight: "800" },
   headerTopLine: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1 },
@@ -2180,12 +2292,12 @@ const styles = StyleSheet.create({
   categoryMenuBtnText: { color: "#fff", fontSize: 11, fontWeight: "700" },
   clearSearchBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   searchSubmitBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center" },
-  quickTagsScroll: { flexGrow: 0, flexShrink: 0, height: 34 },
+  quickTagsScroll: { flexGrow: 0, flexShrink: 0, height: 44 },
   quickTagsRow: { flexDirection: "row", alignItems: "center", gap: 7, paddingTop: 8 },
-  quickTagChip: { borderRadius: 12, backgroundColor: "#ffffff1f", paddingHorizontal: 10, paddingVertical: 5 },
-  quickTagChipActive: { backgroundColor: BHX_YELLOW },
-  quickTagText: { color: "#fff", fontSize: 10 },
-  quickTagTextActive: { color: BHX_DARK_GREEN, fontWeight: "800" },
+  quickTagChip: { borderRadius: 16, backgroundColor: "#fff", borderWidth: 1, borderColor: "#fff", paddingHorizontal: 12, paddingVertical: 7 },
+  quickTagChipActive: { backgroundColor: BHX_DARK_GREEN },
+  quickTagText: { color: TEXT_DARK, fontSize: 12 },
+  quickTagTextActive: { color: "#fff", fontWeight: "800" },
   headerTop: { flexDirection: "row", alignItems: "center" },
   brandIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", marginRight: 9 },
   brandLetter: { color: "#fff", fontSize: 25, fontWeight: "900", fontStyle: "italic" },
@@ -2198,6 +2310,7 @@ const styles = StyleSheet.create({
   searchBar: { height: 44, backgroundColor: "#f4f6f2", borderRadius: 11, marginTop: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center" },
   searchIcon: { color: "#7f8a81", fontSize: 24, marginRight: 7 },
   searchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 13, paddingVertical: 0 },
+  searchClearButton: { width: 36, height: 44, alignItems: "center", justifyContent: "center" },
   searchCategoryBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", marginRight: 8 },
   promises: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: 9, gap: 9 },
   promiseText: { color: "#708077", fontSize: 10, fontWeight: "600" },
@@ -2219,19 +2332,6 @@ const styles = StyleSheet.create({
   trustItem: { flex: 1, minWidth: 0, alignItems: "center", gap: 5, paddingHorizontal: 3 },
   trustLabel: { color: TEXT_MUTED, fontSize: 9, textAlign: "center" },
   trustDivider: { width: 1, height: 26, backgroundColor: BORDER_COLOR },
-  categorySectionHeader: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 20, marginBottom: 12 },
-  categorySectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
-  greenBar: { width: 4, height: 18, borderRadius: 2, backgroundColor: BHX_GREEN },
-  categorySectionTitle: { color: TEXT_DARK, fontSize: 12, fontWeight: "900" },
-  openCategoryDrawerBtn: { flexDirection: "row", alignItems: "center", gap: 3, paddingVertical: 5 },
-  openCategoryDrawerText: { color: BHX_GREEN, fontSize: 10, fontWeight: "700" },
-  categoryScroll: { flexGrow: 0, flexShrink: 0 },
-  categoryGridContainer: { flexDirection: "row", gap: 8, paddingRight: 4 },
-  categoryGridItem: { alignItems: "center", paddingHorizontal: 3, paddingVertical: 9, backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#edf0ec" },
-  categoryGridItemActive: { borderColor: BHX_GREEN, backgroundColor: "#eef8f1" },
-  categoryIconWrap: { height: 40, alignItems: "center", justifyContent: "center" },
-  categoryGridText: { color: TEXT_DARK, fontSize: 10, lineHeight: 14, minHeight: 28, textAlign: "center" },
-  categoryGridTextActive: { color: BHX_GREEN, fontWeight: "800" },
   filterToolbar: { gap: 10, marginTop: 18, marginBottom: 12 },
   filterLeft: { flexDirection: "row", alignItems: "center" },
   filterResultCount: { color: TEXT_MUTED, fontSize: 12 },
@@ -2401,30 +2501,50 @@ const styles = StyleSheet.create({
   voucherAction: { color: "#83909c", fontSize: 12 },
   voucherRemove: { color: "#b0443c", fontSize: 11, textAlign: "right", marginBottom: 5 },
   voucherBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "#14221966" },
-  voucherSheet: { height: "78%", backgroundColor: "#f8faff", borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 16, paddingBottom: 14 },
-  voucherHeading: { height: 62, marginHorizontal: -16, paddingHorizontal: 20, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e7eaf0", borderTopLeftRadius: 22, borderTopRightRadius: 22, flexDirection: "row", alignItems: "center", justifyContent: "center" },
-  voucherTitle: { color: TEXT_DARK, fontSize: 18, fontWeight: "900" },
-  voucherCloseButton: { position: "absolute", right: 18, top: 15 },
+  voucherSheet: { height: "94%", backgroundColor: "#f5f5f5", borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: "hidden" },
+  voucherHeading: { minHeight: 64, paddingHorizontal: 12, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#eee", flexDirection: "row", alignItems: "center", gap: 10 },
+  voucherTitle: { flex: 1, color: "#222", fontSize: 20, fontWeight: "600" },
+  voucherCloseButton: { width: 36, height: 44, alignItems: "center", justifyContent: "center" },
   voucherClose: { color: "#fff", backgroundColor: "#9da8ba", overflow: "hidden", borderRadius: 20, width: 30, height: 30, textAlign: "center", lineHeight: 28, fontSize: 25 },
-  voucherCodeRow: { flexDirection: "row", gap: 9, marginTop: 14, marginBottom: 14 },
+  voucherCodeRow: { flexDirection: "row", gap: 9, padding: 14, backgroundColor: "#fff", marginBottom: 8 },
   voucherInput: { flex: 1, minHeight: 48, backgroundColor: "#fff", borderColor: "#dce3e9", borderWidth: 1, borderRadius: 10, paddingHorizontal: 13, color: TEXT_DARK, fontSize: 14 },
-  voucherAdd: { width: 86, borderRadius: 10, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center" },
+  voucherAdd: { width: 86, borderRadius: 6, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center" },
   voucherAddText: { color: "#fff", fontSize: 14, fontWeight: "900" },
-  voucherSubheading: { color: "#59636f", fontSize: 13, fontWeight: "800", marginBottom: 8 },
+  voucherSubheading: { color: "#222", fontSize: 17, fontWeight: "700", marginBottom: 18 },
   voucherList: { flex: 1 },
-  voucherCard: { backgroundColor: "#fff", borderRadius: 12, borderColor: "#e2e8ef", borderWidth: 1, padding: 12, marginBottom: 9 },
+  voucherListContent: { paddingBottom: 12 },
+  voucherSection: { backgroundColor: "#fff", paddingHorizontal: 12, paddingTop: 20, paddingBottom: 6, marginBottom: 10 },
+  voucherEmptyText: { color: TEXT_MUTED, fontSize: 13, paddingBottom: 16 },
+  voucherCard: { backgroundColor: "#fff", borderRadius: 3, borderColor: "#ececec", borderWidth: 1, marginBottom: 14, overflow: "hidden", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 1 },
   voucherCardUnavailable: { backgroundColor: "#dfe3e8", borderColor: "#c3cbd5" },
   voucherUseBtnUnavailable: { backgroundColor: "#87929e" },
-  voucherUnavailableText: { color: "#526071", fontSize: 11, lineHeight: 16, fontWeight: "600", marginTop: 8 },
-  voucherCardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
-  voucherBadge: { minWidth: 58, minHeight: 45, paddingHorizontal: 5, borderRadius: 7, backgroundColor: "#e9edf5", alignItems: "center", justifyContent: "center" },
-  voucherBadgeText: { color: "#49576a", fontWeight: "900", fontSize: 13 },
-  voucherInfo: { flex: 1 },
-  voucherName: { color: "#303b4b", fontSize: 13, lineHeight: 18, fontWeight: "700" },
-  voucherExpiry: { color: "#8b95a1", fontSize: 11, marginTop: 4 },
+  voucherUnavailableText: { color: "#888", fontSize: 12, lineHeight: 18, paddingHorizontal: 12, paddingVertical: 12, borderTopWidth: 1, borderTopColor: "#eee", borderStyle: "dashed" },
+  voucherCardTop: { flexDirection: "row", alignItems: "stretch", minHeight: 132 },
+  voucherBadge: { width: 98, paddingHorizontal: 6, paddingVertical: 18, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", gap: 6 },
+  voucherBadgeUnavailable: { backgroundColor: "#b9dcd5" },
+  voucherPerforation: { position: "absolute", left: -4, width: 8, height: 8, borderRadius: 4, backgroundColor: "#fff" },
+  voucherBadgeText: { color: "#fff", fontWeight: "800", fontSize: 15, textAlign: "center" },
+  voucherBrand: { color: "#fff", fontSize: 10, fontWeight: "600", letterSpacing: 1 },
+  voucherInfo: { flex: 1, minWidth: 0, paddingLeft: 12, paddingVertical: 14, justifyContent: "center" },
+  voucherName: { color: "#222", fontSize: 17, lineHeight: 23, fontWeight: "700" },
+  voucherMuted: { color: "#999" },
+  voucherMinimum: { color: "#555", fontSize: 12, marginTop: 4 },
+  voucherPromotionName: { color: "#888", fontSize: 11, marginTop: 4 },
+  voucherExpiry: { color: "#999", fontSize: 11, marginTop: 5 },
+  voucherUsage: { color: "#ee4d2d", fontSize: 12, fontWeight: "600", paddingVertical: 5 },
+  voucherSelectTarget: { width: 46, alignItems: "center", justifyContent: "center" },
+  voucherRadio: { width: 24, height: 24, borderRadius: 12, borderWidth: 1.5, borderColor: "#aaa", alignItems: "center", justifyContent: "center" },
+  voucherRadioSelected: { backgroundColor: BHX_GREEN, borderColor: BHX_GREEN },
+  voucherRadioUnavailable: { backgroundColor: "#eee", borderColor: "#ccc" },
+  voucherRadioCheck: { color: "#fff", fontSize: 17, fontWeight: "700", lineHeight: 21 },
+  voucherFooter: { backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#eee", paddingHorizontal: 16, paddingTop: 14, paddingBottom: 20, gap: 6 },
+  voucherFooterHint: { color: "#777", fontSize: 13 },
+  voucherFooterSaving: { color: "#333", fontSize: 14, fontWeight: "600" },
+  voucherSavingAmount: { color: "#ee4d2d", fontWeight: "800" },
+  voucherConfirm: { backgroundColor: BHX_GREEN, borderRadius: 6, minHeight: 48, marginTop: 6 },
   voucherUse: { color: "#25976c", fontSize: 12, fontWeight: "900" },
   voucherDescription: { color: "#d58b3d", fontSize: 11, lineHeight: 16, marginTop: 8 },
-  voucherMessage: { color: "#b0443c", fontSize: 12, marginVertical: 8 },
+  voucherMessage: { color: "#b0443c", fontSize: 12, marginVertical: 8, marginHorizontal: 14 },
   accountPageHeading: { minHeight: 54, backgroundColor: "#fff", flexDirection: "row", alignItems: "center", justifyContent: "center", borderRadius: 12, marginBottom: 10, position: "relative" },
   accountBackButton: { position: "absolute", left: 7, top: 5, zIndex: 1, width: 42, height: 44, justifyContent: "center" },
   accountBack: { color: TEXT_DARK, fontSize: 34, lineHeight: 40 },
@@ -2452,16 +2572,6 @@ const styles = StyleSheet.create({
   bottomNavBadge: { position: "absolute", top: -5, right: -6, minWidth: 16, height: 16, paddingHorizontal: 3, borderRadius: 8, backgroundColor: BHX_RED, alignItems: "center", justifyContent: "center" },
   bottomNavBadgeText: { color: "#fff", fontSize: 9, fontWeight: "800" },
   navLabelActive: { color: BHX_GREEN, fontWeight: "800" },
-  floatingHomeCartBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, backgroundColor: BHX_GREEN, paddingHorizontal: 16, paddingVertical: 10 },
-  floatingCartLeft: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
-  floatingCartIconCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: BHX_DARK_GREEN, alignItems: "center", justifyContent: "center" },
-  floatingCartBadge: { position: "absolute", top: -3, right: -4, backgroundColor: BHX_YELLOW, borderRadius: 8, paddingHorizontal: 4, minWidth: 16, alignItems: "center" },
-  floatingCartBadgeText: { color: BHX_DARK_GREEN, fontSize: 9, fontWeight: "800" },
-  floatingCartInfo: { flex: 1, minWidth: 0 },
-  floatingCartQtyText: { color: "#fff", fontSize: 10 },
-  floatingCartPriceText: { color: BHX_YELLOW, fontSize: 14, fontWeight: "900", marginTop: 3 },
-  floatingCartRight: { flexDirection: "row", alignItems: "center", gap: 4 },
-  floatingCartCtaText: { color: "#fff", fontSize: 11, fontWeight: "800" },
   navIcon: { color: "#849087", fontSize: 20, fontWeight: "700", height: 24 },
   navLabel: { color: "#849087", fontSize: 9, fontWeight: "600" },
   navActive: { color: BHX_GREEN, fontWeight: "900" },

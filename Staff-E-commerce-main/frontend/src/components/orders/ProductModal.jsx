@@ -107,7 +107,7 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
               className="flex-1 px-4 py-2 border rounded-lg"
             />
             <button
-              className="px-4 py-2 bg-blue-500 text-white rounded"
+              className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700"
               onClick={() => setSearchMode(true)}
             >
               Tìm kiếm
@@ -148,7 +148,7 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
                       <tr
                         key={p.id}
                         className={`hover:bg-gray-50 cursor-pointer ${
-                          selectedProduct?.id === p.id ? "bg-blue-50" : ""
+                          selectedProduct?.id === p.id ? "bg-primary-50" : ""
                         }`}
                         onClick={() => setSelectedProduct({ id: p.id, name: p.productName, price: p.price, quantity: p.inventory.quantity})}
                       >
@@ -178,7 +178,7 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
         {!searchMode && (
           <div className="flex justify-center items-center gap-3 mt-4">
             <button
-              className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+              className="px-3 py-1 bg-primary-600 text-white rounded disabled:opacity-50 hover:bg-primary-700"
               disabled={page <= 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
@@ -186,7 +186,7 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
             </button>
             <span>{page} / {totalPages}</span>
             <button
-              className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+              className="px-3 py-1 bg-primary-600 text-white rounded disabled:opacity-50 hover:bg-primary-700"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             >
@@ -198,7 +198,7 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
         {/* Footer */}
         <div className="flex justify-end gap-3 p-5 border-t">
           <button
-            className="px-6 py-2 bg-purple-500 text-white rounded-lg font-bold hover:bg-purple-600 disabled:opacity-50"
+            className="px-6 py-2 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 disabled:opacity-50"
             onClick={handleSelect}
             disabled={!selectedProduct}
           >

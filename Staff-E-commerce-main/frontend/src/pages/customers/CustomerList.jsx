@@ -200,14 +200,14 @@ const CustomerList = () => {
         <div className="flex gap-3">
           <button
             onClick={() => setIsImportModalOpen(true)}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-2"
           >
             <Upload size={18} />
             Import Khách Hàng
           </button>
           <button
             onClick={() => setIsAddModalOpen(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
           >
             + Thêm Khách Hàng
           </button>
@@ -221,8 +221,8 @@ const CustomerList = () => {
           onClick={() => handleStatusFilter("all")}
         >
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <Tag className="w-5 h-5 text-blue-600" />
+            <div className="p-2 bg-primary-100 rounded-lg">
+              <Tag className="w-5 h-5 text-primary-600" />
             </div>
           </div>
           <p className="text-sm text-gray-600 mb-1">Tổng số</p>
@@ -233,8 +233,8 @@ const CustomerList = () => {
           onClick={() => handleStatusFilter("active")}
         >
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-green-600" />
+            <div className="p-2 bg-emerald-100 rounded-lg">
+              <CheckCircle className="w-5 h-5 text-emerald-600" />
             </div>
           </div>
           <p className="text-sm text-gray-600 mb-1">Đang hoạt động</p>
@@ -272,13 +272,13 @@ const CustomerList = () => {
             value={localSearchTerm}
             onChange={(e) => setLocalSearchTerm(e.target.value)}
             onKeyPress={handleSearchKeyPress}
-            className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
           <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400 pointer-events-none" />
         </div>
         <button
           onClick={handleSearch}
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+          className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-2"
         >
           <Search size={18} />
           Tìm kiếm
@@ -286,7 +286,7 @@ const CustomerList = () => {
         <select
           value={filters.status}
           onChange={(e) => handleStatusFilter(e.target.value)}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
         >
           <option value="all">Tất Cả Trạng Thái</option>
           <option value="active">Đang Hoạt Động</option>
@@ -386,7 +386,7 @@ const CustomerList = () => {
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => handleView(customer.id)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                          className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition"
                           title="Xem chi tiết"
                         >
                           <Eye size={18} />
@@ -395,7 +395,7 @@ const CustomerList = () => {
                           <>
                             <button
                               onClick={() => handleEdit(customer.id)}
-                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
+                              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
                               title="Sửa"
                             >
                               <Edit2 size={18} />

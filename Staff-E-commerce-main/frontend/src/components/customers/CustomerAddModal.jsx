@@ -160,8 +160,8 @@ const CustomerAddModal = ({ isOpen, onClose, onSuccess }) => {
         {/* Body */}
         <div className="p-6">
           {successMessage && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-              <p className="text-green-800">{successMessage}</p>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-4">
+              <p className="text-emerald-800">{successMessage}</p>
             </div>
           )}
 
@@ -194,7 +194,7 @@ const CustomerAddModal = ({ isOpen, onClose, onSuccess }) => {
                 className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 transition ${
                   errors.fullName
                     ? "border-red-500 bg-red-50 focus:ring-red-500"
-                    : "border-gray-300 focus:ring-blue-500"
+                    : "border-gray-300 focus:ring-primary-500"
                 }`}
                 placeholder="Nhập tên khách hàng"
               />
@@ -217,7 +217,7 @@ const CustomerAddModal = ({ isOpen, onClose, onSuccess }) => {
                 className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 transition ${
                   errors.phone
                     ? "border-red-500 bg-red-50 focus:ring-red-500"
-                    : "border-gray-300 focus:ring-blue-500"
+                    : "border-gray-300 focus:ring-primary-500"
                 }`}
                 placeholder="Nhập số điện thoại (VD: 0812345678 hoặc +84812345678)"
               />
@@ -237,7 +237,7 @@ const CustomerAddModal = ({ isOpen, onClose, onSuccess }) => {
                 name="email"
                 value={formData.email}
                 onChange={handleChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 placeholder="Nhập email (nếu có)"
               />
             </div>
@@ -253,7 +253,7 @@ const CustomerAddModal = ({ isOpen, onClose, onSuccess }) => {
                 value={formData.address}
                 onChange={handleChange}
                 rows="3"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 placeholder="Nhập địa chỉ (nếu có)"
               />
             </div>
@@ -274,7 +274,7 @@ const CustomerAddModal = ({ isOpen, onClose, onSuccess }) => {
             type="submit"
             form="customer-add-form"
             disabled={loading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50"
           >
             {loading ? "Đang thêm..." : "Thêm Khách Hàng"}
           </button>

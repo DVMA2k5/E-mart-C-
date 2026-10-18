@@ -58,7 +58,7 @@ export default function OrdersForm({
           </button>
         </div>
         {formMode !== "create" && (currentOrder?.status === "processing" || currentOrder?.status === "completed" || currentOrder?.paymentStatus === "paid") && (
-          <button onClick={() => navigate(`/invoices?orderId=${currentOrder.id}`)} className="mb-5 rounded-lg bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">
+          <button onClick={() => navigate(`/invoices?orderId=${currentOrder.id}`)} className="mb-5 rounded-lg bg-primary-50 px-4 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-100">
             Xem hóa đơn liên quan
           </button>
         )}
@@ -299,9 +299,9 @@ export default function OrdersForm({
             </div>
             <div className="flex justify-between mb-2">
               <span>Giảm giá:</span>{" "}
-              <span className="text-green-600">{currentOrder.discount}₫</span>
+              <span className="text-emerald-600">{currentOrder.discount}₫</span>
             </div>
-            <div className="flex justify-between text-xl text-blue-600">
+            <div className="flex justify-between text-xl text-primary-600">
               <span>Phải trả:</span>{" "}
               <span>{Math.max(0, Number(currentOrder.subtotal || 0) - Number(currentOrder.discount || 0))}₫</span>
             </div>
@@ -312,7 +312,7 @@ export default function OrdersForm({
             {formMode == "create" && (
               <button
                 onClick={click_buttonCreateNewOrder}
-                className="px-7 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg"
+                className="px-7 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 shadow-lg"
               >
                 Tạo Đơn Hàng
               </button>
@@ -320,7 +320,7 @@ export default function OrdersForm({
             {formMode !== "create" && currentOrder?.status === "pending" && (
               <button
                 onClick={() => completePendingOrder(currentOrder.id)}
-                className="px-7 py-3 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 shadow-lg"
+                className="px-7 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 shadow-lg"
               >
                 Tạo Đơn Hàng
               </button>

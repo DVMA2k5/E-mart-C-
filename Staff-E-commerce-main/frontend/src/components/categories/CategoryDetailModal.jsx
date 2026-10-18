@@ -96,7 +96,7 @@ export default function CategoryDetailModal({ categoryId, onClose }) {
                 </span>
                 <span>
                   {category.isActive ? (
-                    <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-semibold">
+                    <span className="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full text-sm font-semibold">
                       Hoạt Động
                     </span>
                   ) : (

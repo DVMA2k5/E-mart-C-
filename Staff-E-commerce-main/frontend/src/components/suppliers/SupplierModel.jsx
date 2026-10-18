@@ -208,7 +208,7 @@ const SupplierModal = ({
                   className={`w-full border px-3 py-2.5 rounded-lg transition-all ${
                     errors.name && touched.name
                       ? "border-red-500 bg-red-50 focus:ring-red-500 focus:border-red-500"
-                      : "border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      : "border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                   }`}
                   placeholder="VD: Công ty TNHH ABC"
                   value={formData.name}
@@ -253,7 +253,7 @@ const SupplierModal = ({
                     className={`w-full border px-3 py-2.5 rounded-lg transition-all ${
                       errors.phone && touched.phone
                         ? "border-red-500 bg-red-50 focus:ring-red-500 focus:border-red-500"
-                        : "border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        : "border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                     }`}
                     placeholder="0123456789"
                     value={formData.phone}
@@ -294,7 +294,7 @@ const SupplierModal = ({
                     className={`w-full border px-3 py-2.5 rounded-lg transition-all ${
                       errors.email && touched.email
                         ? "border-red-500 bg-red-50 focus:ring-red-500 focus:border-red-500"
-                        : "border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        : "border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                     }`}
                     placeholder="supplier@example.com"
                     value={formData.email}
@@ -335,7 +335,7 @@ const SupplierModal = ({
                   className={`w-full border px-3 py-2.5 rounded-lg transition-all resize-none ${
                     errors.address && touched.address
                       ? "border-red-500 bg-red-50 focus:ring-red-500 focus:border-red-500"
-                      : "border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      : "border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                   }`}
                   rows="3"
                   placeholder="VD: 123 Đường ABC, Quận 1, TP.HCM"
@@ -373,13 +373,13 @@ const SupplierModal = ({
               <span
                 className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${
                   formData.isActive
-                    ? "bg-green-100 text-green-700"
+                    ? "bg-emerald-100 text-emerald-700"
                     : "bg-gray-100 text-gray-700"
                 }`}
               >
                 <span
                   className={`w-2 h-2 rounded-full ${
-                    formData.isActive ? "bg-green-500" : "bg-gray-400"
+                    formData.isActive ? "bg-emerald-500" : "bg-gray-400"
                   }`}
                 />
                 {formData.isActive ? "Đang hoạt động" : "Ngừng hoạt động"}
@@ -395,7 +395,7 @@ const SupplierModal = ({
                       handleFieldChange("isActive", e.target.checked)
                     }
                   />
-                  <div className="w-11 h-6 bg-gray-300 peer-focus:ring-2 peer-focus:ring-indigo-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  <div className="w-11 h-6 bg-gray-300 peer-focus:ring-2 peer-focus:ring-primary-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
                 </div>
                 <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900">
                   {formData.isActive ? "Đang hoạt động" : "Ngừng hoạt động"}
@@ -442,7 +442,7 @@ const SupplierModal = ({
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium disabled:opacity-50 flex items-center gap-2 min-w-[100px] justify-center"
+                className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium disabled:opacity-50 flex items-center gap-2 min-w-[100px] justify-center"
               >
                 {saving ? (
                   <>

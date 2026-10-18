@@ -130,14 +130,14 @@ export default function DetailOrderForm({
   };
 
   return (
-    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl mb-6 border-2 border-gray-400">
+    <div className="bg-gradient-to-r from-primary-50 to-primary-50 p-6 rounded-xl mb-6 border-2 border-gray-400">
       <h4 className="text-xl font-bold text-gray-800 mb-4">CHI TIẾT ĐƠN HÀNG</h4>
 
       {isCreateMode === "create" && (
         <div className="space-y-4 mb-4">
           {/* Ô quét mã vạch */}
-          <div className="bg-white p-3 rounded-lg border border-indigo-200">
-            <label className="block text-xs font-bold text-indigo-700 mb-1">
+          <div className="bg-white p-3 rounded-lg border border-primary-200">
+            <label className="block text-xs font-bold text-primary-700 mb-1">
               📟 Quét mã vạch (Barcode):
             </label>
             <input
@@ -146,7 +146,7 @@ export default function DetailOrderForm({
               value={barcodeInput}
               onChange={(e) => setBarcodeInput(e.target.value)}
               onKeyDown={handleBarcodeScan}
-              className="w-full px-3 py-1.5 border border-indigo-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-400"
+              className="w-full px-3 py-1.5 border border-primary-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-primary-400"
             />
           </div>
 
@@ -218,7 +218,7 @@ export default function DetailOrderForm({
             {mode === "add" ? (
               <button
                 onClick={handleAdd}
-                className="px-5 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700"
+                className="px-5 py-2.5 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700"
               >
                 Thêm chi tiết
               </button>
@@ -226,7 +226,7 @@ export default function DetailOrderForm({
               <>
                 <button
                   onClick={handleSaveEdit}
-                  className="px-5 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700"
+                  className="px-5 py-2.5 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700"
                 >
                   Lưu chỉnh sửa
                 </button>
@@ -270,10 +270,10 @@ export default function DetailOrderForm({
                     <td className="px-5 py-3">{item.product}</td>
                     <td className="px-5 py-3 text-center">{item.qty}</td>
                     <td className="px-5 py-3 text-right">{Number(item.price).toLocaleString()}</td>
-                    <td className="px-5 py-3 text-right font-bold text-blue-600">{Number(item.total).toLocaleString()}</td>
+                    <td className="px-5 py-3 text-right font-bold text-primary-600">{Number(item.total).toLocaleString()}</td>
                     {isCreateMode === "create" && (
                       <td className="px-5 py-3 text-center space-x-2">
-                        <button onClick={() => handleEdit(index)} className="text-xs text-blue-600 hover:underline font-medium">Sửa</button>
+                        <button onClick={() => handleEdit(index)} className="text-xs text-primary-600 hover:underline font-medium">Sửa</button>
                         <button onClick={() => handleDelete(index)} className="text-xs text-red-600 hover:underline font-medium">Xóa</button>
                       </td>
                     )}

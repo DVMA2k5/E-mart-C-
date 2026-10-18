@@ -142,7 +142,7 @@ export default function SupplierList() {
     return (
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <div className="w-16 h-16 border-4 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-gray-600">Đang tải...</p>
         </div>
       </div>
@@ -173,33 +173,33 @@ export default function SupplierList() {
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-white border-2 border-indigo-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
+        <div className="bg-white border-2 border-primary-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-indigo-600 text-sm font-medium mb-1">
+              <p className="text-primary-600 text-sm font-medium mb-1">
                 Tổng số
               </p>
-              <p className="text-3xl text-indigo-600 font-bold">
+              <p className="text-3xl text-primary-600 font-bold">
                 {stats.total}
               </p>
             </div>
-            <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center text-2xl">
+            <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center text-2xl">
               🏢
             </div>
           </div>
         </div>
 
-        <div className="bg-white border-2 border-green-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
+        <div className="bg-white border-2 border-emerald-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-green-600 text-sm font-medium mb-1">
+              <p className="text-emerald-600 text-sm font-medium mb-1">
                 Đang hoạt động
               </p>
-              <p className="text-3xl text-green-600 font-bold">
+              <p className="text-3xl text-emerald-600 font-bold">
                 {stats.active}
               </p>
             </div>
-            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center text-2xl">
+            <div className="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center text-2xl">
               ✅
             </div>
           </div>
@@ -231,7 +231,7 @@ export default function SupplierList() {
               <input
                 type="text"
                 placeholder="Tìm kiếm nhà cung cấp..."
-                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -257,7 +257,7 @@ export default function SupplierList() {
               onClick={() => setFilterActive("all")}
               className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 filterActive === "all"
-                  ? "bg-indigo-600 text-white"
+                  ? "bg-primary-600 text-white"
                   : "bg-gray-100 text-gray-700 hover:bg-gray-200"
               }`}
             >
@@ -267,7 +267,7 @@ export default function SupplierList() {
               onClick={() => setFilterActive("active")}
               className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 filterActive === "active"
-                  ? "bg-green-600 text-white"
+                  ? "bg-emerald-600 text-white"
                   : "bg-gray-100 text-gray-700 hover:bg-gray-200"
               }`}
             >
@@ -290,7 +290,7 @@ export default function SupplierList() {
 
                 <button
                   onClick={handleCreate}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium flex items-center gap-2"
+                  className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium flex items-center gap-2"
                 >
                   <svg
                     width="16"
@@ -361,7 +361,7 @@ export default function SupplierList() {
                     </td>
                     <td className="px-4 py-4">
                       <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center flex-shrink-0">
                           <span className="text-lg">🏢</span>
                         </div>
                         <div className="min-w-0">
@@ -425,13 +425,13 @@ export default function SupplierList() {
                       <span
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
                           supplier.isActive
-                            ? "bg-green-100 text-green-700"
+                            ? "bg-emerald-100 text-emerald-700"
                             : "bg-gray-100 text-gray-700"
                         }`}
                       >
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${
-                            supplier.isActive ? "bg-green-500" : "bg-gray-400"
+                            supplier.isActive ? "bg-emerald-500" : "bg-gray-400"
                           }`}
                         />
                         {supplier.isActive ? "Hoạt động" : "Ngừng"}
@@ -441,7 +441,7 @@ export default function SupplierList() {
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => handleView(supplier)}
-                          className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+                          className="p-2 bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 transition-colors"
                           title="Xem chi tiết"
                         >
                           <svg
@@ -459,7 +459,7 @@ export default function SupplierList() {
                         {!isStaff && (
                           <button
                             onClick={() => handleEdit(supplier)}
-                            className="p-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors"
+                            className="p-2 bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 transition-colors"
                             title="Chỉnh sửa"
                           >
                             <svg

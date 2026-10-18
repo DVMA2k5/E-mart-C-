@@ -15,7 +15,7 @@ export default function LowStockAlert({ items }) {
                 <p className="text-xs text-gray-500">{item.sku}</p>
               </div>
               <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                item.quantity < 5 ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+                item.quantity < 5 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
               }`}>
                 Còn {item.quantity}
               </span>

@@ -102,9 +102,9 @@ export default function PromotionList() {
     const colorClasses = {
       gray: "bg-gray-100 text-gray-800",
       red: "bg-red-100 text-red-800",
-      yellow: "bg-yellow-100 text-yellow-800",
-      orange: "bg-orange-100 text-orange-800",
-      green: "bg-green-100 text-green-800",
+      yellow: "bg-amber-100 text-amber-800",
+      orange: "bg-amber-100 text-amber-800",
+      green: "bg-emerald-100 text-emerald-800",
     };
     
     return (
@@ -141,7 +141,7 @@ export default function PromotionList() {
             {!isStaff && (
               <button
                 onClick={() => setShowCreateModal(true)}
-                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-all shadow-lg hover:shadow-xl"
+                className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-all shadow-lg hover:shadow-xl"
               >
                 <span className="flex items-center">
                   <svg
@@ -172,7 +172,7 @@ export default function PromotionList() {
             <StatCard
               icon={
                 <svg
-                  className="w-5 h-5 text-blue-600"
+                  className="w-5 h-5 text-primary-600"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -187,14 +187,14 @@ export default function PromotionList() {
               }
               label="Tổng số"
               value={statsLocal?.total ?? stats?.total ?? 0}
-              color="bg-blue-100"
+              color="bg-primary-100"
             />
           </div>
           <div className="flex-1 min-w-[140px]">
             <StatCard
               icon={
                 <svg
-                  className="w-5 h-5 text-green-600"
+                  className="w-5 h-5 text-emerald-600"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -209,14 +209,14 @@ export default function PromotionList() {
               }
               label="Đang hoạt động"
               value={statsLocal?.active ?? stats?.active ?? 0}
-              color="bg-green-100"
+              color="bg-emerald-100"
             />
           </div>
           <div className="flex-1 min-w-[140px]">
             <StatCard
               icon={
                 <svg
-                  className="w-5 h-5 text-yellow-600"
+                  className="w-5 h-5 text-amber-600"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -231,7 +231,7 @@ export default function PromotionList() {
               }
               label="Chưa bắt đầu"
               value={statsLocal?.scheduled ?? stats?.scheduled ?? 0}
-              color="bg-yellow-100"
+              color="bg-amber-100"
             />
           </div>
           <div className="flex-1 min-w-[140px]">
@@ -304,13 +304,13 @@ export default function PromotionList() {
                 placeholder="Tìm kiếm mã khuyến mãi..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="block w-full pl-12 pr-4 py-3 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="block w-full pl-12 pr-4 py-3 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
             </div>
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="block w-full lg:w-64 px-4 py-3 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+              className="block w-full lg:w-64 px-4 py-3 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
             >
               <option value="all">Tất cả trạng thái</option>
               <option value="active">Đang hoạt động</option>
@@ -321,7 +321,7 @@ export default function PromotionList() {
             <select
               value={filterType}
               onChange={(e) => setFilterType(e.target.value)}
-              className="block w-full lg:w-56 px-4 py-3 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+              className="block w-full lg:w-56 px-4 py-3 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
             >
               <option value="all">Tất cả loại</option>
               <option value="product">Theo sản phẩm</option>
@@ -334,7 +334,7 @@ export default function PromotionList() {
         {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
             <span className="ml-3 text-gray-600">Đang tải dữ liệu...</span>
           </div>
         )}
@@ -429,7 +429,7 @@ export default function PromotionList() {
                         className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}
                       >
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="text-sm font-medium text-gray-900 font-mono bg-blue-50 px-2 py-1 rounded">
+                          <span className="text-sm font-medium text-gray-900 font-mono bg-primary-50 px-2 py-1 rounded">
                             {promo.type === "voucher" ? promo.voucherCode : promo.name}
                           </span>
                           <div className="mt-1 text-xs text-gray-500">{promo.name}</div>
@@ -440,7 +440,7 @@ export default function PromotionList() {
                               promo.discountType === "percent"
                                 ? "bg-purple-100 text-purple-800"
                                 : promo.promotionKind === "voucher"
-                                  ? "bg-blue-100 text-blue-800"
+                                  ? "bg-primary-100 text-primary-800"
                                   : "bg-emerald-100 text-emerald-800"
                             }`}
                           >
@@ -474,7 +474,7 @@ export default function PromotionList() {
                           {promo.usageLimit && (
                             <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
                               <div
-                                className="bg-blue-600 h-1.5 rounded-full"
+                                className="bg-primary-600 h-1.5 rounded-full"
                                 style={{
                                   width: `${Math.min(
                                     (promo.usedCount / promo.usageLimit) * 100,
@@ -492,7 +492,7 @@ export default function PromotionList() {
                           <div className="flex items-center justify-end gap-2">
                             <button
                               onClick={() => setSelectedPromotionId(promo.id)}
-                              className="px-3 py-1.5 bg-blue-100 text-blue-800 rounded-md text-xs font-medium hover:bg-blue-200"
+                              className="px-3 py-1.5 bg-primary-100 text-primary-800 rounded-md text-xs font-medium hover:bg-primary-200"
                             >
                               Chi tiết
                             </button>
@@ -502,15 +502,15 @@ export default function PromotionList() {
                                   onClick={() => handleToggle(promo.id)}
                                   className={`px-3 py-1.5 rounded-md text-xs font-medium ${
                                     promo.active
-                                      ? "bg-yellow-100 text-yellow-800 hover:bg-yellow-200"
-                                      : "bg-green-100 text-green-800 hover:bg-green-200"
+                                      ? "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                                      : "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
                                   }`}
                                 >
                                   {promo.active ? "Tắt" : "Bật"}
                                 </button>
                                 <button
                                   onClick={() => setEditingPromotion(promo)}
-                                  className="px-3 py-1.5 bg-orange-100 text-orange-800 rounded-md text-xs font-medium hover:bg-orange-200"
+                                  className="px-3 py-1.5 bg-amber-100 text-amber-800 rounded-md text-xs font-medium hover:bg-amber-200"
                                 >
                                   Sửa
                                 </button>

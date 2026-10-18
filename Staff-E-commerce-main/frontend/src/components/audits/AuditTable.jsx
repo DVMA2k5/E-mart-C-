@@ -55,7 +55,7 @@ export default function AuditTable({
                   </td>
                   <td className="px-5 py-3">
                     <button
-                      className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 transition"
+                      className="bg-primary-600 text-white px-3 py-1 rounded hover:bg-primary-700 transition"
                       onClick={() => {
                         setSelectedActivityLog(activityLog);
                         openAuditDetailModal(); // gọi hàm
@@ -84,7 +84,7 @@ export default function AuditTable({
       <div className="flex items-center justify-between p-4 border-t bg-gray-50">
         <button
           onClick={() => fetchListActivity(page - 1)}
-          className="px-5 py-2 border rounded-lg bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 transition"
+          className="px-5 py-2 border rounded-lg bg-primary-600 text-white text-sm font-bold hover:bg-primary-700 transition"
           disabled={page <= 1}
         >
           Prev
@@ -94,7 +94,7 @@ export default function AuditTable({
         </span>
         <button
           onClick={() => fetchListActivity(page + 1)}
-          className="px-5 py-2 border rounded-lg bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 transition"
+          className="px-5 py-2 border rounded-lg bg-primary-600 text-white text-sm font-bold hover:bg-primary-700 transition"
           disabled={page >= totalPages}
         >
           Next

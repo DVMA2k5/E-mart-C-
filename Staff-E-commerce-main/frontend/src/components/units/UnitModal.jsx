@@ -137,7 +137,7 @@ const UnitModal = ({
                   type="text"
                   value={formData.code}
                   onChange={(e) => handleFieldChange("code", e.target.value)}
-                  className={`w-full border px-3 py-2 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
+                  className={`w-full border px-3 py-2 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent transition ${
                     errors.code ? "border-red-500" : "border-gray-300"
                   }`}
                   placeholder="VD: pc, kg, m"
@@ -165,7 +165,7 @@ const UnitModal = ({
                   type="text"
                   value={formData.name}
                   onChange={(e) => handleFieldChange("name", e.target.value)}
-                  className={`w-full border px-3 py-2 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
+                  className={`w-full border px-3 py-2 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent transition ${
                     errors.name ? "border-red-500" : "border-gray-300"
                   }`}
                   placeholder="VD: Cái, Kilogram, Mét"
@@ -187,7 +187,7 @@ const UnitModal = ({
               <div className="flex items-center gap-2">
                 <div
                   className={`w-3 h-3 rounded-full ${
-                    formData.isActive ? "bg-green-500" : "bg-gray-400"
+                    formData.isActive ? "bg-emerald-500" : "bg-gray-400"
                   }`}
                 ></div>
                 <span className="text-sm text-gray-700">
@@ -202,7 +202,7 @@ const UnitModal = ({
                   onChange={(e) =>
                     handleFieldChange("isActive", e.target.checked)
                   }
-                  className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                  className="w-4 h-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
                 />
                 <span className="text-sm text-gray-700">Đang sử dụng</span>
               </label>
@@ -216,7 +216,7 @@ const UnitModal = ({
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <span className="text-gray-600">Số sản phẩm:</span>
-                    <span className="ml-2 font-semibold text-indigo-600">
+                    <span className="ml-2 font-semibold text-primary-600">
                       {unit.productCount || 0}
                     </span>
                   </div>
@@ -244,7 +244,7 @@ const UnitModal = ({
           </button>
           {!isView && (
             <button
-              className="px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="px-4 py-2 rounded-md bg-primary-600 text-white hover:bg-primary-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               onClick={handleSave}
               disabled={saving}
             >

@@ -42,10 +42,10 @@ export default function OrderTable(  {showOrder,listOrders,
                       {/* Ngày mua hàng: format dd/MM/yyyy và màu theo trạng thái */}
                       <td className="px-6 py-4 text-center">
                         <span className={`px-2 py-1 rounded-full text-sm font-medium ${
-                          item.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                          item.status === 'paid' ? 'bg-blue-100 text-blue-600' :
-                          item.status === 'processing' ? 'bg-indigo-100 text-indigo-700' :
-                          item.status === 'completed' ? 'bg-green-100 text-green-600' :
+                          item.status === 'pending' ? 'bg-amber-100 text-amber-800' :
+                          item.status === 'paid' ? 'bg-primary-100 text-primary-600' :
+                          item.status === 'processing' ? 'bg-primary-100 text-primary-700' :
+                          item.status === 'completed' ? 'bg-emerald-100 text-emerald-600' :
                           item.status === 'cancelled' ? 'bg-red-100 text-red-600' :
                           'bg-gray-100 text-gray-600'
                         }`}>
@@ -64,15 +64,15 @@ export default function OrderTable(  {showOrder,listOrders,
                       <td className="px-6 py-4">{item.userName}</td>
 
                       {/* Tiền: format VND */}
-                      <td className="px-6 py-4 text-right font-bold text-green-700">{formattedAmount}</td>
+                      <td className="px-6 py-4 text-right font-bold text-emerald-700">{formattedAmount}</td>
 
                       {/* Trạng thái: màu riêng */}
                       <td className="px-6 py-4 text-center whitespace-nowrap">
                         <span className={`inline-flex items-center justify-center whitespace-nowrap px-3 py-1 text-sm font-bold rounded-full ${
-                          item.status === 'pending' ? 'text-yellow-800 bg-yellow-100' :
-                          item.status === 'paid' ? 'text-blue-600 bg-blue-100' :
-                          item.status === 'processing' ? 'text-indigo-700 bg-indigo-100' :
-                          item.status === 'completed' ? 'text-green-600 bg-green-100' :
+                          item.status === 'pending' ? 'text-amber-800 bg-amber-100' :
+                          item.status === 'paid' ? 'text-emerald-700 bg-emerald-100' :
+                          item.status === 'processing' ? 'text-primary-700 bg-primary-100' :
+                          item.status === 'completed' ? 'text-emerald-600 bg-emerald-100' :
                           item.status === 'cancelled' ? 'text-red-600 bg-red-100' :
                           'text-gray-600 bg-gray-100'
                         }`}>
@@ -87,7 +87,7 @@ export default function OrderTable(  {showOrder,listOrders,
                       {/* Thao tác */}
                       <td className="px-6 py-4 text-center whitespace-nowrap">
                         <div className="inline-flex flex-nowrap items-center justify-center gap-2">
-                        <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700"
+                        <button className="px-4 py-2 bg-primary-600 text-white rounded-lg text-xs font-bold hover:bg-primary-700"
                          onClick={() => showOrder(index)}
                         >
                           Xem

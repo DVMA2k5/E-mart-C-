@@ -161,19 +161,19 @@ export default function Topbar({ onToggleSidebar }) {
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setShowUserMenu(!showUserMenu)}
-            className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all"
             aria-haspopup="true"
             aria-expanded={showUserMenu}
           >
             <div className="relative">
-              <div className="w-10 h-10 border-2 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-purple-400 flex items-center justify-center text-sm font-bold shadow-md">
+              <div className="w-10 h-10 border-2 rounded-full bg-gradient-to-br from-primary-500 to-primary-600 text-primary-400 flex items-center justify-center text-sm font-bold shadow-md">
                 {loading ? (
                   <div className="animate-spin">⏳</div>
                 ) : (
                   getInitials(user?.fullName || user?.username)
                 )}
               </div>
-              <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
+              <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></div>
             </div>
             <div className="hidden sm:flex flex-col text-left">
               <span className="text-sm font-medium text-gray-800">

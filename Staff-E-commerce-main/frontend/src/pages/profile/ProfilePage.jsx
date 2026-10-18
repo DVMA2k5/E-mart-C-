@@ -164,7 +164,7 @@ export default function ProfilePage() {
         <div
           className={`rounded-md px-4 py-2 text-sm ${
             alert.type === "success"
-              ? "bg-green-50 text-green-700"
+              ? "bg-emerald-50 text-emerald-700"
               : "bg-red-50 text-red-700"
           }`}
         >
@@ -219,7 +219,7 @@ export default function ProfilePage() {
             <div className="flex items-center justify-between pt-2">
               <button
                 type="button"
-                className="text-sm text-indigo-600 hover:text-indigo-700"
+                className="text-sm text-primary-600 hover:text-primary-700"
               onClick={() => {
                   setPasswordAlert(null);
                   setPasswordForm(emptyPassword);
@@ -233,7 +233,7 @@ export default function ProfilePage() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-50"
+                className="px-4 py-2 rounded-md bg-primary-600 text-white disabled:opacity-50 hover:bg-primary-700"
                 disabled={saving}
               >
                 {saving ? "Đang lưu..." : "Lưu thay đổi"}
@@ -260,7 +260,7 @@ export default function ProfilePage() {
               <div
                 className={`rounded-md px-3 py-2 text-sm ${
                   passwordAlert.type === "success"
-                    ? "bg-green-50 text-green-700"
+                    ? "bg-emerald-50 text-emerald-700"
                     : "bg-red-50 text-red-700"
                 }`}
               >
@@ -358,7 +358,7 @@ export default function ProfilePage() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-50"
+                className="px-4 py-2 rounded-md bg-primary-600 text-white disabled:opacity-50 hover:bg-primary-700"
                 disabled={passwordSaving}
               >
                 {passwordSaving ? "Đang lưu..." : "Đổi mật khẩu"}

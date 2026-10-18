@@ -342,8 +342,8 @@ export default function ProductList() {
   const getInventoryId = (p) => p.inventory?.id ?? p.Inventory?.id;
   const getQuantityBadge = (quantity) => {
     if (quantity === 0) return <span className="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">Hết hàng</span>;
-    if (quantity < 10) return <span className="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800">Sắp hết</span>;
-    return <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Còn hàng</span>;
+    if (quantity < 10) return <span className="px-2 py-1 text-xs rounded-full bg-amber-100 text-amber-800">Sắp hết</span>;
+    return <span className="px-2 py-1 text-xs rounded-full bg-emerald-100 text-emerald-800">Còn hàng</span>;
   };
   const openAdjustModal = (product) => setAdjustModal({ open: true, product, newQuantity: String(getQty(product)), reason: "" });
   const closeAdjustModal = () => setAdjustModal({ open: false, product: null, newQuantity: "", reason: "" });
@@ -383,10 +383,10 @@ export default function ProductList() {
               placeholder="Tìm kiếm sản phẩm..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300"
+              className="px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300"
             />
             <button
-              className="px-3 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
+              className="px-3 py-2 rounded-md bg-primary-600 text-white hover:bg-primary-700"
               onClick={() => {
                 setPage(1);
                 fetchProducts(1, pageSize, search);
@@ -397,13 +397,13 @@ export default function ProductList() {
             {!isStaff && (
               <>
                 <button
-                  className="px-3 py-2 rounded-md bg-blue-500 text-white hover:bg-blue-700"
+                  className="px-3 py-2 rounded-md bg-primary-600 text-white hover:bg-primary-700"
                   onClick={() => setImportModalOpen(true)}
                 >
                   Import
                 </button>
                 <button
-                  className="px-3 py-2 rounded-md bg-green-500 text-white hover:bg-green-700"
+                  className="px-3 py-2 rounded-md bg-primary-600 text-white hover:bg-primary-700"
                   onClick={() => openModal("create")}
                 >
                   Thêm sản phẩm
@@ -414,17 +414,17 @@ export default function ProductList() {
         </div>
 
         <div className="flex gap-1 mb-5 bg-gray-100 rounded-xl p-1 w-fit">
-          <button onClick={() => setActiveTab("products")} className={`px-5 py-2 rounded-lg text-sm font-semibold ${activeTab === "products" ? "bg-white text-indigo-700 shadow-sm" : "text-gray-600"}`}>📦 Danh sách sản phẩm</button>
-          <button onClick={() => setActiveTab("history")} className={`px-5 py-2 rounded-lg text-sm font-semibold ${activeTab === "history" ? "bg-white text-indigo-700 shadow-sm" : "text-gray-600"}`}>📋 Lịch sử biến động</button>
+          <button onClick={() => setActiveTab("products")} className={`px-5 py-2 rounded-lg text-sm font-semibold ${activeTab === "products" ? "bg-white text-primary-700 shadow-sm" : "text-gray-600"}`}>📦 Danh sách sản phẩm</button>
+          <button onClick={() => setActiveTab("history")} className={`px-5 py-2 rounded-lg text-sm font-semibold ${activeTab === "history" ? "bg-white text-primary-700 shadow-sm" : "text-gray-600"}`}>📋 Lịch sử biến động</button>
         </div>
 
         {activeTab === "history" ? <InventoryHistory /> : <>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-blue-500"><div className="text-sm text-gray-600">Tổng sản phẩm</div><div className="text-2xl font-bold text-gray-800">{stats.total}</div></div>
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-primary-500"><div className="text-sm text-gray-600">Tổng sản phẩm</div><div className="text-2xl font-bold text-gray-800">{stats.total}</div></div>
           <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-red-500"><div className="text-sm text-gray-600">Hết hàng</div><div className="text-2xl font-bold text-red-600">{stats.outOfStock}</div></div>
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-orange-500"><div className="text-sm text-gray-600">Sắp hết hàng</div><div className="text-2xl font-bold text-orange-600">{stats.lowStock}</div></div>
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-green-500"><div className="text-sm text-gray-600">Còn hàng</div><div className="text-2xl font-bold text-green-600">{stats.inStock}</div></div>
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-amber-500"><div className="text-sm text-gray-600">Sắp hết hàng</div><div className="text-2xl font-bold text-amber-600">{stats.lowStock}</div></div>
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-emerald-500"><div className="text-sm text-gray-600">Còn hàng</div><div className="text-2xl font-bold text-emerald-600">{stats.inStock}</div></div>
         </div>
 
         {/* BỘ LỌC */}
@@ -441,7 +441,7 @@ export default function ProductList() {
                   setSelectedCategory(e.target.value);
                   setPage(1);
                 }}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300 text-sm"
               >
                 <option value="">Tất cả danh mục</option>
                 {categories.map((category) => (
@@ -463,7 +463,7 @@ export default function ProductList() {
                   setSelectedSupplier(e.target.value);
                   setPage(1);
                 }}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300 text-sm"
               >
                 <option value="">Tất cả nhà cung cấp</option>
                 {suppliers.map((supplier) => (
@@ -485,7 +485,7 @@ export default function ProductList() {
                   setMinPrice(e.target.value);
                   setPage(1);
                 }}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300 text-sm"
               />
             </div>
 
@@ -502,7 +502,7 @@ export default function ProductList() {
                   setMaxPrice(e.target.value);
                   setPage(1);
                 }}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300 text-sm"
               />
             </div>
 
@@ -517,7 +517,7 @@ export default function ProductList() {
                   setSortBy(e.target.value);
                   setPage(1);
                 }}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300 text-sm"
               >
                 <option value="">Mặc định</option>
                 <option value="newest">Mới nhất</option>
@@ -546,7 +546,7 @@ export default function ProductList() {
                   setStatus(e.target.value);
                   setPage(1);
                 }}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300 text-sm"
               >
                 <option value="">Mặc định</option>
                 <option value="1"> Hoạt động</option>
@@ -556,7 +556,7 @@ export default function ProductList() {
 
             <div>
               <label className="block text-xs text-gray-600 mb-1">Số lượng</label>
-              <select value={stockStatus} onChange={(e) => { setStockStatus(e.target.value); setPage(1); }} className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm">
+              <select value={stockStatus} onChange={(e) => { setStockStatus(e.target.value); setPage(1); }} className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300 text-sm">
                 <option value="">Tất cả</option><option value="out_of_stock">Hết hàng</option><option value="low_stock">Sắp hết (&lt; 10)</option><option value="in_stock">Còn hàng (≥ 10)</option>
               </select>
             </div>
@@ -577,7 +577,7 @@ export default function ProductList() {
           <div
             className={`mb-3 p-2 rounded ${
               notification.type === "success"
-                ? "bg-green-100 text-green-800"
+                ? "bg-emerald-100 text-emerald-800"
                 : "bg-red-100 text-red-800"
             }`}
           >
@@ -648,7 +648,7 @@ export default function ProductList() {
                       {(meta.currentPage - 1) * meta.pageSize + idx + 1}
                     </td>
                     <td className="px-4 py-3">
-                      <button type="button" onClick={() => openModal("view", p)} aria-label={`Xem chi tiết ${getName(p)}`} className="block rounded-lg focus-visible:outline-2 focus-visible:outline-indigo-600">
+                      <button type="button" onClick={() => openModal("view", p)} aria-label={`Xem chi tiết ${getName(p)}`} className="block rounded-lg focus-visible:outline-2 focus-visible:outline-primary-600">
                         <ProductThumbnail imagePath={p.imageUrl || p.image_url || (p.id ? `/assets/images/products/product-${p.id}.jpg` : "")} name={getName(p)} />
                       </button>
                     </td>
@@ -656,9 +656,9 @@ export default function ProductList() {
                       {getName(p)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right">
-                      <div className="text-indigo-600 font-semibold">{formatPrice(getPrice(p))}</div>
+                      <div className="text-primary-600 font-semibold">{formatPrice(getPrice(p))}</div>
                       {getDiscountPrice(p) != null && getDiscountPrice(p) < getPrice(p) && (
-                        <div className="mt-1 text-rose-600 font-semibold">
+                        <div className="mt-1 text-red-600 font-semibold">
                           Giảm: {formatPrice(getDiscountPrice(p))}
                         </div>
                       )}
@@ -667,7 +667,7 @@ export default function ProductList() {
                       {p.unitName || p.unitCode || "—"}
                     </td>
                     <td className="px-4 py-3 text-sm text-center">
-                      <div className="flex flex-col items-center gap-1"><span className={getQty(p) === 0 ? "text-red-600 font-semibold" : getQty(p) < 10 ? "text-orange-600 font-semibold" : "text-green-600 font-semibold"}>{getQty(p)}</span>{getQuantityBadge(getQty(p))}</div>
+                      <div className="flex flex-col items-center gap-1"><span className={getQty(p) === 0 ? "text-red-600 font-semibold" : getQty(p) < 10 ? "text-amber-600 font-semibold" : "text-emerald-600 font-semibold"}>{getQty(p)}</span>{getQuantityBadge(getQty(p))}</div>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {p.supplier?.name}
@@ -677,7 +677,7 @@ export default function ProductList() {
                     </td>
                     <td className="px-4 py-3 text-sm text-center">
                       {p.isActive ? (
-                        <span className="text-green-600">Hoạt động</span>
+                        <span className="text-emerald-600">Hoạt động</span>
                       ) : (
                         <span className="text-red-500">Vô hiệu</span>
                       )}
@@ -686,16 +686,16 @@ export default function ProductList() {
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => openModal("view", p)}
-                          className="px-2 py-1 bg-blue-100 rounded text-blue-800 hover:bg-blue-200"
+                          className="px-2 py-1 bg-primary-100 rounded text-primary-800 hover:bg-primary-200"
                         >
                           Chi tiết
                         </button>
                         {!isStaff && (
                           <>
-                            <button onClick={() => openAdjustModal(p)} className="px-2 py-1 bg-indigo-100 rounded text-indigo-800 hover:bg-indigo-200">Số lượng</button>
+                            <button onClick={() => openAdjustModal(p)} className="px-2 py-1 bg-primary-100 rounded text-primary-800 hover:bg-primary-200">Số lượng</button>
                             <button
                               onClick={() => openModal("edit", p)}
-                              className="px-2 py-1 bg-yellow-100 rounded text-yellow-800 hover:bg-yellow-200"
+                              className="px-2 py-1 bg-amber-100 rounded text-amber-800 hover:bg-amber-200"
                             >
                               Sửa
                             </button>
@@ -704,7 +704,7 @@ export default function ProductList() {
                               className={`px-2 py-1  rounded ${
                                 p.isActive
                                   ? "bg-red-100 text-red-800 hover:bg-red-200"
-                                  : "text-green-800 bg-green-100 hover:bg-green-200"
+                                  : "text-emerald-800 bg-emerald-100 hover:bg-emerald-200"
                               } `}
                             >
                               {p.isActive ? "Vô hiệu" : "Kích hoạt"}
@@ -818,7 +818,7 @@ export default function ProductList() {
             <input type="number" min="0" value={adjustModal.newQuantity} onChange={(e) => setAdjustModal({ ...adjustModal, newQuantity: e.target.value })} className="w-full px-3 py-2 border rounded-md mb-4" />
             <label className="block text-sm font-medium text-gray-700 mb-1">Lý do điều chỉnh</label>
             <textarea value={adjustModal.reason} onChange={(e) => setAdjustModal({ ...adjustModal, reason: e.target.value })} className="w-full px-3 py-2 border rounded-md mb-4" rows="3" placeholder="Nhập lý do (tùy chọn)" />
-            <div className="flex gap-3 justify-end"><button onClick={closeAdjustModal} disabled={saving} className="px-4 py-2 rounded-md bg-gray-100">Hủy</button><button onClick={handleAdjustInventory} disabled={saving} className="px-4 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-50">{saving ? "Đang lưu..." : "Cập nhật"}</button></div>
+            <div className="flex gap-3 justify-end"><button onClick={closeAdjustModal} disabled={saving} className="px-4 py-2 rounded-md bg-gray-100">Hủy</button><button onClick={handleAdjustInventory} disabled={saving} className="px-4 py-2 rounded-md bg-primary-600 text-white disabled:opacity-50 hover:bg-primary-700">{saving ? "Đang lưu..." : "Cập nhật"}</button></div>
           </div>
         </div>
       )}

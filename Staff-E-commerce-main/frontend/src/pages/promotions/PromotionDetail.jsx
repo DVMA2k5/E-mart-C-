@@ -66,7 +66,7 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
         <div className="bg-white rounded-xl p-8 shadow-2xl">
           <div className="flex items-center gap-3">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
             <span className="text-gray-600">Đang tải...</span>
           </div>
         </div>
@@ -103,17 +103,17 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
     if (promotion.endDate && new Date(promotion.endDate) < now) 
       return <span className="px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-800">Hết hạn</span>;
     if (promotion.startDate && new Date(promotion.startDate) > now) 
-      return <span className="px-3 py-1 rounded-full text-sm font-medium bg-yellow-100 text-yellow-800">Chưa bắt đầu</span>;
+      return <span className="px-3 py-1 rounded-full text-sm font-medium bg-amber-100 text-amber-800">Chưa bắt đầu</span>;
     if (promotion.usageLimit && promotion.usedCount >= promotion.usageLimit) 
-      return <span className="px-3 py-1 rounded-full text-sm font-medium bg-orange-100 text-orange-800">Hết lượt</span>;
-    return <span className="px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">Đang hoạt động</span>;
+      return <span className="px-3 py-1 rounded-full text-sm font-medium bg-amber-100 text-amber-800">Hết lượt</span>;
+    return <span className="px-3 py-1 rounded-full text-sm font-medium bg-emerald-100 text-emerald-800">Đang hoạt động</span>;
   };
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="bg-blue-600 p-6">
+        <div className="bg-primary-600 p-6">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-2xl font-bold text-white">Chi tiết khuyến mãi</h2>
@@ -140,7 +140,7 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
               onClick={() => setActiveTab("info")}
               className={`px-6 py-3 font-medium transition-colors ${
                 activeTab === "info"
-                  ? "text-blue-600 border-b-2 border-blue-600 bg-white"
+                  ? "text-primary-600 border-b-2 border-primary-600 bg-white"
                   : "text-gray-600 hover:text-gray-900"
               }`}
             >
@@ -150,7 +150,7 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
               onClick={() => setActiveTab("stats")}
               className={`px-6 py-3 font-medium transition-colors ${
                 activeTab === "stats"
-                  ? "text-blue-600 border-b-2 border-blue-600 bg-white"
+                  ? "text-primary-600 border-b-2 border-primary-600 bg-white"
                   : "text-gray-600 hover:text-gray-900"
               }`}
             >
@@ -160,7 +160,7 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
               onClick={() => setActiveTab("history")}
               className={`px-6 py-3 font-medium transition-colors ${
                 activeTab === "history"
-                  ? "text-blue-600 border-b-2 border-blue-600 bg-white"
+                  ? "text-primary-600 border-b-2 border-primary-600 bg-white"
                   : "text-gray-600 hover:text-gray-900"
               }`}
             >
@@ -174,16 +174,16 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
           {activeTab === "info" && (
             <div className="space-y-6">
               {/* Thông tin cơ bản */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <h3 className="text-sm font-semibold text-blue-900 mb-3">Thông tin cơ bản</h3>
+              <div className="bg-primary-50 border border-primary-200 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-primary-900 mb-3">Thông tin cơ bản</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs font-medium text-blue-700">Mã khuyến mãi</label>
-                    <p className="mt-1 text-base font-bold text-blue-900 font-mono">{promotion.type === "voucher" ? promotion.voucherCode : "Không có mã nhập"}</p>
+                    <label className="text-xs font-medium text-primary-700">Mã khuyến mãi</label>
+                    <p className="mt-1 text-base font-bold text-primary-900 font-mono">{promotion.type === "voucher" ? promotion.voucherCode : "Không có mã nhập"}</p>
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-blue-700">ID</label>
-                    <p className="mt-1 text-base text-blue-900">#{promotion.id}</p>
+                    <label className="text-xs font-medium text-primary-700">ID</label>
+                    <p className="mt-1 text-base text-primary-900">#{promotion.id}</p>
                   </div>
                 </div>
               </div>
@@ -232,7 +232,7 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
                   {promotion.usageLimit && (
                     <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
                       <div 
-                        className="bg-blue-600 h-2 rounded-full" 
+                        className="bg-primary-600 h-2 rounded-full"
                         style={{ width: `${Math.min((promotion.usedCount / promotion.usageLimit) * 100, 100)}%` }}
                       />
                     </div>
@@ -274,19 +274,19 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
             <div>
               {!stats ? (
                 <div className="text-center py-12">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto"></div>
                   <p className="mt-3 text-gray-500">Đang tải thống kê...</p>
                 </div>
               ) : (
                 <div className="space-y-6">
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-blue-50 p-4 rounded-lg">
-                      <p className="text-sm text-blue-600 font-medium">Tổng lượt dùng</p>
-                      <p className="text-2xl font-bold text-blue-900 mt-1">{stats.totalRedemptions || 0}</p>
+                    <div className="bg-primary-50 p-4 rounded-lg">
+                      <p className="text-sm text-primary-600 font-medium">Tổng lượt dùng</p>
+                      <p className="text-2xl font-bold text-primary-900 mt-1">{stats.totalRedemptions || 0}</p>
                     </div>
-                    <div className="bg-green-50 p-4 rounded-lg">
-                      <p className="text-sm text-green-600 font-medium">Tổng giảm giá</p>
-                      <p className="text-2xl font-bold text-green-900 mt-1">{formatCurrency(stats.totalDiscountAmount || 0)}</p>
+                    <div className="bg-emerald-50 p-4 rounded-lg">
+                      <p className="text-sm text-emerald-600 font-medium">Tổng giảm giá</p>
+                      <p className="text-2xl font-bold text-emerald-900 mt-1">{formatCurrency(stats.totalDiscountAmount || 0)}</p>
                     </div>
                   </div>
 
@@ -327,7 +327,7 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
                         <p className="text-sm text-gray-500">{formatDate(item.usedAt)}</p>
                       </div>
                       <div className="text-right">
-                        <p className="font-semibold text-green-600">-{formatCurrency(item.discountAmount)}</p>
+                        <p className="font-semibold text-emerald-600">-{formatCurrency(item.discountAmount)}</p>
                         <p className="text-sm text-gray-500">Từ {formatCurrency(item.orderAmount)}</p>
                       </div>
                     </div>
@@ -348,7 +348,7 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
           </button>
           <button
             onClick={() => onEdit(promotion)}
-            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
+            className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-semibold"
           >
             Chỉnh sửa
           </button>

@@ -220,8 +220,8 @@ export default function InventoryList({ embedded = false }) {
 
   const getQuantityColor = (quantity) => {
     if (quantity === 0) return "text-red-600 font-semibold";
-    if (quantity < 10) return "text-orange-600 font-semibold";
-    return "text-green-600";
+    if (quantity < 10) return "text-amber-600 font-semibold";
+    return "text-emerald-600";
   };
 
   const getQuantityBadge = (quantity) => {
@@ -233,12 +233,12 @@ export default function InventoryList({ embedded = false }) {
       );
     if (quantity < 10)
       return (
-        <span className="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800">
+        <span className="px-2 py-1 text-xs rounded-full bg-amber-100 text-amber-800">
           Sắp hết
         </span>
       );
     return (
-      <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">
+      <span className="px-2 py-1 text-xs rounded-full bg-emerald-100 text-emerald-800">
         Còn hàng
       </span>
     );
@@ -262,7 +262,7 @@ export default function InventoryList({ embedded = false }) {
                 placeholder="Tìm kiếm sản phẩm..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300"
+                className="px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300"
               />
             </div>
           </div>
@@ -276,7 +276,7 @@ export default function InventoryList({ embedded = false }) {
               placeholder="Tìm kiếm sản phẩm..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              className="flex-1 px-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-300"
             />
             <button
               onClick={handleRefresh}
@@ -287,7 +287,7 @@ export default function InventoryList({ embedded = false }) {
 
         {/* Thống kê */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-blue-500">
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-primary-500">
             <div className="text-sm text-gray-600">Tổng sản phẩm</div>
             <div className="text-2xl font-bold text-gray-800">
               {stats.total}
@@ -299,15 +299,15 @@ export default function InventoryList({ embedded = false }) {
               {stats.outOfStock}
             </div>
           </div>
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-orange-500">
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-amber-500">
             <div className="text-sm text-gray-600">Sắp hết hàng</div>
-            <div className="text-2xl font-bold text-orange-600">
+            <div className="text-2xl font-bold text-amber-600">
               {stats.lowStock}
             </div>
           </div>
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-green-500">
+          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-emerald-500">
             <div className="text-sm text-gray-600">Còn hàng</div>
-            <div className="text-2xl font-bold text-green-600">
+            <div className="text-2xl font-bold text-emerald-600">
               {stats.inStock}
             </div>
           </div>
@@ -326,7 +326,7 @@ export default function InventoryList({ embedded = false }) {
                   setStockStatus(e.target.value);
                   setPage(1);
                 }}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300 text-sm"
               >
                 <option value="">Tất cả</option>
                 <option value="out_of_stock">Hết hàng</option>
@@ -344,7 +344,7 @@ export default function InventoryList({ embedded = false }) {
                   setSortBy(e.target.value);
                   setPage(1);
                 }}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300 text-sm"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300 text-sm"
               >
                 <option value="id">Mã ID</option>
                 <option value="quantity_desc">Số lượng (Cao → Thấp)</option>
@@ -365,7 +365,7 @@ export default function InventoryList({ embedded = false }) {
           <div
             className={`mb-3 p-3 rounded ${
               notification.type === "success"
-                ? "bg-green-100 text-green-800"
+                ? "bg-emerald-100 text-emerald-800"
                 : "bg-red-100 text-red-800"
             }`}
           >
@@ -450,7 +450,7 @@ export default function InventoryList({ embedded = false }) {
                     <td className="px-4 py-3 text-sm text-gray-600">
                       {item.categoryName || "—"}
                     </td>
-                    <td className="px-4 py-3 text-sm text-right text-indigo-600 font-semibold">
+                    <td className="px-4 py-3 text-sm text-right text-primary-600 font-semibold">
                       {item.price ? formatPrice(item.price) : "—"}
                     </td>
                     <td className="px-4 py-3 text-sm text-center text-gray-600">
@@ -471,7 +471,7 @@ export default function InventoryList({ embedded = false }) {
                       <td className="px-4 py-3 text-sm text-center">
                         <button
                           onClick={() => openAdjustModal(item)}
-                          className="px-3 py-1 bg-indigo-100 rounded text-indigo-800 hover:bg-indigo-200 text-sm"
+                          className="px-3 py-1 bg-primary-100 rounded text-primary-800 hover:bg-primary-200 text-sm"
                         >
                           Điều chỉnh
                         </button>
@@ -553,7 +553,7 @@ export default function InventoryList({ embedded = false }) {
                 </div>
                 <div className="text-sm text-gray-600 mb-4">
                   <strong>Số lượng hiện tại:</strong>{" "}
-                  <span className="font-semibold text-indigo-600">
+                  <span className="font-semibold text-primary-600">
                     {adjustModal.item.quantity}
                   </span>
                 </div>
@@ -574,7 +574,7 @@ export default function InventoryList({ embedded = false }) {
                     newQuantity: e.target.value,
                   })
                 }
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300"
                 placeholder="Nhập số lượng"
               />
             </div>
@@ -588,7 +588,7 @@ export default function InventoryList({ embedded = false }) {
                 onChange={(e) =>
                   setAdjustModal({ ...adjustModal, reason: e.target.value })
                 }
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-indigo-300"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300"
                 rows="3"
                 placeholder="Nhập lý do điều chỉnh..."
               />
@@ -598,7 +598,7 @@ export default function InventoryList({ embedded = false }) {
               <div
                 className={`mb-4 p-3 rounded ${
                   notification.type === "success"
-                    ? "bg-green-100 text-green-800"
+                    ? "bg-emerald-100 text-emerald-800"
                     : "bg-red-100 text-red-800"
                 }`}
               >
@@ -617,7 +617,7 @@ export default function InventoryList({ embedded = false }) {
               <button
                 onClick={handleAdjustInventory}
                 disabled={saving}
-                className="px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                className="px-4 py-2 rounded-md bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
               >
                 {saving ? "Đang lưu..." : "Cập nhật"}
               </button>

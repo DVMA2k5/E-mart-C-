@@ -82,7 +82,7 @@ export default function PromotionSection({ isCreateMode, promotion, setPromotion
   };
 
   return (
-    <div className="mb-6 p-5 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border-2 border-gray-400">
+    <div className="mb-6 p-5 bg-gradient-to-r from-emerald-50 to-emerald-50 rounded-xl border-2 border-gray-400">
       <h4 className="text-xl font-bold text-gray-800 mb-3">PHIẾU GIẢM GIÁ</h4>
 
       <div className="space-y-3 max-h-64 overflow-y-auto">
@@ -91,7 +91,7 @@ export default function PromotionSection({ isCreateMode, promotion, setPromotion
               <label
                 key={promo.id}
                 className={`flex items-center justify-between p-4 border rounded-lg cursor-pointer hover:border-primary hover:shadow ${
-                  selectedPromotionId === promo.id ? "border-green-600 bg-green-50" : ""
+                  selectedPromotionId === promo.id ? "border-primary-600 bg-primary-50" : ""
                 }`}
               >
                 <div>
@@ -106,7 +106,7 @@ export default function PromotionSection({ isCreateMode, promotion, setPromotion
                 <input
                   type="radio"
                   name="voucher"
-                  className="form-radio h-5 w-5 text-green-600"
+                  className="form-radio h-5 w-5 text-primary-600"
                   checked={selectedPromotionId === promo.id}
                   onChange={() => handleSelect(promo)}
                 />
@@ -124,7 +124,7 @@ export default function PromotionSection({ isCreateMode, promotion, setPromotion
                     )}
                   </div>
                 </div>
-                <input type="radio" name="voucher" className="form-radio h-5 w-5 text-green-600" checked readOnly />
+                <input type="radio" name="voucher" className="form-radio h-5 w-5 text-primary-600" checked readOnly />
               </label>
             )}
       </div>

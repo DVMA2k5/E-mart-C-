@@ -63,7 +63,7 @@ export default function RoleManagement() {
           Cấu hình quyền truy cập cho các role admin, nhân viên và khách hàng.
         </p>
       </div>
-      {message && <div className="rounded-md bg-indigo-50 px-4 py-2 text-sm text-indigo-700">{message}</div>}
+      {message && <div className="rounded-md bg-primary-50 px-4 py-2 text-sm text-primary-700">{message}</div>}
       <div className="grid gap-6 md:grid-cols-3">
         <div className="rounded-lg border bg-white p-4">
           <h2 className="mb-3 font-semibold">Vai trò</h2>
@@ -73,7 +73,7 @@ export default function RoleManagement() {
                 key={role.id}
                 onClick={() => selectRole(role)}
                 className={`w-full rounded-md px-3 py-2 text-left ${
-                  role.id === selectedId ? "bg-indigo-50 text-indigo-700" : "hover:bg-gray-50"
+                  role.id === selectedId ? "bg-primary-50 text-primary-700" : "hover:bg-gray-50"
                 }`}
               >
                 <div className="font-medium">{role.name}</div>
@@ -100,7 +100,7 @@ export default function RoleManagement() {
             ))}
           </div>
           <button
-            className="mt-5 rounded-md bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="mt-5 rounded-md bg-primary-600 px-4 py-2 text-white hover:bg-primary-700 disabled:opacity-50"
             disabled={!selectedId || saving}
             onClick={save}
           >

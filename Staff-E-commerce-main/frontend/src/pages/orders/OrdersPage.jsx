@@ -115,7 +115,7 @@ export default function OrdersPage() {
 
         <button
           onClick={createNewOrder}
-          className="w-full sm:w-auto px-6 py-3 bg-purple-500 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg transition"
+          className="w-full sm:w-auto px-6 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 shadow-lg transition"
         >
           Tạo Đơn Hàng Mới
         </button>
@@ -131,7 +131,7 @@ export default function OrdersPage() {
         />
         <button
           onClick={handleSearch}
-          className="px-6 py-3 bg-purple-500 text-white rounded-lg font-bold hover:bg-blue-700"
+          className="px-6 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700"
         >
           Tìm Kiếm
         </button>
@@ -153,7 +153,7 @@ export default function OrdersPage() {
         />
         <button
           onClick={handleFilterDate}
-          className="px-6 py-3 bg-purple-500 text-white rounded-lg font-bold hover:bg-blue-700"
+          className="px-6 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700"
         >
           Lọc
         </button>

@@ -5,7 +5,6 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose, sta
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState("");
-  const [appliedSearch, setAppliedSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 8;
@@ -49,14 +48,14 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose, sta
   }, [startDate, endDate, excludePromotionId]);
 
   const filteredProducts = useMemo(() => {
-    const term = appliedSearch.trim().toLocaleLowerCase();
+    const term = search.trim().toLocaleLowerCase();
     return products.filter((product) => {
       const matchesSearch = !term || [product.productName, product.name, product.sku]
         .some((value) => String(value || "").toLocaleLowerCase().includes(term));
       const matchesCategory = !categoryId || String(product.categoryId ?? product.category?.id ?? "") === categoryId;
       return matchesSearch && matchesCategory;
     });
-  }, [products, appliedSearch, categoryId]);
+  }, [products, search, categoryId]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
   const visibleProducts = filteredProducts.slice((page - 1) * pageSize, page * pageSize);
@@ -78,10 +77,9 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose, sta
         </header>
 
         <div className="space-y-3 px-5 pt-5">
-          <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); setAppliedSearch(search); setPage(1); }}>
-            <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm sản phẩm..." className="min-w-0 flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none" />
-            <button type="submit" className="rounded-lg bg-blue-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-600">Tìm kiếm</button>
-          </form>
+          <div className="flex gap-2">
+            <input autoFocus value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} aria-label="Tìm sản phẩm" placeholder="Tìm sản phẩm..." className="min-w-0 flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm placeholder:text-gray-400 focus:border-primary-500 focus:outline-none" />
+          </div>
           <select value={categoryId} onChange={(event) => { setCategoryId(event.target.value); setPage(1); }} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 sm:w-64">
             <option value="">Tất cả danh mục</option>
             {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
@@ -106,14 +104,14 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose, sta
               const lockDescription = lock
                 ? `Đang áp dụng: ${lock.promotionName} · Hết hạn: ${lock.endDate ? new Date(lock.endDate).toLocaleDateString("vi-VN") : "Không xác định"}`
                 : "";
-              return <tr key={id} className={disabled ? "bg-gray-50 text-gray-400" : checked ? "bg-blue-50/60" : "hover:bg-gray-50"}>
+              return <tr key={id} className={disabled ? "bg-gray-50 text-gray-400" : checked ? "bg-primary-50/60" : "hover:bg-gray-50"}>
                 <td className="truncate px-4 py-3 text-gray-700">{product.sku || id}</td>
                 <td className="px-4 py-3" title={name}>
                   <div className={`truncate font-medium ${disabled ? "text-gray-500" : "text-gray-900"}`}>{name}</div>
                   {lock && <div className="mt-1 text-xs leading-4 text-amber-700">{lockDescription}</div>}
                 </td>
                 <td className="px-4 py-3 text-right font-bold text-gray-900">{Number(product.price || 0).toLocaleString("vi-VN")}đ</td>
-                <td className="px-4 py-3 text-center"><input type="checkbox" aria-label={disabled ? `${name}: ${lockDescription}` : `Chọn ${name}`} checked={checked} disabled={disabled} onChange={() => toggleProduct(id)} className="h-4 w-4 accent-blue-600 disabled:cursor-not-allowed disabled:opacity-45" /></td>
+                <td className="px-4 py-3 text-center"><input type="checkbox" aria-label={disabled ? `${name}: ${lockDescription}` : `Chọn ${name}`} checked={checked} disabled={disabled} onChange={() => toggleProduct(id)} className="h-4 w-4 accent-primary-600 disabled:cursor-not-allowed disabled:opacity-45" /></td>
               </tr>;
             })}
                 {!visibleProducts.length && <tr><td colSpan="4" className="px-4 py-10 text-center text-gray-500">Không tìm thấy sản phẩm phù hợp.</td></tr>}
@@ -123,13 +121,13 @@ export default function ProductPickerModal({ selectedIds, onChange, onClose, sta
         </div>
 
         {!loading && !error && <nav aria-label="Phân trang sản phẩm" className="flex items-center justify-center gap-3 pb-4 text-sm">
-          <button type="button" disabled={page <= 1} onClick={() => setPage((current) => current - 1)} className="rounded bg-blue-500 px-4 py-2 text-white enabled:hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50">Prev</button>
+          <button type="button" disabled={page <= 1} onClick={() => setPage((current) => current - 1)} className="rounded bg-primary-600 px-4 py-2 text-white enabled:hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">Prev</button>
           <span className="min-w-16 text-center">{page} / {totalPages}</span>
-          <button type="button" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} className="rounded bg-blue-600 px-4 py-2 text-white enabled:hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+          <button type="button" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} className="rounded bg-primary-600 px-4 py-2 text-white enabled:hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
         </nav>}
 
         <footer className="flex justify-end border-t bg-white px-5 py-4">
-          <button type="button" onClick={onClose} className="rounded-lg bg-purple-400 px-6 py-3 font-semibold text-white hover:bg-purple-500">Chọn Sản Phẩm ({selectedIds.length})</button>
+          <button type="button" onClick={onClose} className="rounded-lg bg-primary-600 px-6 py-3 font-semibold text-white hover:bg-primary-700">Chọn Sản Phẩm ({selectedIds.length})</button>
         </footer>
       </section>
     </div>

@@ -347,14 +347,14 @@ export default function UserManagement() {
           </p>
         </div>
         <button
-          className="px-4 py-2 rounded-md bg-indigo-600 text-white shadow-sm hover:bg-indigo-700"
+          className="px-4 py-2 rounded-md bg-primary-600 text-white shadow-sm hover:bg-primary-700"
           onClick={openCreateModal}
         >
           + Thêm tài khoản
         </button>
         <Link
           to="/roles"
-          className="rounded-md border border-indigo-600 px-4 py-2 text-indigo-600 hover:bg-indigo-50"
+          className="rounded-md border border-primary-600 px-4 py-2 text-primary-600 hover:bg-primary-50"
         >
           Phân quyền role
         </Link>
@@ -364,7 +364,7 @@ export default function UserManagement() {
         <div
           className={`rounded-md px-4 py-2 text-sm ${
             alert.type === "success"
-              ? "bg-green-50 text-green-700"
+              ? "bg-emerald-50 text-emerald-700"
               : "bg-red-50 text-red-700"
           }`}
         >
@@ -409,7 +409,7 @@ export default function UserManagement() {
               users.map((user) => (
                 <tr
                   key={user.id}
-                  className="hover:bg-indigo-50/60 transition-colors"
+                  className="hover:bg-primary-50/60 transition-colors"
                 >
                   <td className="px-4 py-3">{user.email || "—"}</td>
                   <td className="px-4 py-3 font-medium text-gray-800">
@@ -431,7 +431,7 @@ export default function UserManagement() {
                     <span
                       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
                         user.isActive
-                          ? "bg-green-50 text-green-700"
+                          ? "bg-emerald-50 text-emerald-700"
                           : "bg-red-50 text-red-700"
                       }`}
                     >
@@ -441,14 +441,14 @@ export default function UserManagement() {
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
                       <button
-                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                        className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition"
                         onClick={() => handleViewDetail(user)}
                         title="Xem chi tiết"
                       >
                         <Eye size={16} />
                       </button>
                       <button
-                        className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
+                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
                         onClick={() => openEditModal(user)}
                         title="Sửa thông tin"
                       >
@@ -457,8 +457,8 @@ export default function UserManagement() {
                       <button
                         className={`p-2 rounded-lg transition ${
                           user.isActive
-                            ? "text-orange-600 hover:bg-orange-50"
-                            : "text-green-600 hover:bg-green-50"
+                            ? "text-amber-600 hover:bg-amber-50"
+                            : "text-emerald-600 hover:bg-emerald-50"
                         }`}
                         onClick={() => handleStatusToggle(user)}
                         title={user.isActive ? "Khóa tài khoản" : "Mở khóa tài khoản"}
@@ -666,7 +666,7 @@ export default function UserManagement() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-50"
+                className="px-4 py-2 rounded-md bg-primary-600 text-white disabled:opacity-50 hover:bg-primary-700"
                 disabled={saving}
               >
                 {saving ? "Đang lưu..." : "Thêm mới"}
@@ -801,7 +801,7 @@ export default function UserManagement() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-50"
+                className="px-4 py-2 rounded-md bg-primary-600 text-white disabled:opacity-50 hover:bg-primary-700"
                 disabled={saving}
               >
                 {saving ? "Đang lưu..." : "Lưu thay đổi"}

@@ -382,7 +382,7 @@ const ProductModal = ({
                   onClick={() =>
                     document.getElementById("image-upload").click()
                   }
-                  className="w-full px-3 py-2 border border-dashed border-gray-300 rounded-md text-sm text-gray-600 hover:bg-gray-50 hover:border-indigo-300 transition-colors"
+                  className="w-full px-3 py-2 border border-dashed border-gray-300 rounded-md text-sm text-gray-600 hover:bg-gray-50 hover:border-primary-300 transition-colors"
                 >
                   <div className="flex items-center justify-center gap-2">
                     <svg
@@ -532,7 +532,7 @@ const ProductModal = ({
 
               <div>
                 <label className="text-xs text-gray-600">Giá giảm</label>
-                <div className="p-2 border rounded bg-gray-50 text-rose-600 font-medium">
+                <div className="p-2 border rounded bg-gray-50 text-red-600 font-medium">
                   {formData.discountPrice != null && Number(formData.discountPrice) < Number(formData.price)
                     ? formatPrice(formData.discountPrice)
                     : "Chưa có khuyến mãi áp dụng"}
@@ -686,7 +686,7 @@ const ProductModal = ({
                 </label>
                 {(() => {
                   const statusColor = formData.isActive
-                    ? "bg-green-500"
+                    ? "bg-emerald-500"
                     : "bg-red-500";
                   const statusText = formData.isActive
                     ? "Đang hoạt động"
@@ -706,7 +706,7 @@ const ProductModal = ({
                         onChange={(e) =>
                           handleFieldChange("isActive", e.target.checked)
                         }
-                        className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                        className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500"
                       />
                       <span className="text-sm text-gray-700">
                         Đang hoạt động
@@ -723,7 +723,7 @@ const ProductModal = ({
                 </button>
                 {!isView && (
                   <button
-                    className="px-3 py-1 rounded bg-indigo-600 text-white"
+                    className="px-3 py-1 rounded bg-primary-600 text-white hover:bg-primary-700"
                     onClick={handleSave}
                     disabled={saving}
                   >

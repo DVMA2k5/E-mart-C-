@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import CustomSelect from "../ui/CustomSelect";
 import { request } from "../../api/apiClient";
 import { getAllCategories } from "../../api/categoryApi";
+import ProductDescriptionEditor, { ProductDescriptionContent } from "./ProductDescription";
 
 const ProductModal = ({
   title = null,
@@ -661,20 +662,17 @@ const ProductModal = ({
               </div>
 
               {/* --- MÔ TẢ --- */}
-              <div>
+              <div className="col-span-2 min-w-0">
                 <label className="text-xs text-gray-600">Mô tả</label>
                 {isView ? (
                   <div className="p-2 border rounded bg-gray-50">
-                    {formData.description || "Không có mô tả"}
+                    <ProductDescriptionContent value={formData.description} />
                   </div>
                 ) : (
-                  <textarea
-                    className="w-full border px-2 py-1 rounded"
+                  <ProductDescriptionEditor
                     value={formData.description || ""}
-                    onChange={(e) =>
-                      handleFieldChange("description", e.target.value)
-                    }
-                    rows={3}
+                    onChange={(value) => handleFieldChange("description", value)}
+                    disabled={saving}
                   />
                 )}
               </div>

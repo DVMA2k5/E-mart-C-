@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import ProductDescription from "./components/ProductDescription";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -289,7 +290,7 @@ const ProductCard = memo(function ProductCard({ product, cartQty = 0, onAdd, onQ
   );
 });
 
-function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQuantityChange, onQuantitySet, onViewCart, onOpen, flight, onFlightComplete }) {
+function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQuantityChange, onQuantitySet, onViewCart, onOpen, flight, onFlightComplete, descriptionStatus }) {
   const relatedProducts = product.categoryId == null ? [] : products.filter((item) => (
     String(item.categoryId) === String(product.categoryId) && String(item.id) !== String(product.id)
   ));
@@ -316,7 +317,6 @@ function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQu
             {productDiscountAmount(product) > 0 && <Text style={styles.productDetailSaving}>Tiết kiệm {money(productDiscountAmount(product))}</Text>}
           </View>
           <ProductStock product={product} style={styles.productDetailStock} />
-          {product.description && <Text style={styles.productDetailDescription}>{product.description}</Text>}
         </View>
         <View style={styles.relatedProductsSection}>
           <Text style={styles.relatedProductsTitle}>Sản phẩm liên quan</Text>
@@ -334,6 +334,10 @@ function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQu
               ))}
             </ScrollView>
           ) : <Text style={styles.productDetailDescription}>Chưa có sản phẩm cùng loại khác.</Text>}
+        </View>
+        <View style={styles.relatedProductsSection}>
+          <Text style={styles.relatedProductsTitle}>Thông tin sản phẩm</Text>
+          <ProductDescription value={product.description} fallback={descriptionStatus?.loading ? "Đang tải thông tin sản phẩm..." : descriptionStatus?.error || "Thông tin sản phẩm đang được cập nhật."} />
         </View>
       </ScrollView>
       <View style={styles.productDetailAction}>
@@ -605,6 +609,33 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadStore(); }, [loadStore]);
+
+  const productInfoRequest = useRef(null);
+  const [descriptionStatus, setDescriptionStatus] = useState(null);
+  const openProduct = useCallback((product) => {
+    setSelectedProduct(product);
+    productInfoRequest.current?.abort();
+    const controller = new AbortController();
+    productInfoRequest.current = controller;
+    setDescriptionStatus({ id: product.id, loading: true });
+    // Refresh from the public API, including descriptions edited after app startup.
+    fetch(`${API_URL}/storefront/products`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await readError(response));
+        const data = await response.json();
+        const latest = Array.isArray(data) ? data.find((item) => item.id === product.id) : null;
+        if (!latest) throw new Error("Sản phẩm hiện không còn khả dụng.");
+        if (controller.signal.aborted) return;
+        setProducts((current) => current.map((item) => item.id === product.id && item.description !== latest.description
+          ? { ...item, description: latest.description }
+          : item));
+        setDescriptionStatus({ id: product.id, loading: false });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setDescriptionStatus({ id: product.id, loading: false, error: "Không tải được thông tin mới. Vui lòng kiểm tra kết nối và mở lại sản phẩm." });
+      });
+  }, []);
+  useEffect(() => () => productInfoRequest.current?.abort(), []);
 
   useEffect(() => {
     AsyncStorage.getItem(CART_KEY)
@@ -1082,7 +1113,8 @@ export default function App() {
       key={selectedProduct.id}
       product={products.find((product) => product.id === selectedProduct.id) || { ...selectedProduct, stockQuantity: 0 }}
       products={products}
-      onOpen={setSelectedProduct}
+      onOpen={openProduct}
+      descriptionStatus={descriptionStatus?.id === selectedProduct.id ? descriptionStatus : null}
       quantity={getCartQuantity(selectedProduct.id)}
       onClose={() => setSelectedProduct(null)}
       onAdd={addToCart}
@@ -1190,10 +1222,10 @@ export default function App() {
       onAdd={addToCart}
       onQuantityChange={changeQuantity}
       onQuantitySet={setProductQuantity}
-      onOpen={setSelectedProduct}
+      onOpen={openProduct}
       cardWidthStyle={cardWidthStyle}
     />
-  ), [cartItemMap, addToCart, changeQuantity, setProductQuantity, cardWidthStyle]);
+  ), [cartItemMap, addToCart, changeQuantity, setProductQuantity, cardWidthStyle, openProduct]);
 
   const renderHome = () => (
     <FlatList
@@ -1897,7 +1929,7 @@ export default function App() {
                   ) : drawerProducts.map((product) => (
                     <Pressable
                       key={product.id}
-                      onPress={() => setSelectedProduct(product)}
+                      onPress={() => openProduct(product)}
                       accessibilityRole="button"
                       accessibilityLabel={`Xem chi tiết ${product.productName}`}
                       style={[styles.drawerProductTile, { width: isDesktop ? "25%" : "33.333%" }]}
@@ -2591,7 +2623,7 @@ const styles = StyleSheet.create({
   flashSaleTitle: { color: "#fff", fontSize: 17, fontWeight: "900" },
   flashSaleText: { color: "#fff", fontSize: 12, fontWeight: "700", marginTop: 4 },
   productDetailInfo: { backgroundColor: "#fff", padding: 18, marginTop: 10 },
-  productDetailDescription: { color: TEXT_MUTED, fontSize: 14, lineHeight: 22, marginTop: 16 },
+  productDetailDescription: { color: TEXT_MUTED, fontSize: 14, lineHeight: 22, paddingHorizontal: 18, marginTop: 0, textAlign: "left" },
   relatedProductsSection: { backgroundColor: "#fff", marginTop: 10, paddingVertical: 16 },
   relatedProductsTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "800", paddingHorizontal: 18, marginBottom: 12 },
   relatedProductsRow: { paddingHorizontal: 18, gap: 10 },

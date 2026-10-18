@@ -333,6 +333,7 @@ namespace backend.Controllers
                 {
                     Id = product.Id,
                     ProductName = product.ProductName,
+                    Description = product.Description,
                     CategoryId = product.CategoryId,
                     CategoryName = product.Category != null ? product.Category.Name : null,
                     Price = product.Price,
@@ -698,6 +699,7 @@ namespace backend.Controllers
     {
         public int Id { get; set; }
         public string ProductName { get; set; } = string.Empty;
+        public string? Description { get; set; }
         public int? CategoryId { get; set; }
         public string? CategoryName { get; set; }
         public decimal Price { get; set; }

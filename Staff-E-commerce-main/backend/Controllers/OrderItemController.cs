@@ -27,6 +27,7 @@ namespace backend.Controllers
                 bool success = await _orderItemService.SaveOrderItemsAsync(items);
                 return Ok(success);
             }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
             catch (Exception)
             {
                 return StatusCode(500, false);
@@ -45,8 +46,12 @@ namespace backend.Controllers
         [HttpDelete("by-order/{orderId}")]
         public async Task<IActionResult> DeleteItemsByOrder(int orderId)
         {
-            await _orderItemService.DeleteByOrderIdAsync(orderId);
-            return Ok(new { message = "Đã xóa các item của đơn hàng." });
+            try
+            {
+                await _orderItemService.DeleteByOrderIdAsync(orderId);
+                return Ok(new { message = "Đã xóa các item của đơn hàng." });
+            }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
                 // GET: api/orderitems/by-order/5

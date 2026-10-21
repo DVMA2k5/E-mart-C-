@@ -9,6 +9,7 @@ namespace backend.DTO
         public string Status { get; set; } = "pending";
         public string? PaymentStatus { get; set; }
         public string? PaymentMethod { get; set; }
+        public bool IsPosCheckout { get; set; }
         public decimal Subtotal { get; set; } = 0m;
         public decimal Discount { get; set; } = 0m;
         public decimal TotalAmount { get; set; } = 0m;

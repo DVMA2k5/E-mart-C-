@@ -137,6 +137,7 @@ namespace backend.Repository
             {
                 query = stockStatus.ToLowerInvariant() switch
                 {
+                    "available" => query.Where(p => p.Inventory != null && p.Inventory.Quantity > 0),
                     "out_of_stock" => query.Where(p => p.Inventory == null || p.Inventory.Quantity == 0),
                     "low_stock" => query.Where(p => p.Inventory != null && p.Inventory.Quantity > 0 && p.Inventory.Quantity < 10),
                     "in_stock" => query.Where(p => p.Inventory != null && p.Inventory.Quantity >= 10),
@@ -220,7 +221,8 @@ namespace backend.Repository
             if (productPrices.Count == 0)
                 return new Dictionary<int, (decimal Amount, string Name)>();
 
-            var today = DateTimeHelper.VietnamToday;
+            var today = DateTimeHelper.ToUtc(DateTimeHelper.VietnamToday);
+            var tomorrow = today.AddDays(1);
             var promotions = await (
                 from link in _context.ProductPromotions.AsNoTracking()
                 join promotion in _context.Promotions.AsNoTracking() on link.PromotionId equals promotion.Id
@@ -228,8 +230,8 @@ namespace backend.Repository
                       && !promotion.IsDeleted
                       && promotion.Status == "active"
                       && promotion.Type == "product"
-                      && (!promotion.StartDate.HasValue || promotion.StartDate.Value.Date <= today)
-                      && (!promotion.EndDate.HasValue || promotion.EndDate.Value.Date >= today)
+                      && (!promotion.StartDate.HasValue || promotion.StartDate.Value < tomorrow)
+                      && (!promotion.EndDate.HasValue || promotion.EndDate.Value >= today)
                       && (!promotion.UsageLimit.HasValue || promotion.UsedCount < promotion.UsageLimit)
                 select new { link.ProductId, promotion.Name, promotion.DiscountType, promotion.Value, promotion.MaxDiscount }
             ).ToListAsync();
@@ -258,9 +260,9 @@ namespace backend.Repository
 
         private static decimal CalculateDiscount(decimal price, string discountType, decimal value, decimal? maxDiscount)
         {
-            var discount = discountType == "percent" ? price * value / 100m : value;
+            var discount = discountType == "percent" ? decimal.Floor(price * value / 100m) : value;
             if (maxDiscount.HasValue) discount = Math.Min(discount, maxDiscount.Value);
-            return Math.Min(price, discount);
+            return Math.Clamp(discount, 0, price);
         }
 
         public async Task<List<Product>> GetByIdsAsync(IEnumerable<int> ids)

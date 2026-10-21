@@ -4,6 +4,8 @@ using backend.Repository;
 using Newtonsoft.Json;
 using System.Security.Cryptography;
 using System.Text;
+using backend.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace backend.Services
 {
@@ -14,11 +16,15 @@ namespace backend.Services
         private readonly ActivityLogService _logService;
         private readonly IConfiguration _config;
         private readonly InvoiceService _invoiceService;
+        private readonly AppDbContext _context;
+        private readonly PosCheckoutService _checkout;
 
         // Hàm lưu một payment nếu là thanh toán trực tiếp 
         // Lưu Payment (Cash, Card, ECard,...)
         public async Task<Payment> CreatePaymentAsync(Payment payment)
         {
+            if (await _context.Orders.AnyAsync(o => o.Id == payment.OrderId && o.CheckoutKey != null))
+                throw new ArgumentException("Đơn POS phải thanh toán qua nghiệp vụ chốt đơn.");
             // The POS request does not send CreatedAt. Avoid DateTime.MinValue,
             // which SQL Server's datetime column cannot store.
             if (payment.CreatedAt == default)
@@ -27,13 +33,15 @@ namespace backend.Services
             return await _paymentRepo.AddPaymentAsync(payment);
         }
 
-        public PaymentService(PaymentRepository paymentRepo, OrderRepository orderRepo, ActivityLogService logService, IConfiguration config, InvoiceService invoiceService)
+        public PaymentService(PaymentRepository paymentRepo, OrderRepository orderRepo, ActivityLogService logService, IConfiguration config, InvoiceService invoiceService, AppDbContext context, PosCheckoutService checkout)
         {
             _paymentRepo = paymentRepo;
             _orderRepo = orderRepo;
             _logService = logService;
             _config = config;
             _invoiceService = invoiceService;
+            _context = context;
+            _checkout = checkout;
         }
 
         private string SignSHA256(string message, string key)
@@ -44,6 +52,13 @@ namespace backend.Services
 
         public async Task<MomoPaymentResponseDTO> CreatePaymentAsync(MomoPaymentRequestDTO req)
         {
+            var order = await _context.Orders.AsNoTracking().SingleOrDefaultAsync(o => o.Id == req.OrderId)
+                ?? throw new ArgumentException("Không tìm thấy đơn hàng.");
+            if (order.PaymentStatus != "pending" || order.Status is "cancelled" or "refunded" || order.PaymentMethod != "e_wallet")
+                throw new ArgumentException("Đơn không còn chờ thanh toán MoMo.");
+            req.Amount = order.TotalAmount;
+            if (req.Amount != decimal.Truncate(req.Amount))
+                throw new ArgumentException("Thanh toán MoMo yêu cầu số tiền nguyên đồng. Vui lòng kiểm tra giá sản phẩm.");
             string endpoint = _config["Momo:Endpoint"];
             string partnerCode = _config["Momo:PartnerCode"];
             string accessKey = _config["Momo:AccessKey"];
@@ -53,7 +68,7 @@ namespace backend.Services
 
 
             // MoMo yêu cầu orderId và requestId dạng string
-            string orderId = "order_" + req.OrderId;
+            string orderId = $"order_{req.OrderId}_{Guid.NewGuid():N}";
             string requestId = "req_" + Guid.NewGuid().ToString("N");
             string orderInfo = $"Thanh toán đơn hàng {req.OrderId}";
             string amountStr = Math.Round(req.Amount).ToString("0");
@@ -90,6 +105,9 @@ namespace backend.Services
                 signature
             };
 
+            // Persist the attempt before contacting MoMo so a delayed callback can still be matched.
+            var payment = new Payment { OrderId = req.OrderId, Amount = req.Amount, Method = "other", TransactionRef = orderId, Status = "pending", CreatedAt = DateTime.UtcNow };
+            await _paymentRepo.AddPaymentAsync(payment);
             using var client = new HttpClient();
             var resp = await client.PostAsync(endpoint, new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json"));
             var content = await resp.Content.ReadAsStringAsync();
@@ -100,16 +118,9 @@ namespace backend.Services
             bool success = !string.IsNullOrEmpty(payUrl);
 
             // Lưu payment vào DB
-            var payment = new Payment
-            {
-                OrderId = req.OrderId,
-                Amount = req.Amount,
-                Method = "other",
-                TransactionRef = orderId,
-                Status = success ? "pending" : "failed",
-                CreatedAt = DateTime.UtcNow
-            };
-            await _paymentRepo.AddPaymentAsync(payment);
+            // A callback may already have completed this attempt; never overwrite its status.
+            if (!success) await _context.Payments.Where(p => p.Id == payment.Id && p.Status == "pending")
+                .ExecuteUpdateAsync(update => update.SetProperty(p => p.Status, "failed"));
 
             
 
@@ -147,16 +158,25 @@ namespace backend.Services
             string expected = SignSHA256(rawSignature, secretKey);
             if (callback.Signature != expected)
             {
-                await _logService.LogAsync(0, "INVALID_SIGNATURE", "Payment", callback.OrderId ?? "", "Chữ ký MoMo không hợp lệ", "system");
                 return false;
             }
 
             if (callback.ResultCode == 0)
             {
                 // Cập nhật payment + order
-                var payment = await _paymentRepo.GetByOrderIdAsync(int.Parse(callback.OrderId.Replace("order_", "")));
+                var payment = await _context.Payments.FirstOrDefaultAsync(p => p.TransactionRef == callback.OrderId);
                 if (payment != null)
                 {
+                    var pendingOrder = await _context.Orders.AsNoTracking().SingleAsync(o => o.Id == payment.OrderId);
+                    if (!decimal.TryParse(callback.Amount.ToString(), out var received) || received != payment.Amount || received != pendingOrder.TotalAmount)
+                        return false;
+                    if (pendingOrder.CheckoutKey != null)
+                    {
+                        try { await _checkout.ConfirmAsync(payment.OrderId, received, callback.OrderId!, momo: true); return true; }
+                        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { return false; }
+                    }
+                    if (pendingOrder.Status is "cancelled" or "refunded") return false;
+                    if (payment.Status == "completed") return true;
                     payment.Status = "completed";
                     await _paymentRepo.UpdatePaymentAsync(payment);
 
@@ -168,8 +188,10 @@ namespace backend.Services
                         await _invoiceService.SyncOrderLifecycleAsync(order.Id);
                     }
 
-                    await _logService.LogAsync(payment.OrderId, "PAYMENT_SUCCESS", "Payment", payment.TransactionRef, JsonConvert.SerializeObject(callback), "system");
+                    _context.ActivityLogs.Add(new ActivityLog { UserId = pendingOrder.UserId, Action = "PAYMENT_SUCCESS", EntityType = "Payment", EntityId = payment.Id.ToString(), CreatedAt = DateTime.UtcNow });
+                    await _context.SaveChangesAsync();
                 }
+                else return false;
             }
 
             return true;

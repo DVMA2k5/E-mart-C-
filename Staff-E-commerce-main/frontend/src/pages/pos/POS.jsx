@@ -10,10 +10,11 @@ import {
 import {
   getProductByBarcode,
   getPaginatedProducts,
-  request,
 } from "../../api/apiClient";
 import { getCustomers } from "../../api/customerApi";
 import { formatPrice } from "../../utils/formatPrice";
+import { checkoutPos, getCheckoutRequestId } from "../../api/posCheckoutApi";
+import PosPaymentPanel from "../../components/orders/PosPaymentPanel";
 
 const STATUS_CONFIG = {
   pending:    { label: "Chờ xác nhận", color: "bg-amber-100 text-amber-800",    dot: "bg-amber-500"  },
@@ -127,10 +128,13 @@ export default function POS() {
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
 
   const [pointsToUse, setPointsToUse] = useState(0);
-  const [paymentMethod, setPaymentMethod] = useState("cash"); // "cash" | "other" (MoMo) | "card"
+  const [paymentMethod, setPaymentMethod] = useState("cash"); // "cash" | "other" (MoMo)
   const [cashGiven, setCashGiven] = useState("");
+  const [orderNote, setOrderNote] = useState("");
   const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
   const [receiptOrder, setReceiptOrder] = useState(null);
+  const checkoutKey = useRef(null);
+  const checkoutBusy = useRef(false);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -240,6 +244,7 @@ export default function POS() {
 
   // Thêm sản phẩm vào giỏ hàng POS
   const addToPosCart = (product) => {
+    if (checkoutBusy.current) return;
     setPosCart((current) => {
       const existing = current.find((item) => item.id === product.id);
       if (existing) {
@@ -252,7 +257,7 @@ export default function POS() {
         {
           id: product.id,
           name: product.productName,
-          price: product.price,
+          price: product.discountPrice ?? product.price,
           barcode: product.barcode || product.sku,
           imageUrl: product.imageUrl,
           quantity: 1,
@@ -321,67 +326,39 @@ export default function POS() {
   const pointsToEarn = Math.floor(posTotalPayable / 10000);
 
   // Thanh toán đơn POS
+  const showCheckoutReceipt = (order) => setReceiptOrder({
+    ...order,
+    items: order.items.map((item) => ({ id: item.productId, name: item.productName, price: item.unitPrice, quantity: item.quantity })),
+    cashGiven: order.cashReceived ?? 0,
+    customer: order.customerName ? { fullName: order.customerName } : null,
+  });
+
   const handleCheckoutPOS = async () => {
-    if (!posCart.length) {
-      showToast("Giỏ hàng đang trống!", "error");
-      return;
+    if (checkoutBusy.current) return;
+    if (!posCart.length) { showToast("Giỏ hàng đang trống!", "error"); return; }
+    if (paymentMethod === "cash" && (cashGiven === "" || !Number.isFinite(Number(cashGiven)) || Number(cashGiven) < posTotalPayable)) {
+      showToast("Nhập đủ số tiền khách đưa trước khi thanh toán.", "error"); return;
     }
-    if (paymentMethod === "cash" && cashGiven && Number(cashGiven) < posTotalPayable) {
-      showToast("Tiền khách đưa chưa đủ!", "error");
-      return;
-    }
-    setCheckoutSubmitting(true);
+    const payload = {
+      customerId: selectedCustomer?.id || null,
+      note: orderNote.trim(),
+      pointsUsed: effectivePointsUsed,
+      paymentMethod: paymentMethod === "other" ? "e_wallet" : paymentMethod,
+      expectedTotal: posTotalPayable,
+      cashReceived: paymentMethod === "cash" ? Number(cashGiven) : null,
+      items: posCart.map((item) => ({ productId: item.id, quantity: item.quantity })),
+    };
+    checkoutBusy.current = true; setCheckoutSubmitting(true);
     try {
-      const payload = {
-        orderNumber: `POS-${Date.now()}`,
-        orderType: "pos",
-        customerId: selectedCustomer?.id || null,
-        status: "completed",
-        subtotal: posSubtotal,
-        discount: pointsDiscount,
-        totalAmount: posTotalPayable,
-        paymentMethod: paymentMethod === "cash" ? "cash" : (paymentMethod === "other" ? "e_wallet" : "card"),
-        paymentStatus: "paid",
-        note: selectedCustomer
-          ? `Khách: ${selectedCustomer.fullName} - Đã dùng ${effectivePointsUsed} điểm`
-          : "Bán lẻ tại quầy",
-        orderItems: posCart.map((item) => ({
-          productId: item.id,
-          quantity: item.quantity,
-          unitPrice: item.price,
-          totalPrice: item.price * item.quantity,
-        })),
-      };
-
-      const res = await request("/orders", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      // Xuất hoá đơn thành công
-      setReceiptOrder({
-        ...payload,
-        id: res?.id || Date.now(),
-        orderNumber: res?.orderNumber || payload.orderNumber,
-        items: posCart,
-        cashGiven: Number(cashGiven) || posTotalPayable,
-        changeDue,
-        pointsUsed: effectivePointsUsed,
-        pointsEarned: selectedCustomer ? pointsToEarn : 0,
-        customer: selectedCustomer,
-        createdAt: new Date(),
-      });
-
-      showToast("Tạo đơn hàng & thanh toán thành công!", "success");
-      setPosCart([]);
-      setSelectedCustomer(null);
-      setPointsToUse(0);
-      setCashGiven("");
-    } catch (err) {
-      showToast(err.message || "Lỗi tạo đơn hàng POS", "error");
-    } finally {
-      setCheckoutSubmitting(false);
-    }
+      checkoutKey.current = getCheckoutRequestId(checkoutKey.current, payload);
+      const order = await checkoutPos({ ...payload, requestId: checkoutKey.current.id });
+      showCheckoutReceipt(order);
+      checkoutKey.current = null;
+      showToast(order.paymentStatus === "paid" ? "Đã thanh toán và xuất hóa đơn." : "Đơn đã lưu, đang chờ xác nhận thanh toán.");
+      setPosCart([]); setSelectedCustomer(null); setPointsToUse(0); setCashGiven("");
+      setOrderNote("");
+    } catch (err) { showToast(err.message || "Chưa nhận được kết quả. Giữ nguyên giỏ và thử lại để tránh tạo trùng.", "error"); }
+    finally { checkoutBusy.current = false; setCheckoutSubmitting(false); }
   };
 
   const handleConfirm = async (orderId) => {
@@ -678,7 +655,7 @@ export default function POS() {
         {/* TAB 2: BÁN TẠI QUẦY (POS CHUYÊN DỤNG VỚI BARCODE SCANNER)  */}
         {/* ========================================================= */}
         {activeTab === "pos" && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <fieldset disabled={checkoutSubmitting} className="min-w-0 grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Cột trái: Máy quét mã vạch + Sản phẩm */}
             <div className="lg:col-span-7 space-y-5">
               {/* Ô Quét Mã Vạch Barcode (Autofocus) */}
@@ -749,10 +726,10 @@ export default function POS() {
                           <div className="text-xs font-mono text-gray-400">{p.barcode || p.sku || "—"}</div>
                           <div className="text-xs font-bold text-gray-800 line-clamp-2 mt-0.5">{p.productName}</div>
                         </div>
-                        <div className="mt-2 flex justify-between items-center">
-                          <span className="text-xs font-black text-emerald-700">{formatPrice(p.price)}</span>
-                          <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold">
-                            +
+                        <div className="mt-2 flex flex-wrap justify-between items-center gap-2">
+                          <span className="text-xs font-black text-emerald-700">{formatPrice(p.discountPrice ?? p.price)}</span>
+                          <span className="text-xs font-medium text-gray-500 whitespace-nowrap">
+                            Còn: {(p.inventory?.quantity ?? 0).toLocaleString("vi-VN")}
                           </span>
                         </div>
                       </div>
@@ -901,14 +878,26 @@ export default function POS() {
                   )}
                 </div>
 
+                <div className="pt-3 border-t space-y-2">
+                  <label htmlFor="pos-order-note" className="block text-xs font-bold text-gray-700">Ghi chú đơn hàng:</label>
+                  <textarea
+                    id="pos-order-note"
+                    value={orderNote}
+                    onChange={(e) => setOrderNote(e.target.value)}
+                    maxLength={1000}
+                    rows={2}
+                    placeholder="Nhập ghi chú (không bắt buộc)..."
+                    className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary-300"
+                  />
+                </div>
+
                 {/* Phương thức thanh toán */}
                 <div className="pt-3 border-t space-y-2">
                   <label className="text-xs font-bold text-gray-700">Phương thức thanh toán:</label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     {[
                       { key: "cash", label: "Tiền mặt", icon: "💵" },
                       { key: "other", label: "MoMo", icon: "🟣" },
-                      { key: "card", label: "Quẹt thẻ", icon: "💳" },
                     ].map((m) => (
                       <button
                         key={m.key}
@@ -976,11 +965,11 @@ export default function POS() {
                   disabled={checkoutSubmitting || !posCart.length}
                   className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm rounded-xl shadow-lg shadow-emerald-200 transition disabled:opacity-50"
                 >
-                  {checkoutSubmitting ? "Đang xử lý..." : "✓ THANH TOÁN & XUẤT HOÁ ĐƠN"}
+                  {checkoutSubmitting ? "Đang xử lý..." : "XÁC NHẬN ĐƠN HÀNG"}
                 </button>
               </div>
             </div>
-          </div>
+          </fieldset>
         )}
       </div>
 
@@ -989,11 +978,11 @@ export default function POS() {
       {/* ========================================================= */}
       {receiptOrder && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-gray-800 font-mono text-xs">
+          <div className="max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-gray-800 font-mono text-xs">
             <div className="text-center border-b pb-4 mb-4">
               <h2 className="font-black text-lg text-gray-900 tracking-wider">E-MART CONVENIENCE</h2>
               <p className="text-gray-500">Cửa hàng tiện lợi tươi ngon</p>
-              <div className="text-gray-400 mt-1">Số HĐ: #{receiptOrder.orderNumber}</div>
+              <div className="text-gray-400 mt-1">{receiptOrder.paymentStatus === "paid" ? "Số HĐ" : "Mã đơn"}: #{receiptOrder.orderNumber}</div>
               <div className="text-gray-400">{formatDate(receiptOrder.createdAt)}</div>
             </div>
 
@@ -1040,6 +1029,7 @@ export default function POS() {
               </div>
             )}
 
+            <PosPaymentPanel order={receiptOrder} onChange={showCheckoutReceipt} />
             <div className="text-center text-gray-400 text-xs mb-4">
               Cảm ơn quý khách và hẹn gặp lại!
             </div>

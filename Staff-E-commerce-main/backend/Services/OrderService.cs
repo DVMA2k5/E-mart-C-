@@ -19,6 +19,7 @@ namespace backend.Services
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly AppDbContext _context;
         private readonly InvoiceService _invoiceService;
+        private readonly PosCheckoutService _checkout;
 
         public OrderService(
             OrderRepository orderRepo,
@@ -27,7 +28,7 @@ namespace backend.Services
             CustomerRepository customerRepo,
             IHttpContextAccessor httpContextAccessor,
             AppDbContext context,
-            InvoiceService invoiceService)
+            InvoiceService invoiceService, PosCheckoutService checkout)
         {
             _orderRepo = orderRepo;
             _logService = logService;
@@ -36,6 +37,7 @@ namespace backend.Services
             _httpContextAccessor = httpContextAccessor;
             _context = context;
             _invoiceService = invoiceService;
+            _checkout = checkout;
         }
 
         // Tự động lấy user_id
@@ -109,63 +111,7 @@ namespace backend.Services
 
 
 
-        // Lưu đơn hàng (frontend đã gửi đủ dữ liệu)
-        public async Task<Order> SaveOrderAsync(Order order)
-        {
-            if (order.Subtotal < 0 || order.Discount < 0 || order.TotalAmount < 0)
-                throw new ArgumentException("Các giá trị tiền không được âm.");
 
-            if (!new[] { "pending", "processing", "completed", "cancelled" }
-                .Contains(order.Status, StringComparer.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException("Trạng thái đơn hàng không hợp lệ.");
-            }
-
-            var now = DateTime.UtcNow;
-
-            order.Id = 0;
-            order.UserId = GetCurrentUserId();
-            order.OrderNumber = string.IsNullOrWhiteSpace(order.OrderNumber)
-                ? $"DH-{Guid.NewGuid():N}"
-                : order.OrderNumber.Trim();
-            order.CreatedAt = now;
-            order.UpdatedAt = now;
-
-            // A POS order is saved together with its nested items. The client does
-            // not need to supply audit timestamps, and an omitted non-nullable
-            // DateTime binds as DateTime.MinValue, which SQL Server DATETIME
-            // cannot store (its minimum is 1753-01-01).
-            foreach (var item in order.OrderItems)
-            {
-                item.Id = 0;
-                item.CreatedAt = now;
-            }
-
-            foreach (var payment in order.Payments)
-            {
-                payment.Id = 0;
-                payment.CreatedAt = now;
-            }
-            var created = await _orderRepo.CreateOrderAsync(order);
-            await _invoiceService.SyncOrderLifecycleAsync(created.Id);
-
-            // Tích điểm nếu đơn hoàn tất tại quầy
-            if (created.Status == "completed" && created.CustomerId.HasValue && created.CustomerId.Value > 0)
-            {
-                var pointsEarned = (int)(created.TotalAmount / 10000m);
-                if (pointsEarned > 0)
-                {
-                    var customer = await _context.Customers.FindAsync(created.CustomerId.Value);
-                    if (customer != null)
-                    {
-                        customer.RewardPoints += pointsEarned;
-                        customer.UpdatedAt = DateTime.UtcNow;
-                        await _context.SaveChangesAsync();
-                    }
-                }
-            }
-            return created;
-        }
 
 
 
@@ -185,6 +131,7 @@ namespace backend.Services
                 Status = order.Status,
                 PaymentStatus = order.PaymentStatus,
                 PaymentMethod = order.PaymentMethod,
+                IsPosCheckout = order.CheckoutKey != null,
                 Subtotal = order.Subtotal,
                 Discount = order.Discount,
                 TotalAmount = order.TotalAmount,
@@ -223,6 +170,8 @@ namespace backend.Services
         }
         public async Task<bool> CancelOrderAsync(int orderId)
         {
+            if (await _context.Orders.AsNoTracking().AnyAsync(o => o.Id == orderId && o.CheckoutKey != null))
+                return await _checkout.CancelAsync(orderId);
             // 1. Lấy user hiện tại
             int currentUserId = GetCurrentUserId();
 
@@ -242,6 +191,10 @@ namespace backend.Services
 
         public async Task<bool> CompletePendingOrderAsync(int orderId)
         {
+            var order = await _context.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == orderId);
+            if (order?.CheckoutKey != null)
+                throw new InvalidOperationException("Đơn POS phải được xác nhận thanh toán theo đúng phương thức.");
+            if (order?.PaymentStatus != "paid") throw new InvalidOperationException("Chưa có xác nhận thu đủ tiền cho đơn hàng.");
             var currentUserId = GetCurrentUserId();
             var completed = await _orderRepo.CompletePendingOrderAsync(orderId, currentUserId);
             if (completed) await _invoiceService.SyncOrderLifecycleAsync(orderId);
@@ -334,7 +287,7 @@ namespace backend.Services
             int userId = GetCurrentUserId();
             var now = DateTime.UtcNow;
             var updated = await _context.Orders
-                .Where(o => o.Id == orderId && o.Status == "pending")
+                .Where(o => o.Id == orderId && o.Status == "pending" && o.OrderType == "mobile" && o.CheckoutKey == null)
                 .ExecuteUpdateAsync(u => u
                     .SetProperty(o => o.Status, "processing")
                     .SetProperty(o => o.UserId, (int?)userId)
@@ -351,6 +304,7 @@ namespace backend.Services
                 .FirstOrDefaultAsync(o => o.Id == orderId);
 
             if (order == null) return false;
+            if (order.OrderType != "mobile" || order.CheckoutKey != null) return false;
             if (order.Status != "pending" && order.Status != "processing") return false;
 
             using var transaction = await _context.Database.BeginTransactionAsync();
@@ -398,7 +352,7 @@ namespace backend.Services
             var now = DateTime.UtcNow;
             var order = await _context.Orders
                 .Include(o => o.Customer)
-                .FirstOrDefaultAsync(o => o.Id == orderId && o.Status == "processing");
+                .FirstOrDefaultAsync(o => o.Id == orderId && o.Status == "processing" && o.OrderType == "mobile" && o.CheckoutKey == null);
 
             if (order == null) return false;
 

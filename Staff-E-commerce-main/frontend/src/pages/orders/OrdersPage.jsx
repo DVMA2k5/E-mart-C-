@@ -41,7 +41,6 @@ export default function OrdersPage() {
     openProductModal,
     closeProductModal,
     ordersFormMode,
-    createNewOrder,
     currentOrder,
     setCurrentOrder ,
     payment,
@@ -71,7 +70,8 @@ export default function OrdersPage() {
     showOrder,
     showOrderById,
     cancelOrder,
-    completePendingOrder
+    completePendingOrder,
+    isSubmitting, refreshCheckout
 
 
  
@@ -94,7 +94,7 @@ export default function OrdersPage() {
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6">
 
-      {/* Lọc trạng thái + Tạo đơn hàng */}
+      {/* Lọc trạng thái */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <div className="flex items-center gap-3 w-full sm:w-auto">
           <label className="text-sm font-bold text-gray-700 whitespace-nowrap">
@@ -117,12 +117,6 @@ export default function OrdersPage() {
           </select>
         </div>
 
-        <button
-          onClick={createNewOrder}
-          className="w-full sm:w-auto px-6 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 shadow-lg transition"
-        >
-          Tạo Đơn Hàng Mới
-        </button>
       </div>
 
       {/* Tìm kiếm */}
@@ -177,6 +171,8 @@ export default function OrdersPage() {
       setPromotion={setPromotion}
       click_buttonCreateNewOrder={click_buttonCreateNewOrder}
       completePendingOrder={completePendingOrder}
+      isSubmitting={isSubmitting}
+      refreshCheckout={refreshCheckout}
      
 
 

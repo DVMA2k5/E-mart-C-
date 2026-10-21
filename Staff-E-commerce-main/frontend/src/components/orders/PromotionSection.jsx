@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { request } from "../../api/apiClient";
 
 export default function PromotionSection({ isCreateMode, promotion, setPromotion, currentOrder, setCurrentOrder }) {
   const [promotions, setPromotions] = useState([]);
@@ -6,18 +7,26 @@ export default function PromotionSection({ isCreateMode, promotion, setPromotion
 
   useEffect(() => {
     if (isCreateMode === "create") {
-      fetch(`api/promotions/active`)
-        .then((res) => res.json())
-        .then((data) => setPromotions(data))
+      request("/promotions/active")
+        .then((data) => setPromotions(data.filter((p) => p.type === "voucher" || p.type === "event")))
         .catch((err) => console.error("Failed to fetch promotions:", err));
     }
   }, [isCreateMode]);
 
   useEffect(() => {
-    if (isCreateMode !== "create") {
-      setSelectedPromotionId(promotion?.id || null);
-    }
+    setSelectedPromotionId(promotion?.id || null);
   }, [promotion, isCreateMode]);
+
+  useEffect(() => {
+    if (isCreateMode !== "create") return;
+    const subtotal = Number(currentOrder?.subtotal || 0);
+    const eligible = promotion && subtotal >= Number(promotion.minOrderAmount || 0);
+    if (promotion && !eligible) setPromotion(null);
+    let discount = eligible ? (promotion.discountType === "percent" ? Math.floor(subtotal * promotion.value / 100) : Number(promotion.value)) : 0;
+    if (eligible && promotion.maxDiscount != null) discount = Math.min(discount, promotion.maxDiscount);
+    discount = Math.max(0, Math.min(subtotal, discount));
+    setCurrentOrder((previous) => previous?.discount === discount && previous?.totalAmount === subtotal - discount ? previous : ({ ...previous, discount, totalAmount: subtotal - discount, total_amount: subtotal - discount }));
+  }, [isCreateMode, currentOrder?.subtotal, promotion, setCurrentOrder, setPromotion]);
 
 
 
@@ -84,6 +93,7 @@ export default function PromotionSection({ isCreateMode, promotion, setPromotion
   return (
     <div className="mb-6 p-5 bg-gradient-to-r from-emerald-50 to-emerald-50 rounded-xl border-2 border-gray-400">
       <h4 className="text-xl font-bold text-gray-800 mb-3">PHIẾU GIẢM GIÁ</h4>
+      {isCreateMode === "create" && promotion?.id && <button type="button" onClick={() => setPromotion(null)} className="mb-3 text-sm text-red-700 underline">Bỏ khuyến mãi</button>}
 
       <div className="space-y-3 max-h-64 overflow-y-auto">
         {isCreateMode === "create"

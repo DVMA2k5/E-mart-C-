@@ -1,6 +1,6 @@
 import React from "react";
 import DetailOrderForm from "./DetailOrderForm";
-import PromotionSection from "./PromotionSection";
+import PosPaymentPanel from "./PosPaymentPanel";
 import { useNavigate } from "react-router-dom";
 
 export default function OrdersForm({
@@ -16,10 +16,10 @@ export default function OrdersForm({
   setListOrderProducts,
   selectedProduct,
   setSelectedProduct,
-  promotion,
-  setPromotion,
   click_buttonCreateNewOrder,
   completePendingOrder,
+  isSubmitting,
+  refreshCheckout,
 }) {
   const formMode = mode;
   const navigate = useNavigate();
@@ -64,7 +64,7 @@ export default function OrdersForm({
         )}
 
         {/* Thông tin đơn hàng */}
-        <div className="space-y-5 mb-6">
+        <fieldset disabled={isSubmitting} className="min-w-0 space-y-5 mb-6">
           {/* Mã đơn hàng */}
           <div>
             <label className="block text-sm font-bold text-gray-700 mb-1">
@@ -196,7 +196,10 @@ export default function OrdersForm({
                 <option value="pending">Chưa xử lý</option>
                 <option value="paid">Đã thanh toán</option>
                 <option value="completed">Hoàn thành</option>
-                <option value="canceled">Đã hủy</option>
+                <option value="processing">Đang xử lý</option>
+                <option value="delivering">Đang giao hàng</option>
+                <option value="cancelled">Đã hủy</option>
+                <option value="refunded">Đã hoàn tiền</option>
               </select>
             </div>
           )}
@@ -210,7 +213,8 @@ export default function OrdersForm({
               onChange={(e) =>
                 setCurrentOrder({ ...currentOrder, note: e.target.value })
               }
-              value={currentOrder?.note}
+              value={currentOrder?.note || ""}
+              readOnly={formMode !== "create"}
               rows="2"
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
             ></textarea>
@@ -224,15 +228,6 @@ export default function OrdersForm({
             setListOrderProducts={setListOrderProducts}
             selectedProduct={selectedProduct}
             setSelectedProduct={setSelectedProduct}
-            setCurrentOrder={setCurrentOrder}
-          />
-
-          {/* Khuyến mãi */}
-          <PromotionSection
-            isCreateMode={formMode}
-            promotion={promotion}
-            setPromotion={setPromotion}
-            currentOrder={currentOrder}
             setCurrentOrder={setCurrentOrder}
           />
 
@@ -262,7 +257,7 @@ export default function OrdersForm({
                       ? "Tiền mặt"
                       : payment?.method === "other"
                         ? "MoMo"
-                        : payment?.method || "Không xác định"
+                        : payment?.method === "card" ? "Thẻ/ngân hàng" : payment?.method || "Không xác định"
                   }
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50"
                 />
@@ -292,6 +287,10 @@ export default function OrdersForm({
           </div>
 
           {/* Tổng tiền */}
+          {formMode === "create" && payment.method === "cash" && <label className="block text-sm font-bold text-gray-700">Tiền khách đưa
+            <input type="number" min="0" value={payment.cashReceived ?? ""} onChange={(e) => setPayment({ ...payment, cashReceived: e.target.value })} disabled={isSubmitting} className="mt-1 block w-full rounded-lg border px-4 py-2" />
+          </label>}
+          {formMode !== "create" && currentOrder?.isPosCheckout && <PosPaymentPanel order={{ ...currentOrder, paymentMethod: currentOrder.paymentMethod }} onChange={refreshCheckout} />}
           <div className="bg-gradient-to-r from-gray-100 to-gray-200 p-6 rounded-xl mb-6 font-bold text-lg">
             <div className="flex justify-between mb-2">
               <span>Tổng trước giảm:</span>{" "}
@@ -312,12 +311,13 @@ export default function OrdersForm({
             {formMode == "create" && (
               <button
                 onClick={click_buttonCreateNewOrder}
+                disabled={isSubmitting}
                 className="px-7 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 shadow-lg"
               >
-                Tạo Đơn Hàng
+                {isSubmitting ? "Đang xử lý…" : payment.method === "cash" ? "Thanh toán tiền mặt" : "Lưu đơn chờ thanh toán"}
               </button>
             )}
-            {formMode !== "create" && currentOrder?.status === "pending" && (
+            {formMode !== "create" && currentOrder?.status === "pending" && !currentOrder?.isPosCheckout && (
               <button
                 onClick={() => completePendingOrder(currentOrder.id)}
                 className="px-7 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 shadow-lg"
@@ -326,7 +326,7 @@ export default function OrdersForm({
               </button>
             )}
           </div>
-        </div>
+        </fieldset>
       </div>
     </div>
   );

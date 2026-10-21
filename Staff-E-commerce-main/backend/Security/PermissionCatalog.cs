@@ -17,6 +17,7 @@ public static class PermissionCatalog
 
     public static string? ForRequest(string controller, string action, string method)
     {
+        if (controller == "Orders" && action is "ConfirmPayment" or "CreatePosPaymentLink") return "payments.write";
         var resource = controller switch
         {
             "Users" => "users", "Roles" => "roles", "Employees" => "employees",

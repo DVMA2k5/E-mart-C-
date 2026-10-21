@@ -1,16 +1,20 @@
 using backend.DTO;
 using backend.Models;
 using backend.Repository;
+using backend.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace backend.Services
 {
     public class OrderItemService
     {
         private readonly OrderItemRepository _orderItemRepository;
+        private readonly AppDbContext _context;
 
-        public OrderItemService(OrderItemRepository orderItemRepository)
+        public OrderItemService(OrderItemRepository orderItemRepository, AppDbContext context)
         {
             _orderItemRepository = orderItemRepository;
+            _context = context;
         }
 
         // Lưu list OrderItem
@@ -18,6 +22,9 @@ namespace backend.Services
         {
             if (items == null || !items.Any())
                 return false;
+            var ids = items.Select(i => i.OrderId).ToList();
+            if (await _context.Orders.AnyAsync(o => ids.Contains(o.Id) && o.CheckoutKey != null))
+                throw new ArgumentException("Không sửa dòng hàng của đơn POS đã chốt giỏ.");
 
             // Do not rely on the caller to provide a value compatible with the
             // legacy SQL Server DATETIME column.
@@ -41,6 +48,8 @@ namespace backend.Services
         // Xóa theo OrderId
         public async Task DeleteByOrderIdAsync(int orderId)
         {
+            if (await _context.Orders.AnyAsync(o => o.Id == orderId && o.CheckoutKey != null))
+                throw new ArgumentException("Không xóa dòng hàng của đơn POS đã chốt giỏ.");
             await _orderItemRepository.DeleteByOrderIdAsync(orderId);
         }
 

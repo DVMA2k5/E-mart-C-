@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { request } from "../../api/apiClient";
 
 export default function CustomerModal({ onClose, updateCustomer }) {
   const [customers, setCustomers] = useState([]);
@@ -14,26 +15,26 @@ export default function CustomerModal({ onClose, updateCustomer }) {
   const [loading, setLoading] = useState(false);
 
   // Fetch danh sách khách hàng
-  const fetchCustomers = async () => {
+  useEffect(() => {
+    let active = true;
+    const fetchCustomers = async () => {
     setLoading(true);
     try {
       let url = "";
       if (searchMode && searchInput.trim() !== "") {
         // Tìm kiếm -> lấy tất cả
         const params = new URLSearchParams({ keyword: searchInput });
-        url = `/api/customers/search?${params.toString()}`;
+        url = `/customers/search?${params.toString()}`;
       } else {
         // Phân trang bình thường
         const params = new URLSearchParams({ page, pageSize });
-        url = `/api/customers/paginated?${params.toString()}`;
+        url = `/customers/paginated?${params.toString()}`;
       }
 
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch customers");
+      const data = await request(url);
+      if (!active) return;
 
-      const data = await res.json();
-
-      if (searchMode) {
+      if (searchMode && searchInput.trim()) {
         setCustomers(data || []);
         setPage(1);
         setTotalPages(1);
@@ -46,15 +47,12 @@ export default function CustomerModal({ onClose, updateCustomer }) {
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (active) setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    if (!searchMode) {
-      fetchCustomers();
-    }
-  }, [page]);
+    };
+    fetchCustomers();
+    return () => { active = false; };
+  }, [page, pageSize, searchMode, searchInput]);
 
 
   const handleSelect = () => {
@@ -100,7 +98,6 @@ export default function CustomerModal({ onClose, updateCustomer }) {
               onClick={() => {
                 setPage(1);
                 setSearchMode(true);
-                fetchCustomers();
               }}
             >
               Tìm kiếm

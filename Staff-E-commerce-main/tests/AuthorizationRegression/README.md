@@ -14,4 +14,8 @@ Pass your backend configuration directory as the last argument if the checkout i
 
 Coverage includes granting/revoking permissions with an existing token, customer isolation from internal APIs, seed idempotence, last-admin protection (including concurrent requests), employee/account synchronization, staff departure and reactivation, inactive roles, password/role changes, shared account creation validation, deleting unused accounts while keeping profile records, and blocking deletion after login or recorded activity.
 
+POS coverage additionally exercises upgrading the previous order schema, server pricing, cash/change, points, expired/capped/product promotions, rollback on insufficient stock, competing buyers for the final unit, duplicate checkout retries, identical consecutive sales, pending card settlement, duplicate transaction references, cancellation/payment races, signed MoMo callbacks and API bypass protection. MoMo callbacks use test keys and fixture payment attempts; these checks never contact or charge the live provider.
+
+See [POS_CHECKOUT.md](../../POS_CHECKOUT.md) for the new checkout workflow and deployment notes.
+
 On the first application start after this change, the initializer adds `users.session_version` and seeds the permission catalog once. Existing tokens must sign in again. Default `staff` permissions preserve operational access; review them in the role page. Subsequent starts preserve permission changes. The four administrator account/role management permissions are mandatory to avoid losing access to administration.

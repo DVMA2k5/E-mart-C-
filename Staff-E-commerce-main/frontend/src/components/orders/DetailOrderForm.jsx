@@ -31,16 +31,16 @@ export default function DetailOrderForm({
           setCurrent({
             id: prod.id,
             product: prod.productName,
-            price: prod.price,
+            price: prod.discountPrice ?? prod.price,
             qty: 1,
-            total: prod.price,
-            quantity: prod.inventory?.quantity || 999,
+            total: prod.discountPrice ?? prod.price,
+            quantity: prod.inventory?.quantity ?? 0,
           });
           setBarcodeInput("");
         } else {
           alert(`Không tìm thấy sản phẩm có mã vạch: ${barcodeInput}`);
         }
-      } catch (err) {
+      } catch {
         alert(`Không tìm thấy sản phẩm có mã vạch: ${barcodeInput}`);
       }
     }
@@ -78,8 +78,10 @@ export default function DetailOrderForm({
   // Thêm sản phẩm
   const handleAdd = () => {
     if (!current.product) return;
+    if (!Number.isInteger(current.qty) || current.qty < 1) { alert("Số lượng phải là số nguyên lớn hơn 0."); return; }
+    const existingQty = listOrderProducts.filter((item) => item.id === current.id).reduce((sum, item) => sum + item.qty, 0);
     // Kiểm tra vượt quá số lượng tồn kho
-    if (current.qty > current.quantity) {
+    if (existingQty + current.qty > current.quantity) {
       alert(`Số lượng mua (${current.qty}) vượt quá số lượng tồn kho (${current.quantity}) của sản phẩm!`);
       return;
     }
@@ -93,9 +95,11 @@ export default function DetailOrderForm({
   // Lưu chỉnh sửa
   const handleSaveEdit = () => {
     if (editIndex === null) return;
+    if (!Number.isInteger(current.qty) || current.qty < 1) { alert("Số lượng phải là số nguyên lớn hơn 0."); return; }
+    const existingQty = listOrderProducts.filter((item, index) => index !== editIndex && item.id === current.id).reduce((sum, item) => sum + item.qty, 0);
 
      //  Kiểm tra vượt số lượng tồn kho
-    if (current.qty > current.quantity) {
+    if (existingQty + current.qty > current.quantity) {
       alert(`Số lượng mua (${current.qty}) vượt quá số lượng tồn kho (${current.quantity}) của sản phẩm!`);
       return;
     }
@@ -174,7 +178,7 @@ export default function DetailOrderForm({
               <input
                 type="number"
                 value={current.price}
-                onChange={e => setCurrent({ ...current, price: Number(e.target.value) })}
+                readOnly
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               />
             </div>

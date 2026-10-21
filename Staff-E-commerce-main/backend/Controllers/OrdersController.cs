@@ -13,11 +13,17 @@ namespace backend.Controllers
     {
         private readonly OrderService _orderService;
         private readonly IHubContext<OrderHub>? _orderHub;
+        private readonly PosCheckoutService _checkout;
+        private readonly PaymentService _payments;
+        private readonly IConfiguration _config;
 
-        public OrdersController(OrderService orderService, IHubContext<OrderHub>? orderHub = null)
+        public OrdersController(OrderService orderService, PosCheckoutService checkout, PaymentService payments, IConfiguration config, IHubContext<OrderHub>? orderHub = null)
         {
             _orderService = orderService;
             _orderHub = orderHub;
+            _checkout = checkout;
+            _payments = payments;
+            _config = config;
         }
 
         //1. Khởi tạo một đối tượng đơn hàng tạm thời để truyền xuống frontend
@@ -56,14 +62,15 @@ namespace backend.Controllers
 
         [HttpPost("create")]
         [HttpPost("")]
-        public async Task<IActionResult> CreateOrder([FromBody] Order order)
+        [HttpPost("checkout")]
+        public async Task<IActionResult> CreateOrder([FromBody] PosCheckoutRequest order)
         {
             if (order == null)
                 return BadRequest("Order payload is null");
 
             try
             {
-                var savedOrder = await _orderService.SaveOrderAsync(order);
+                var savedOrder = await _checkout.CheckoutAsync(order);
 
                 if (savedOrder == null)
                     return StatusCode(500, "Failed to save order");
@@ -74,11 +81,42 @@ namespace backend.Controllers
             {
                 return BadRequest(new { message = ex.Message });
             }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Create order failed: {ex}");
                 return StatusCode(500, new { message = "Không thể tạo đơn hàng. Vui lòng thử lại." });
             }
+        }
+
+        [HttpGet("{orderId:int}/checkout")]
+        public async Task<IActionResult> GetCheckout(int orderId)
+        {
+            try { return Ok(await _checkout.GetAsync(orderId)); }
+            catch (ArgumentException ex) { return NotFound(new { message = ex.Message }); }
+        }
+
+        [HttpPost("{orderId:int}/confirm-payment")]
+        public async Task<IActionResult> ConfirmPayment(int orderId, PosPaymentConfirmation request)
+        {
+            try { return Ok(await _checkout.ConfirmAsync(orderId, request.Amount, request.Reference)); }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+        }
+
+        [HttpPost("{orderId:int}/payment-link")]
+        public async Task<IActionResult> CreatePosPaymentLink(int orderId)
+        {
+            try
+            {
+                var order = await _checkout.GetAsync(orderId);
+                var baseUrl = (_config["App:BaseUrl"] ?? "http://localhost:5099").TrimEnd('/');
+                var result = await _payments.CreatePaymentAsync(new MomoPaymentRequestDTO
+                { OrderId = orderId, Amount = order.TotalAmount, ReturnUrl = $"{baseUrl}/api/payment/momo/return", NotifyUrl = $"{baseUrl}/api/payment/momo/ipn" });
+                return result.Success ? Ok(new { result.PayUrl }) : BadRequest(new { message = "Chưa tạo được liên kết MoMo. Đơn vẫn đang chờ; hãy thử lại trên đơn này." });
+            }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         }
 
 
@@ -136,6 +174,7 @@ namespace backend.Controllers
 
                 return Ok(true);
             }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Complete pending order failed: {ex}");

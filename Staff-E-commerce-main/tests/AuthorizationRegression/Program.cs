@@ -37,6 +37,19 @@ builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlServer(connection.Conne
 builder.Services.AddScoped<UserRepository>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<JwtService>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<OrderRepository>();
+builder.Services.AddScoped<CustomerRepository>();
+builder.Services.AddScoped<PaymentRepository>();
+builder.Services.AddScoped<ActivityLogRepository>();
+builder.Services.AddScoped<ActivityLogService>();
+builder.Services.AddScoped<InvoiceService>();
+builder.Services.AddScoped<PosCheckoutService>();
+builder.Services.AddScoped<OrderService>();
+builder.Services.AddScoped<PaymentService>();
+builder.Services.AddScoped<OrderItemRepository>();
+builder.Services.AddScoped<OrderItemService>();
+builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Momo:AccessKey"] = "test-access", ["Momo:SecretKey"] = "test-secret" });
 builder.Services.AddScoped<PermissionFilter>();
 builder.Services.AddScoped<AccountMutationFilter>();
 builder.Services.AddControllers(o =>
@@ -63,6 +76,11 @@ var assertions = 0;
 try
 {
     await WithDb(async db => { await db.Database.EnsureCreatedAsync(); databaseCreated = true; });
+    // Exercise upgrading the previous order schema, not only a freshly generated model.
+    await WithDb(async db => await db.Database.ExecuteSqlRawAsync("""
+        DROP INDEX ux_orders_checkout_key ON orders;
+        ALTER TABLE orders DROP COLUMN checkout_key, checkout_hash, points_used, points_earned, cash_received;
+        """));
     await AuthorizationSchemaInitializer.InitializeAsync(app.Services);
     int adminId = 0, staffId = 0, employeeId = 0, customerId = 0, adminEmployeeId = 0;
     await WithDb(async db =>
@@ -243,6 +261,7 @@ try
         new { username = "logged_in_account", password = "Password123" }, HttpStatusCode.OK);
     await Expect(HttpMethod.Delete, $"/api/users/{loggedInId}", adminToken, null, HttpStatusCode.Conflict);
     Console.WriteLine($"PASS: {assertions} authorization and account lifecycle assertions.");
+    await PosCheckoutRegression.RunAsync(app.Services, client, adminToken);
 
     async Task CheckUserFilter(string query, int expectedTotal, int? expectedId = null, int? expectedPage = null)
     {

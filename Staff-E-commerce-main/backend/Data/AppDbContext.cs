@@ -36,6 +36,8 @@ namespace backend.Data
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Entity<Order>().HasIndex(o => o.CheckoutKey).IsUnique()
+                .HasFilter("[checkout_key] IS NOT NULL").HasDatabaseName("ux_orders_checkout_key");
             base.OnModelCreating(modelBuilder);
 
             modelBuilder.Entity<Role>()

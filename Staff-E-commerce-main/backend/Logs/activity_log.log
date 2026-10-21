@@ -1058,3 +1058,30 @@
 [2026-10-21 23:44:04] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
 [2026-10-21 23:44:05] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
 [2026-10-21 23:49:40] [User:2] [Action:CREATE_Storefront] [Entity:Storefront#login] [IP:192.168.1.2] {"username":"jaja","password":"[REDACTED]"}
+[2026-10-21 23:53:57] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:53:57] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:07] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:07] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:13] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:13] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:28] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:28] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:30] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:30] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:32] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:54:32] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:55:55] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:56:32] [User:1] [Action:UPDATE_Inventory] [Entity:Inventory#adjust] [IP:127.0.0.1] {"inventoryId":1,"newQuantity":50,"reason":"th\u00EAm nha"}
+[2026-10-21 23:56:43] [User:1] [Action:DELETE_Products] [Entity:Products#1] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:56:48] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:56:48] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:57:03] [User:1] [Action:DELETE_Products] [Entity:Products#1] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-21 23:57:19] [User:1] [Action:CREATE_Import] [Entity:Import#products] [IP:127.0.0.1] {"raw":"------geckoformboundarydd7b4b7537112210f4249976f4f34680\r\nContent-Disposition: form-data; name=\u0022file\u0022; filename=\u0022ket_qua_sentiment.xlsx\u0022\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\nPK\u0003\u0004\u0014\u0000\b\b\b\u0000Q|L]\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u001A\u0000\u0000\u0000xl/_rels/workbook.xml.rels\uFFFD\uFFFD\uFFFDj\uFFFD \u0014\u0007\uFFFD\uFFFD\u003E\uFFFD\uFFFD\uFFFD\uFFFD$m\uFFFDv\uFFFD\uFFFDf\fz\uFFFDu\u000F \uFFFD$\uFFFD\u0026*\uFFFD\u003E\uFFFD\uFFFDs\uFFFDXS(\uFFFD\uFFFD\uFFFD\u002B9\u0027\uFFFD??\u0002Z\uFFFD\u003E\uFFFD\uFFFD\uFFFD\uFFFDu\uFFFDV\f\uFFFD$\u0005\uFFFDJ\uFFFDS-\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\u0006v\u0562|\u019E\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD8\u0012\uFFFD(\uFFFD@zo\u001E(uB\uFFFD\uFFFD]\uFFFD\r\uFFFD\uFFFD\uFFFDv\uFFFD\u003E\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD#o\uFFFD\uFFFDiZP;\u0380\uFFFD*\uFFFD\uFFFDk\u0006v_g@\u000E\u0027\uFFFD\uFFFD\uFFFD\uFFFDM\u...[truncated]
+[2026-10-21 23:58:15] [User:1] [Action:UPDATE_Categories] [Entity:Categories#1] [IP:127.0.0.1] {"IsActive":false}
+[2026-10-21 23:58:16] [User:1] [Action:UPDATE_Categories] [Entity:Categories#1] [IP:127.0.0.1] {"IsActive":true}
+[2026-10-22 00:00:54] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-22 00:00:54] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-22 00:02:09] [User:1] [Action:CREATE_Purchase-orders] [Entity:Purchase-orders#0] [IP:127.0.0.1] {"supplierId":2,"note":"","items":[{"productId":16,"quantity":100,"importPrice":500}]}
+[2026-10-22 00:02:41] [User:1] [Action:CREATE_Purchase-orders] [Entity:Purchase-orders#5] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-22 00:02:44] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}
+[2026-10-22 00:02:51] [User:1] [Action:CREATE_Unknown] [Entity:Unknown#0] [IP:127.0.0.1] {"raw":"[Empty Body]"}

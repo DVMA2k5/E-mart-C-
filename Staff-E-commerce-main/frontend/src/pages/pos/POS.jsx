@@ -846,13 +846,15 @@ export default function POS() {
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[380px] overflow-y-auto pr-1">
                     {posProducts.map((p) => (
-                      <div
+                      <button
+                        type="button"
                         key={p.id}
+                        disabled={(p.inventory?.quantity ?? 0) <= 0 || !p.isActive}
                         onClick={() => {
                           playBarcodeBeep();
                           addToPosCart(p);
                         }}
-                        className="p-3 border rounded-xl hover:border-emerald-500 hover:bg-emerald-50/50 cursor-pointer transition flex flex-col justify-between"
+                        className="p-3 border rounded-xl text-left enabled:hover:border-emerald-500 enabled:hover:bg-emerald-50/50 enabled:cursor-pointer disabled:cursor-not-allowed disabled:bg-gray-100 disabled:grayscale disabled:opacity-50 transition flex flex-col justify-between"
                       >
                         <div>
                           <div className="text-xs font-mono text-gray-400">{p.barcode || p.sku || "—"}</div>
@@ -864,7 +866,7 @@ export default function POS() {
                             Còn: {(p.inventory?.quantity ?? 0).toLocaleString("vi-VN")}
                           </span>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { FileText, Printer, Search, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FileText, Printer, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getInvoice, getInvoices } from "../../api/invoiceApi";
+import { useDebouncedSearch } from "../../hook/useDebouncedSearch";
 
 const money = (value) => new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(value || 0);
 const dateTime = (value) => new Date(value).toLocaleString("vi-VN");
@@ -19,37 +20,45 @@ export default function InvoicePage() {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState("");
+  const latestRequest = useRef(0);
+
+  useDebouncedSearch(customerInput, customerSearch, (keyword) => {
+    setCustomerSearch(keyword);
+    setPage(1);
+  });
 
   const load = useCallback(async () => {
+    const requestId = ++latestRequest.current;
     setLoading(true);
-    try { setResult(await getInvoices({ page, pageSize: 10, from, to, paymentStatus: "paid", customerSearch })); setError(""); }
-    catch (e) { setError(e.message || "Không tải được danh sách hóa đơn."); }
-    finally { setLoading(false); }
+    try {
+      const data = await getInvoices({ page, pageSize: 10, from, to, paymentStatus: "paid", customerSearch });
+      if (requestId !== latestRequest.current) return;
+      setResult(data); setError("");
+    }
+    catch (e) { if (requestId === latestRequest.current) setError(e.message || "Không tải được danh sách hóa đơn."); }
+    finally { if (requestId === latestRequest.current) setLoading(false); }
   }, [page, from, to, customerSearch]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const requests = latestRequest;
+    load();
+    return () => { requests.current++; };
+  }, [load]);
   const open = useCallback(async (id) => {
     try { setSelected(await getInvoice(id)); setError(""); }
     catch (e) { setError(e.message || "Không tải được hóa đơn."); }
   }, []);
   useEffect(() => { const orderId = Number(searchParams.get("orderId")); if (orderId > 0) open(orderId); }, [searchParams, open]);
   const printInvoice = () => window.print();
-  const searchCustomers = (event) => {
-    event.preventDefault();
-    const keyword = customerInput.trim();
-    if (page === 1 && customerSearch === keyword) load();
-    else { setCustomerSearch(keyword); setPage(1); }
-  };
 
   return <main className="p-6 space-y-5">
     <header className="flex items-center gap-3"><div className="rounded-xl bg-primary-50 p-3 text-primary-700"><FileText /></div><div><h1 className="text-2xl font-bold text-gray-900">Quản lý hóa đơn</h1><p className="text-sm text-gray-500">Danh sách hóa đơn đã thanh toán.</p></div></header>
     {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-    <form onSubmit={searchCustomers} className="flex flex-wrap items-end gap-3 rounded-xl border bg-white p-4 shadow-sm">
+    <div className="flex flex-wrap items-end gap-3 rounded-xl border bg-white p-4 shadow-sm">
       <label className="min-w-0 flex-1 basis-64 text-sm text-gray-600">Khách hàng<input className="mt-1 block w-full rounded-lg border px-3 py-2" type="search" value={customerInput} onChange={e => setCustomerInput(e.target.value)} placeholder="Tên, số điện thoại hoặc email" /></label>
       <label className="text-sm text-gray-600">Từ ngày<input className="mt-1 block rounded-lg border px-3 py-2" type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1); }} /></label>
       <label className="text-sm text-gray-600">Đến ngày<input className="mt-1 block rounded-lg border px-3 py-2" type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); }} /></label>
-      <button type="submit" className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-white hover:bg-primary-700"><Search size={16} />Tìm kiếm / Lọc</button>
       <span className="ml-auto text-sm text-gray-500">{result.totalItems} hóa đơn</span>
-    </form>
+    </div>
     <section className="overflow-x-auto rounded-xl border bg-white shadow-sm"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-gray-600"><tr>{["Mã hóa đơn", "Khách hàng", "Ngày tạo", "Hóa đơn", "Thanh toán", "Tổng tiền", ""].map(h => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}</tr></thead><tbody>
       {loading ? <tr><td colSpan="7" className="p-8 text-center text-gray-500">Đang tải...</td></tr> : result.items.length === 0 ? <tr><td colSpan="7" className="p-8 text-center text-gray-500">Không có hóa đơn phù hợp.</td></tr> : result.items.map(i => <tr key={i.orderId} className="border-t hover:bg-gray-50"><td className="px-4 py-3 font-semibold text-primary-700">{i.invoiceNumber}</td><td className="px-4 py-3">{i.customerName || "Khách lẻ"}</td><td className="px-4 py-3">{dateTime(i.issuedAt)}</td><td className="px-4 py-3">{i.invoiceStatus}</td><td className="px-4 py-3">{statusLabel[i.paymentStatus] || i.paymentStatus}</td><td className="px-4 py-3 font-medium">{money(i.totalAmount)}</td><td className="px-4 py-3 text-right"><button onClick={() => open(i.orderId)} className="font-medium text-primary-700 hover:underline">Chi tiết</button></td></tr>)}</tbody></table></section>
     <div className="flex items-center justify-end gap-3 text-sm"><button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="rounded border px-3 py-2 disabled:opacity-40">Trước</button><span>Trang {page} / {Math.max(1, result.totalPages)}</span><button disabled={page >= result.totalPages} onClick={() => setPage(p => p + 1)} className="rounded border px-3 py-2 disabled:opacity-40">Sau</button></div>

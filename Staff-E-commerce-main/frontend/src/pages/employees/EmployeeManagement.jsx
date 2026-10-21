@@ -38,6 +38,10 @@ export default function EmployeeManagement() {
           <input key={name} name={name} value={form[name]} onChange={change} required={name === "fullName"} placeholder={{ fullName: "Họ tên", phone: "Số điện thoại", email: "Email", address: "Địa chỉ", note: "Ghi chú" }[name]} className="rounded border px-3 py-2" />
         ))}
         <input type="date" name="dateOfBirth" value={form.dateOfBirth} onChange={change} className="rounded border px-3 py-2" />
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
+          Đang làm việc (bỏ chọn sẽ khóa tài khoản và thu hồi phiên đăng nhập)
+        </label>
         <div className="flex gap-2">
           <button className="rounded bg-primary-600 px-4 py-2 text-white hover:bg-primary-700">{editingId ? "Cập nhật" : "Thêm hồ sơ"}</button>
           {editingId && <button type="button" onClick={() => { setEditingId(null); setForm(empty); }} className="rounded border px-4 py-2">Hủy</button>}

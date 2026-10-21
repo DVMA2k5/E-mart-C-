@@ -26,9 +26,9 @@ namespace backend.Services
             return users.Select(MapToUserDto).ToList();
         }
 
-        public async Task<PaginationResult<UserDTO>> GetPaginatedAsync(int page, int pageSize)
+        public async Task<PaginationResult<UserDTO>> GetPaginatedAsync(int page, int pageSize, string? role = null, bool? isActive = null, string? search = null)
         {
-            var result = await _userRepository.GetPaginatedAsync(page, pageSize);
+            var result = await _userRepository.GetPaginatedAsync(page, pageSize, role, isActive, search);
 
             return new PaginationResult<UserDTO>
             {
@@ -69,12 +69,13 @@ namespace backend.Services
             if (string.IsNullOrWhiteSpace(request.Password))
                 throw new ArgumentException("Password is required", nameof(request.Password));
 
+            await ValidateAccountAsync(request);
             var roleName = NormalizeRole(request.Role);
             var role = await _userRepository.GetRoleByNameAsync(roleName);
             if (role == null || !role.IsActive)
                 throw new ArgumentException($"Role '{roleName}' does not exist or is inactive.", nameof(request.Role));
-            if (request.EmployeeId.HasValue && roleName != "staff")
-                throw new ArgumentException("Tài khoản nhân viên phải có role staff.", nameof(request.EmployeeId));
+            if (request.EmployeeId.HasValue && roleName == "customer")
+                throw new ArgumentException("Tài khoản khách hàng không được gắn hồ sơ nhân viên.", nameof(request.EmployeeId));
             if (request.CustomerId.HasValue && roleName != "customer")
                 throw new ArgumentException("Tài khoản khách hàng phải có role customer.", nameof(request.CustomerId));
             if (request.EmployeeId.HasValue && await _userRepository.EmployeeHasAccountAsync(request.EmployeeId.Value))
@@ -98,7 +99,7 @@ namespace backend.Services
             var user = new User
             {
                 Username = request.Username.Trim(),
-                Email = employee?.Email ?? customer?.Email ?? request.Email?.Trim(),
+                Email = employee != null ? employee.Email : customer != null ? customer.Email : request.Email?.Trim(),
                 FullName = employee?.FullName ?? customer?.FullName ??
                     (string.IsNullOrWhiteSpace(request.FullName) ? request.Username.Trim() : request.FullName.Trim()),
                 RoleId = role.Id,
@@ -121,6 +122,8 @@ namespace backend.Services
             var existingUser = await _userRepository.GetByIdAsync(id);
             if (existingUser == null) return null;
 
+            await ValidateAccountAsync(request, id);
+
             existingUser.Username = request.Username.Trim();
             var role = await _userRepository.GetRoleByNameAsync(NormalizeRole(request.Role));
             if (role == null || !role.IsActive)
@@ -137,7 +140,7 @@ namespace backend.Services
             if (request.CustomerId.HasValue && customer == null)
                 throw new ArgumentException("Hồ sơ khách hàng không tồn tại.", nameof(request.CustomerId));
 
-            existingUser.Email = employee?.Email ?? customer?.Email ?? request.Email?.Trim();
+            existingUser.Email = employee != null ? employee.Email : customer != null ? customer.Email : request.Email?.Trim();
             existingUser.FullName = employee?.FullName ?? customer?.FullName ??
                 (string.IsNullOrWhiteSpace(request.FullName) ? existingUser.FullName : request.FullName.Trim());
             existingUser.RoleId = role.Id;
@@ -151,6 +154,7 @@ namespace backend.Services
             existingUser.IsActive = request.IsActive;
             existingUser.IsLocked = !request.IsActive;
             existingUser.UpdatedAt = DateTime.UtcNow;
+            existingUser.SessionVersion++;
 
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
@@ -169,6 +173,19 @@ namespace backend.Services
             existingUser.Username = request.Username.Trim();
             existingUser.Email = request.Email?.Trim();
             existingUser.FullName = request.FullName?.Trim() ?? existingUser.FullName;
+            // Profile records are the source of truth; update both in the same transaction.
+            if (existingUser.Employee != null)
+            {
+                existingUser.Employee.FullName = existingUser.FullName;
+                existingUser.Employee.Email = existingUser.Email;
+                existingUser.Employee.UpdatedAt = DateTime.UtcNow;
+            }
+            if (existingUser.Customer != null)
+            {
+                existingUser.Customer.FullName = existingUser.FullName;
+                existingUser.Customer.Email = existingUser.Email;
+                existingUser.Customer.UpdatedAt = DateTime.UtcNow;
+            }
             existingUser.UpdatedAt = DateTime.UtcNow;
 
             var updatedUser = await _userRepository.UpdateAsync(existingUser);
@@ -179,9 +196,12 @@ namespace backend.Services
         {
             var existingUser = await _userRepository.GetByIdAsync(id);
             if (existingUser == null) return null;
+            if (isActive && (existingUser.Employee?.IsActive == false || existingUser.Customer?.IsActive == false || !existingUser.RoleEntity.IsActive))
+                throw new ArgumentException("Không thể mở tài khoản khi hồ sơ hoặc vai trò đã ngừng hoạt động.");
 
             existingUser.IsActive = isActive;
             existingUser.IsLocked = !isActive;
+            existingUser.SessionVersion++;
             existingUser.UpdatedAt = DateTime.UtcNow;
 
             var updatedUser = await _userRepository.UpdateAsync(existingUser);
@@ -197,6 +217,7 @@ namespace backend.Services
                 return ChangePasswordResult.InvalidCurrentPassword;
 
             existingUser.PasswordHash = HashPassword(newPassword);
+            existingUser.SessionVersion++;
             existingUser.UpdatedAt = DateTime.UtcNow;
 
             await _userRepository.UpdateAsync(existingUser);
@@ -205,7 +226,30 @@ namespace backend.Services
 
         public async Task<bool> DeleteUserAsync(int id)
         {
+            // The repository rejects deletion once the account has activity.
             return await _userRepository.DeleteAsync(id);
+        }
+
+        private async Task ValidateAccountAsync(UserDTO request, int? excludeId = null)
+        {
+            var roleName = NormalizeRole(request.Role);
+            if (request.EmployeeId.HasValue && request.CustomerId.HasValue)
+                throw new ArgumentException("Tài khoản chỉ được gắn một loại hồ sơ.");
+            if (roleName == "customer" && (!request.CustomerId.HasValue || request.EmployeeId.HasValue))
+                throw new ArgumentException("Tài khoản khách hàng phải gắn hồ sơ khách hàng.");
+            if (roleName != "customer" && request.CustomerId.HasValue)
+                throw new ArgumentException("Chỉ tài khoản khách hàng được gắn hồ sơ khách hàng.");
+            if (roleName != "admin" && roleName != "customer" && !request.EmployeeId.HasValue)
+                throw new ArgumentException("Tài khoản nội bộ phải gắn hồ sơ nhân viên.");
+            var employee = request.EmployeeId.HasValue ? await _userRepository.GetEmployeeAsync(request.EmployeeId.Value) : null;
+            var customer = request.CustomerId.HasValue ? await _userRepository.GetCustomerAsync(request.CustomerId.Value) : null;
+            if (request.IsActive && (employee?.IsActive == false || customer?.IsActive == false))
+                throw new ArgumentException("Không thể cấp hoặc mở tài khoản cho hồ sơ đã ngừng hoạt động.");
+            if (await UserExistsUsernameAsync(request.Username, excludeId))
+                throw new ArgumentException("Tên đăng nhập đã được sử dụng.");
+            var email = employee != null ? employee.Email : customer != null ? customer.Email : request.Email;
+            if (!string.IsNullOrWhiteSpace(email) && await UserExistsEmailAsync(email, excludeId))
+                throw new ArgumentException("Email đã được sử dụng.");
         }
 
         public async Task<bool> UserExistsEmailAsync(string email, int? excludeUserId = null)
@@ -238,8 +282,8 @@ namespace backend.Services
                 EmployeeName = user.Employee?.FullName,
                 CustomerName = user.Customer?.FullName,
                 Username = user.Username,
-                Email = user.Email,
-                FullName = user.FullName,
+                Email = user.Employee != null ? user.Employee.Email : user.Customer != null ? user.Customer.Email : user.Email,
+                FullName = user.Employee?.FullName ?? user.Customer?.FullName ?? user.FullName,
                 Role = user.RoleEntity?.Name ?? string.Empty,
                 IsActive = user.IsActive,
                 IsLocked = user.IsLocked,

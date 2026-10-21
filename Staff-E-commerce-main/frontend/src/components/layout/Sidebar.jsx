@@ -36,7 +36,7 @@ const navigationGroups = [
     ],
   },
   {
-    id: "system", label: "Hệ thống", icon: Settings, adminOnly: true,
+    id: "system", label: "Hệ thống", icon: Settings,
     items: [
       { to: "/employees", label: "Nhân viên", icon: Users },
       { to: "/users", label: "Tài khoản", icon: UserRound },
@@ -46,11 +46,21 @@ const navigationGroups = [
   },
 ];
 
+const pagePermissions = {
+  "/pos": "orders.read", "/orders": "orders.read", "/invoices": "invoices.read",
+  "/customers": "customers.read", "/promotions": "promotions.read", "/products": "products.read",
+  "/categories": "categories.read", "/units": "units.read", "/suppliers": "suppliers.read",
+  "/purchase-orders": "purchaseorders.read", "/employees": "employees.read",
+  "/users": "users.read", "/roles": "roles.read", "/audit": "audit.read",
+};
+
 export default function Sidebar({ collapsed, onClose }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const { permissions } = useAuth();
+  const visibleGroups = navigationGroups.map((group) => ({
+    ...group, items: group.items.filter((item) => permissions.includes(pagePermissions[item.to])),
+  })).filter((group) => group.items.length > 0);
   const matchesPath = (path) => pathname === path || pathname.startsWith(`${path}/`);
   const handleLogout = () => {
     if (confirm("Bạn có chắc muốn đăng xuất?")) {
@@ -92,7 +102,7 @@ export default function Sidebar({ collapsed, onClose }) {
         <NavLink to="/dashboard" className={linkClass} onClick={onClose}>
           <LayoutDashboard size={18} className="shrink-0" /><span>Tổng quan</span>
         </NavLink>
-        {navigationGroups.filter((group) => !group.adminOnly || isAdmin).map((group) => {
+        {visibleGroups.map((group) => {
           const GroupIcon = group.icon;
           const isGroupActive = group.items.some((item) => matchesPath(item.to));
           return (
@@ -114,7 +124,7 @@ export default function Sidebar({ collapsed, onClose }) {
             </details>
           );
         })}
-        {isAdmin && (
+        {permissions.includes("reports.read") && (
           <NavLink to="/reports" className={linkClass} onClick={onClose}>
             <ChartNoAxesCombined size={18} className="shrink-0" /><span>Báo cáo/Thống kê</span>
           </NavLink>

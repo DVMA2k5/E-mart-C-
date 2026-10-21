@@ -65,6 +65,9 @@ namespace backend.Models
         [Column("locked")]
         public bool IsLocked { get; set; } = false;
 
+        [Column("session_version")]
+        public int SessionVersion { get; set; }
+
         // Navigation
         public virtual ICollection<Order>? Orders { get; set; }         // orders created by this user
         public virtual ICollection<InventoryAdjustment>? InventoryAdjustments { get; set; }

@@ -4,6 +4,8 @@ using backend.DTO;
 using backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using backend.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace backend.Controllers
 {
@@ -13,10 +15,22 @@ namespace backend.Controllers
     public class MeController : ControllerBase
     {
         private readonly UserService _userService;
+        private readonly AppDbContext _db;
 
-        public MeController(UserService userService)
+        public MeController(UserService userService, AppDbContext db)
         {
             _userService = userService;
+            _db = db;
+        }
+
+        [HttpGet("access")]
+        public async Task<IActionResult> GetAccess()
+        {
+            var id = ResolveUserId();
+            var access = await _db.Users.AsNoTracking().Where(u => u.Id == id)
+                .Select(u => new { role = u.RoleEntity.Name, permissions = u.RoleEntity.RolePermissions.Select(rp => rp.Permission.Code).ToList() })
+                .FirstOrDefaultAsync();
+            return access == null ? Unauthorized() : Ok(access);
         }
 
         [HttpGet]

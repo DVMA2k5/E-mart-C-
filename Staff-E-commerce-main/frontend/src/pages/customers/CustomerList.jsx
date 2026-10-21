@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDebouncedSearch } from "../../hook/useDebouncedSearch";
 import { useDispatch, useSelector } from "react-redux";
 import {
   fetchCustomers,
@@ -41,7 +42,7 @@ const CustomerList = () => {
   const { user } = useAuth();
   const isStaff = user?.role?.toLowerCase() === "staff";
 
-  const [localSearchTerm, setLocalSearchTerm] = useState("");
+  const [localSearchTerm, setLocalSearchTerm] = useState(filters.search || "");
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -91,15 +92,9 @@ const CustomerList = () => {
     pagination.pageSize,
   ]);
 
-  const handleSearch = () => {
-    dispatch(setSearchTerm(localSearchTerm));
-  };
-
-  const handleSearchKeyPress = (e) => {
-    if (e.key === "Enter") {
-      handleSearch();
-    }
-  };
+  useDebouncedSearch(localSearchTerm, filters.search, (keyword) => {
+    dispatch(setSearchTerm(keyword));
+  });
 
   const handleStatusFilter = (status) => {
     dispatch(setStatusFilter(status));
@@ -271,18 +266,10 @@ const CustomerList = () => {
             placeholder="Tìm kiếm theo tên, email, số điện thoại..."
             value={localSearchTerm}
             onChange={(e) => setLocalSearchTerm(e.target.value)}
-            onKeyPress={handleSearchKeyPress}
             className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
           <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400 pointer-events-none" />
         </div>
-        <button
-          onClick={handleSearch}
-          className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-2"
-        >
-          <Search size={18} />
-          Tìm kiếm
-        </button>
         <select
           value={filters.status}
           onChange={(e) => handleStatusFilter(e.target.value)}

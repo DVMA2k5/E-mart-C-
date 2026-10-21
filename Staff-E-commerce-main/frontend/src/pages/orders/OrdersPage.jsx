@@ -1,19 +1,17 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import OrdersForm from "../../components/orders/OrderForm";
 import OrderTable from "../../components/orders/OrderTable";
 import CustomerModal from "../../components/orders/CustomerModal";
 import ProductModal from "../../components/orders/ProductModal";
 import { useOrders } from "../../hook/useOrders";
+import { useDebouncedSearch } from "../../hook/useDebouncedSearch";
 
 export default function OrdersPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const openedOrderRef = useRef(null);
-  const handleSearch = () => {
-      setCurrentPage(1);
-      loadOrdersAdvanced(1);
-  };
+  const [searchInput, setSearchInput] = useState("");
 
   const handleFilterDate = () => {
     // Kiểm tra ngày
@@ -67,6 +65,7 @@ export default function OrdersPage() {
     selectedEndDate,
     setSelectedStartDate,
     setSelectedEndDate,
+    searchKeyword,
     setSearchKeyword,
     loadOrdersAdvanced ,
     showOrder,
@@ -79,6 +78,11 @@ export default function OrdersPage() {
 
     
   } = useOrders();
+
+  useDebouncedSearch(searchInput, searchKeyword, (keyword) => {
+    setSearchKeyword(keyword);
+    setCurrentPage(1);
+  });
 
   useEffect(() => {
     const orderId = location.state?.orderId;
@@ -125,16 +129,11 @@ export default function OrdersPage() {
       <div className="flex gap-3 mb-4">
         <input
           type="text"
-          onChange={(e) => setSearchKeyword(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
           placeholder="Tìm theo tên khách hoặc tên nhân viên"
           className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary"
         />
-        <button
-          onClick={handleSearch}
-          className="px-6 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700"
-        >
-          Tìm Kiếm
-        </button>
       </div>
 
       {/* Lọc theo ngày */}

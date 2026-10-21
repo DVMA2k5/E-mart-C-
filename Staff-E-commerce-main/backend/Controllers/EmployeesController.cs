@@ -9,7 +9,7 @@ namespace backend.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Roles = "admin")]
+    [Authorize]
     public class EmployeesController : ControllerBase
     {
         private readonly AppDbContext _db;
@@ -53,7 +53,7 @@ namespace backend.Controllers
         [HttpPut("{id:int}")]
         public async Task<ActionResult<EmployeeDTO>> Update(int id, EmployeeDTO request)
         {
-            var employee = await _db.Employees.FindAsync(id);
+            var employee = await _db.Employees.Include(e => e.Account).FirstOrDefaultAsync(e => e.Id == id);
             if (employee == null) return NotFound();
             if (!ModelState.IsValid) return ValidationProblem(ModelState);
             employee.FullName = request.FullName.Trim();
@@ -64,6 +64,20 @@ namespace backend.Controllers
             employee.Note = request.Note?.Trim();
             employee.IsActive = request.IsActive;
             employee.UpdatedAt = DateTime.UtcNow;
+            if (employee.Account != null)
+            {
+                if (!string.IsNullOrWhiteSpace(employee.Email) && await _db.Users.AnyAsync(u => u.Id != employee.Account.Id && u.Email == employee.Email))
+                    return Conflict(new { message = "Email đã được tài khoản khác sử dụng." });
+                employee.Account.FullName = employee.FullName;
+                employee.Account.Email = employee.Email;
+                employee.Account.UpdatedAt = employee.UpdatedAt;
+                if (!employee.IsActive)
+                {
+                    employee.Account.IsActive = false;
+                    employee.Account.IsLocked = true;
+                    employee.Account.SessionVersion++;
+                }
+            }
             await _db.SaveChangesAsync();
             return Ok(ToDto(employee));
         }
@@ -83,7 +97,7 @@ namespace backend.Controllers
         private static EmployeeDTO ToDto(Employee e) => new()
         {
             Id = e.Id, FullName = e.FullName, Phone = e.Phone, Email = e.Email,
-            Address = e.Address, Note = e.Note, IsActive = e.IsActive,
+            Address = e.Address, Note = e.Note, IsActive = e.IsActive, DateOfBirth = e.DateOfBirth,
             HasAccount = e.Account != null,
             AccountUsername = e.Account?.Username
         };

@@ -18,6 +18,7 @@ namespace backend.Services
             {
                 new Claim(JwtRegisteredClaimNames.Sub, user.Username),
                 new Claim("uid", user.Id.ToString()),
+                new Claim("session_version", user.SessionVersion.ToString()),
                 new Claim(ClaimTypes.Name, user.Username),
                 new Claim(ClaimTypes.Role, user.RoleEntity?.Name ?? string.Empty)
             };

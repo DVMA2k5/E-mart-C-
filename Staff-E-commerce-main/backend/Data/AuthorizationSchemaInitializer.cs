@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using backend.Security;
 
 namespace backend.Data
 {
@@ -86,11 +87,11 @@ namespace backend.Data
 
             await db.Database.ExecuteSqlRawAsync("""
                 IF NOT EXISTS (SELECT 1 FROM roles WHERE name = 'admin')
-                    INSERT INTO roles (name, description) VALUES ('admin', N'Quản trị toàn hệ thống');
+                    INSERT INTO roles (name, description, is_active) VALUES ('admin', N'Quản trị toàn hệ thống', 1);
                 IF NOT EXISTS (SELECT 1 FROM roles WHERE name = 'staff')
-                    INSERT INTO roles (name, description) VALUES ('staff', N'Nhân viên bán hàng');
+                    INSERT INTO roles (name, description, is_active) VALUES ('staff', N'Nhân viên bán hàng', 1);
                 IF NOT EXISTS (SELECT 1 FROM roles WHERE name = 'customer')
-                    INSERT INTO roles (name, description) VALUES ('customer', N'Khách hàng');
+                    INSERT INTO roles (name, description, is_active) VALUES ('customer', N'Khách hàng', 1);
                 """);
 
             await db.Database.ExecuteSqlRawAsync("""
@@ -134,15 +135,37 @@ namespace backend.Data
                 IF NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'customers.write')
                     INSERT INTO permissions (code, name) VALUES ('customers.write', N'Tạo và cập nhật khách hàng');
 
-                INSERT INTO role_permissions (role_id, permission_id)
-                SELECT r.id, p.id
-                FROM roles r CROSS JOIN permissions p
-                WHERE r.name = 'admin'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM role_permissions rp
-                      WHERE rp.role_id = r.id AND rp.permission_id = p.id
-                  );
                 """);
+
+            await db.Database.ExecuteSqlRawAsync("""
+                IF COL_LENGTH('users', 'session_version') IS NULL
+                    ALTER TABLE users ADD session_version INT NOT NULL CONSTRAINT df_users_session_version DEFAULT 0;
+                IF OBJECT_ID(N'authorization_migrations', N'U') IS NULL
+                    CREATE TABLE authorization_migrations (name VARCHAR(100) PRIMARY KEY);
+                """);
+
+            // Seed once: restarting must never restore a permission an administrator removed.
+            await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            if (!await db.Database.SqlQuery<int>($"SELECT COUNT(*) AS Value FROM authorization_migrations WITH (UPDLOCK, HOLDLOCK) WHERE name = 'permissions-v1'").AnyAsync(value => value > 0))
+            {
+                foreach (var resource in PermissionCatalog.Resources)
+                foreach (var operation in resource.Key is "reports" or "audit" or "invoices" ? new[] { "read" } : new[] { "read", "write" })
+                {
+                    var code = $"{resource.Key}.{operation}";
+                    var name = $"{(operation == "read" ? "Xem" : "Thao tác")} {resource.Value}";
+                    await db.Database.ExecuteSqlInterpolatedAsync($"IF NOT EXISTS (SELECT 1 FROM permissions WHERE code = {code}) INSERT INTO permissions (code, name) VALUES ({code}, {name})");
+                }
+                await db.Database.ExecuteSqlRawAsync("""
+                    INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                    WHERE (r.name = 'admin' OR (r.name = 'staff' AND
+                        p.code NOT LIKE 'users.%' AND p.code NOT LIKE 'roles.%' AND
+                        p.code NOT LIKE 'employees.%' AND p.code NOT LIKE 'audit.%' AND p.code <> 'units.write'))
+                    AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = r.id AND rp.permission_id = p.id);
+                    INSERT INTO authorization_migrations (name) VALUES ('permissions-v1');
+                    """);
+            }
+            await transaction.CommitAsync();
         }
     }
 }

@@ -142,7 +142,7 @@ namespace backend.Controllers
                 .FirstOrDefaultAsync(item => item.Username == request.Username.Trim());
 
             if (user?.Customer == null || !string.Equals(user.RoleEntity?.Name, "customer", StringComparison.OrdinalIgnoreCase) ||
-                !user.IsActive || user.IsLocked ||
+                !user.IsActive || user.IsLocked || !user.RoleEntity.IsActive ||
                 !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
                 return Unauthorized(new { message = "Tên đăng nhập hoặc mật khẩu không đúng." });
 

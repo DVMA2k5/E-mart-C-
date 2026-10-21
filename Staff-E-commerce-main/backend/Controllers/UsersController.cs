@@ -7,7 +7,7 @@ namespace backend.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Roles = "admin")]
+    [Authorize]
     public class UsersController : ControllerBase
     {
         private readonly UserService _userService;
@@ -21,12 +21,15 @@ namespace backend.Controllers
         [HttpGet("paginated")]
         public async Task<ActionResult> GetPaginated(
             [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 10)
+            [FromQuery] int pageSize = 10,
+            [FromQuery] string? role = null,
+            [FromQuery] bool? isActive = null,
+            [FromQuery] string? search = null)
         {
             if (page < 1) page = 1;
             pageSize = Math.Clamp(pageSize, 1, 100);
 
-            var users = await _userService.GetPaginatedAsync(page, pageSize);
+            var users = await _userService.GetPaginatedAsync(page, pageSize, role, isActive, search);
             return Ok(users);
         }
 
@@ -59,8 +62,8 @@ namespace backend.Controllers
                 return BadRequest("EmployeeId is required for a staff account.");
             if (request.Role == "customer" && !request.CustomerId.HasValue)
                 return BadRequest("CustomerId is required for a customer account.");
-            if (request.Role == "admin" && (request.EmployeeId.HasValue || request.CustomerId.HasValue))
-                return BadRequest("Admin accounts cannot be linked to an employee or customer profile.");
+            if (request.Role == "admin" && request.CustomerId.HasValue)
+                return BadRequest("Admin accounts cannot be linked to a customer profile.");
 
             if (string.IsNullOrWhiteSpace(request.Password))
             {
@@ -105,8 +108,8 @@ namespace backend.Controllers
                 return BadRequest("EmployeeId is required for a staff account.");
             if (request.Role == "customer" && !request.CustomerId.HasValue)
                 return BadRequest("CustomerId is required for a customer account.");
-            if (request.Role == "admin" && (request.EmployeeId.HasValue || request.CustomerId.HasValue))
-                return BadRequest("Admin accounts cannot be linked to an employee or customer profile.");
+            if (request.Role == "admin" && request.CustomerId.HasValue)
+                return BadRequest("Admin accounts cannot be linked to a customer profile.");
 
             if (!TryValidateModel(request))
                 return ValidationProblem(ModelState);
@@ -160,6 +163,7 @@ namespace backend.Controllers
 
         private static void NormalizeUserDto(UserDTO request)
         {
+            request.Role = request.Role?.Trim().ToLowerInvariant() ?? "staff";
             request.Username = request.Username?.Trim() ?? string.Empty;
             request.Email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim();
             request.FullName = string.IsNullOrWhiteSpace(request.FullName)

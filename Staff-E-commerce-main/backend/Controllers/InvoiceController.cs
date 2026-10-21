@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace backend.Controllers;
 
 [ApiController]
-[Authorize(Roles = "admin,staff")]
+[Authorize]
 [Route("api/[controller]")]
 public class InvoiceController : ControllerBase
 {

@@ -1,9 +1,29 @@
 import { useState, useEffect } from "react";
 import { jwtDecode } from "jwt-decode";
+import { request } from "../api/apiClient";
 
 export const useAuth = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [permissions, setPermissions] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      if (!localStorage.getItem("auth_token")) return;
+      request("/me/access")
+        .then((access) => { if (active) setPermissions(access.permissions ?? []); })
+        .catch(() => { if (active) setPermissions([]); });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("permissions-changed", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("permissions-changed", refresh);
+    };
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem("auth_token");
@@ -53,5 +73,5 @@ export const useAuth = () => {
     setLoading(false);
   }, []);
 
-  return { user, loading };
+  return { user, loading, permissions };
 };

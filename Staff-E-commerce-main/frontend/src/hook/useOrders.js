@@ -983,7 +983,7 @@ const showOrderById = async (orderId) => {
 
 useEffect(() => {
     loadOrdersAdvanced(currentPage);
-}, [currentPage, selectedStatus]);
+}, [currentPage, selectedStatus, searchKeyword]);
 
 
 

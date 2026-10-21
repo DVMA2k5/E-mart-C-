@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   getUsersPaginated,
   getUserById,
@@ -26,6 +26,7 @@ const emptyForm = {
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isAccountActive = (user) => user.isActive && !user.isLocked;
 
 const roleBadgeClass = (role) =>
   role?.toLowerCase() === "admin"
@@ -59,6 +60,12 @@ function Modal({ title, onClose, children }) {
 export default function UserManagement() {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [filterRoles, setFilterRoles] = useState([]);
+  const [roleFilter, setRoleFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const latestRequest = useRef(0);
   const [employees, setEmployees] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [page, setPage] = useState(1);
@@ -80,11 +87,20 @@ export default function UserManagement() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchUsers();
+    const keyword = searchInput.trim();
+    if (keyword === search) return;
+    const timer = window.setTimeout(() => {
+      setSearch(keyword);
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput, search]);
+
+  useEffect(() => {
     fetchRoles();
     fetchEmployees();
     fetchCustomers();
-  }, [page]);
+  }, []);
 
   async function fetchEmployees() {
     try { setEmployees(await getEmployees()); } catch (err) { setError(err.message || "Không thể tải hồ sơ nhân viên."); }
@@ -100,17 +116,21 @@ export default function UserManagement() {
   async function fetchRoles() {
     try {
       const result = await getRoles();
+      setFilterRoles(result ?? []);
       setRoles((result ?? []).filter((role) => role.isActive));
     } catch (err) {
       setError(err.message || "Không thể tải danh sách vai trò.");
     }
   }
 
-  async function fetchUsers() {
+  const fetchUsers = useCallback(async () => {
+    const requestId = ++latestRequest.current;
     setLoading(true);
     setError("");
     try {
-      const result = await getUsersPaginated(page, pageSize);
+      const result = await getUsersPaginated(page, pageSize, { role: roleFilter, status: statusFilter, search });
+      if (requestId !== latestRequest.current) return;
+      if (result.currentPage && result.currentPage !== page) setPage(result.currentPage);
       setUsers(result.items ?? []);
       setMeta({
         currentPage: result.currentPage ?? page,
@@ -120,11 +140,20 @@ export default function UserManagement() {
         pageSize: result.pageSize ?? pageSize,
       });
     } catch (err) {
+      if (requestId !== latestRequest.current) return;
+      setUsers([]);
+      setMeta(null);
       setError(err.message || "Không thể tải danh sách người dùng.");
     } finally {
-      setLoading(false);
+      if (requestId === latestRequest.current) setLoading(false);
     }
-  }
+  }, [page, pageSize, roleFilter, statusFilter, search]);
+
+  useEffect(() => {
+    const requests = latestRequest;
+    fetchUsers();
+    return () => { requests.current++; };
+  }, [fetchUsers]);
 
   function openEditModal(user) {
     setEditUserId(user.id);
@@ -135,7 +164,7 @@ export default function UserManagement() {
       role: user.role ?? "staff",
       employeeId: user.employeeId ?? "",
       customerId: user.customerId ?? "",
-      isActive: user.isActive ?? true,
+      isActive: isAccountActive(user),
       password: "",
     });
     setFieldErrors({});
@@ -182,7 +211,7 @@ export default function UserManagement() {
       return;
     }
 
-    if (formData.role === "staff" && !formData.employeeId) {
+    if ((formData.role !== "admin" && formData.role !== "customer") && !formData.employeeId) {
       setFieldErrors({ employeeId: "Vui lòng chọn hồ sơ nhân viên." });
       return;
     }
@@ -200,7 +229,7 @@ export default function UserManagement() {
         role: formData.role,
         isActive: formData.isActive,
       };
-      if (formData.role === "staff") {
+      if (formData.role !== "customer" && formData.employeeId) {
         payload.employeeId = Number(formData.employeeId);
       } else if (formData.role === "customer") {
         payload.customerId = Number(formData.customerId);
@@ -264,7 +293,7 @@ export default function UserManagement() {
         role: formData.role,
         isActive: formData.isActive,
       };
-      if (formData.role === "staff") payload.employeeId = Number(formData.employeeId);
+      if (formData.role !== "customer" && formData.employeeId) payload.employeeId = Number(formData.employeeId);
       else if (formData.role === "customer") payload.customerId = Number(formData.customerId);
       if (!payload.password) {
         payload.password = undefined;
@@ -317,15 +346,16 @@ export default function UserManagement() {
 
   async function handleStatusToggle(user) {
     try {
-      const updated = await updateUserStatus(user.id, !user.isActive);
+      const updated = await updateUserStatus(user.id, !isAccountActive(user));
       setUsers((current) => current.map((item) => item.id === updated.id ? updated : item));
+      fetchUsers();
     } catch (err) {
       setAlert({ type: "error", message: err.message || "Không thể cập nhật trạng thái tài khoản." });
     }
   }
 
   async function handleDelete(user) {
-    if (!window.confirm(`Bạn có chắc muốn xóa tài khoản ${user.username}?`)) return;
+    if (!window.confirm(`Xóa tài khoản ${user.username}? Chỉ tài khoản chưa đăng nhập và chưa có hoạt động hoặc dữ liệu nghiệp vụ mới được xóa. Hồ sơ nhân viên/khách hàng vẫn được giữ lại.`)) return;
     try {
       await deleteUser(user.id);
       setAlert({ type: "success", message: `Đã xóa tài khoản ${user.username}.` });
@@ -378,6 +408,34 @@ export default function UserManagement() {
         </div>
       )}
 
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="text-sm font-medium text-gray-700">
+            Tìm tài khoản
+            <input type="search" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Tên đăng nhập, họ tên, email" className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 font-normal" />
+          </label>
+          <label className="text-sm font-medium text-gray-700">
+            Vai trò
+            <select value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setPage(1); }} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 font-normal">
+              <option value="">Tất cả vai trò</option>
+              {filterRoles.map((role) => <option key={role.id} value={role.name}>{roleLabel(role.name)}{!role.isActive ? " (ngừng hoạt động)" : ""}</option>)}
+            </select>
+          </label>
+          <label className="text-sm font-medium text-gray-700">
+            Trạng thái tài khoản
+            <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 font-normal">
+              <option value="">Tất cả trạng thái</option>
+              <option value="active">Đang hoạt động</option>
+              <option value="inactive">Đã khóa</option>
+            </select>
+          </label>
+          <div className="flex items-end gap-2">
+            <button type="button" onClick={() => { setRoleFilter(""); setStatusFilter(""); setSearchInput(""); setSearch(""); setPage(1); }} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Xóa bộ lọc</button>
+          </div>
+        </div>
+        {meta && !loading && <p className="mt-3 text-sm text-gray-500">Tìm thấy {meta.totalItems} tài khoản</p>}
+      </div>
+
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-left">
           <thead className="bg-gray-50 text-xs font-semibold uppercase text-gray-500">
@@ -401,7 +459,7 @@ export default function UserManagement() {
             {!loading && users.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
-                  Chưa có người dùng nào.
+                  {roleFilter || statusFilter || search ? "Không có tài khoản phù hợp với bộ lọc." : "Chưa có người dùng nào."}
                 </td>
               </tr>
             )}
@@ -430,12 +488,12 @@ export default function UserManagement() {
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        user.isActive
+                        isAccountActive(user)
                           ? "bg-emerald-50 text-emerald-700"
                           : "bg-red-50 text-red-700"
                       }`}
                     >
-                      {user.isActive ? "Đang hoạt động" : "Đã khóa"}
+                      {isAccountActive(user) ? "Đang hoạt động" : "Đã khóa"}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -456,19 +514,19 @@ export default function UserManagement() {
                       </button>
                       <button
                         className={`p-2 rounded-lg transition ${
-                          user.isActive
+                          isAccountActive(user)
                             ? "text-amber-600 hover:bg-amber-50"
                             : "text-emerald-600 hover:bg-emerald-50"
                         }`}
                         onClick={() => handleStatusToggle(user)}
-                        title={user.isActive ? "Khóa tài khoản" : "Mở khóa tài khoản"}
+                        title={isAccountActive(user) ? "Khóa tài khoản" : "Mở khóa tài khoản"}
                       >
-                        {user.isActive ? <Lock size={16} /> : <Unlock size={16} />}
+                        {isAccountActive(user) ? <Lock size={16} /> : <Unlock size={16} />}
                       </button>
                       <button
                         className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
                         onClick={() => handleDelete(user)}
-                        title="Xóa tài khoản"
+                        title="Xóa tài khoản chưa có hoạt động"
                       >
                         <Trash2 size={16} />
                       </button>
@@ -517,7 +575,7 @@ export default function UserManagement() {
               <div>
                 <dt className="text-gray-500">Trạng thái</dt>
                 <dd className="font-semibold text-gray-800">
-                  {detailUser.isActive ? "Đang hoạt động" : "Đã khóa"}
+                  {isAccountActive(detailUser) ? "Đang hoạt động" : "Đã khóa"}
                 </dd>
               </div>
               <div>
@@ -572,8 +630,8 @@ export default function UserManagement() {
                     setFormData((prev) => ({
                       ...prev,
                       role: e.target.value,
-                      employeeId: "",
-                      customerId: "",
+                      employeeId: e.target.value === "customer" ? "" : prev.employeeId,
+                      customerId: e.target.value === "customer" ? prev.customerId : "",
                     }))
                   }
                 >
@@ -583,12 +641,12 @@ export default function UserManagement() {
                     </option>
                   ))}
                 </select>
-                {formData.role === "staff" && (
+                {formData.role !== "customer" && (
                   <select
                     className="mt-2 w-full rounded-md border px-3 py-2"
                     value={formData.employeeId}
                     onChange={(e) => setFormData((prev) => ({ ...prev, employeeId: e.target.value }))}
-                    required
+                    required={formData.role !== "admin"}
                   >
                     <option value="">Chọn hồ sơ nhân viên để cấp tài khoản</option>
                     {employees.filter((item) => !item.hasAccount || String(item.id) === String(formData.employeeId)).map((item) => (
@@ -716,8 +774,8 @@ export default function UserManagement() {
                     setFormData((prev) => ({
                       ...prev,
                       role: e.target.value,
-                      employeeId: "",
-                      customerId: "",
+                      employeeId: e.target.value === "customer" ? "" : prev.employeeId,
+                      customerId: e.target.value === "customer" ? prev.customerId : "",
                     }))
                   }
                 >
@@ -727,8 +785,8 @@ export default function UserManagement() {
                     </option>
                   ))}
                 </select>
-                {formData.role === "staff" && (
-                  <select className="mt-2 w-full rounded-md border px-3 py-2" value={formData.employeeId} onChange={(e) => setFormData((prev) => ({ ...prev, employeeId: e.target.value }))} required>
+                {formData.role !== "customer" && (
+                  <select className="mt-2 w-full rounded-md border px-3 py-2" value={formData.employeeId} onChange={(e) => setFormData((prev) => ({ ...prev, employeeId: e.target.value }))} required={formData.role !== "admin"}>
                     <option value="">Chọn hồ sơ nhân viên</option>
                     {employees.filter((item) => !item.hasAccount || String(item.id) === String(formData.employeeId)).map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}
                   </select>

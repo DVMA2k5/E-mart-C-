@@ -1,6 +1,7 @@
 using backend.Data;
 using backend.DTO;
 using backend.Models;
+using backend.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +10,7 @@ namespace backend.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Roles = "admin")]
+    [Authorize]
     public class RolesController : ControllerBase
     {
         private readonly AppDbContext _db;
@@ -83,6 +84,8 @@ namespace backend.Controllers
                 .FirstOrDefaultAsync(r => r.Id == id);
             if (role == null)
                 return NotFound();
+            if (role.Name == "customer")
+                return Conflict(new { message = "Quyền khách hàng được áp dụng cố định, không cấu hình trong phân quyền nội bộ." });
 
             request.Name = request.Name.Trim().ToLowerInvariant();
             if (!ModelState.IsValid)
@@ -91,12 +94,23 @@ namespace backend.Controllers
             if (await _db.Roles.AnyAsync(r => r.Id != id && r.Name == request.Name))
                 return Conflict("Role already exists.");
 
+            if (role.Name is "admin" or "staff" or "customer" && role.Name != request.Name)
+                return Conflict(new { message = "Không thể đổi mã vai trò hệ thống." });
+            if (role.Name == "admin" && !request.IsActive)
+                return Conflict(new { message = "Không thể ngừng hoạt động vai trò quản trị hệ thống." });
+
             var permissions = await _db.Permissions
                 .Where(p => request.PermissionIds.Contains(p.Id))
                 .ToListAsync();
             if (permissions.Count != request.PermissionIds.Distinct().Count())
                 return BadRequest("One or more permissions do not exist.");
 
+            if (role.Name == "admin" && PermissionCatalog.AdministrationPermissions.Any(code => permissions.All(p => p.Code != code)))
+                return Conflict(new { message = "Vai trò admin phải giữ quyền quản lý tài khoản và phân quyền để tránh mất quyền quản trị." });
+
+            if (role.IsActive != request.IsActive || role.Name != request.Name)
+                await _db.Users.Where(u => u.RoleId == id).ExecuteUpdateAsync(update => update
+                    .SetProperty(u => u.SessionVersion, u => u.SessionVersion + 1));
             role.Name = request.Name;
             role.Description = request.Description?.Trim();
             role.IsActive = request.IsActive;

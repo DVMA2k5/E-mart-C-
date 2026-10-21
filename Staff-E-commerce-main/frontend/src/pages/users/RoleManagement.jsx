@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { getPermissions, getRoles, updateRole } from "../../api/apiClient";
+import PermissionGroups from "../../components/users/PermissionGroups";
 
 export default function RoleManagement() {
   const [roles, setRoles] = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [permissionIds, setPermissionIds] = useState([]);
+  const [roleActive, setRoleActive] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -13,9 +15,10 @@ export default function RoleManagement() {
   useEffect(() => {
     Promise.all([getRoles(), getPermissions()])
       .then(([roleData, permissionData]) => {
-        setRoles(roleData ?? []);
+        const internalRoles = (roleData ?? []).filter((role) => role.name !== "customer");
+        setRoles(internalRoles);
         setPermissions(permissionData ?? []);
-        if (roleData?.length) selectRole(roleData[0]);
+        if (internalRoles.length) selectRole(internalRoles[0]);
       })
       .catch((error) => setMessage(error.message || "Không thể tải dữ liệu phân quyền."))
       .finally(() => setLoading(false));
@@ -24,12 +27,7 @@ export default function RoleManagement() {
   function selectRole(role) {
     setSelectedId(role.id);
     setPermissionIds(role.permissionIds ?? []);
-  }
-
-  function togglePermission(id) {
-    setPermissionIds((current) =>
-      current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
-    );
+    setRoleActive(role.isActive);
   }
 
   async function save() {
@@ -41,10 +39,11 @@ export default function RoleManagement() {
       const updated = await updateRole(role.id, {
         name: role.name,
         description: role.description ?? "",
-        isActive: role.isActive,
+        isActive: roleActive,
         permissionIds,
       });
       setRoles((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      window.dispatchEvent(new Event("permissions-changed"));
       setMessage("Đã cập nhật quyền cho vai trò.");
     } catch (error) {
       setMessage(error.message || "Cập nhật phân quyền thất bại.");
@@ -54,14 +53,12 @@ export default function RoleManagement() {
   }
 
   if (loading) return <p className="text-gray-500">Đang tải phân quyền...</p>;
+  const selectedRole = roles.find((role) => role.id === selectedId);
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-800">Phân quyền role</h1>
-        <p className="text-sm text-gray-500">
-          Cấu hình quyền truy cập cho các role admin, nhân viên và khách hàng.
-        </p>
+        <h1 className="text-2xl font-semibold text-gray-800">Phân quyền nhân viên</h1>
       </div>
       {message && <div className="rounded-md bg-primary-50 px-4 py-2 text-sm text-primary-700">{message}</div>}
       <div className="grid gap-6 md:grid-cols-3">
@@ -71,34 +68,27 @@ export default function RoleManagement() {
             {roles.map((role) => (
               <button
                 key={role.id}
+                disabled={saving}
                 onClick={() => selectRole(role)}
                 className={`w-full rounded-md px-3 py-2 text-left ${
                   role.id === selectedId ? "bg-primary-50 text-primary-700" : "hover:bg-gray-50"
                 }`}
               >
-                <div className="font-medium">{role.name}</div>
+                <div className="font-medium">{role.name === "admin" ? "Quản trị viên" : role.name === "staff" ? "Nhân viên" : role.name}</div>
                 <div className="text-xs text-gray-500">{role.description || "Chưa có mô tả"}</div>
               </button>
             ))}
           </div>
+          {!roles.length && <p className="text-sm text-gray-500">Chưa có vai trò nội bộ.</p>}
         </div>
         <div className="rounded-lg border bg-white p-4 md:col-span-2">
-          <h2 className="mb-3 font-semibold">Quyền được cấp</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {permissions.map((permission) => (
-              <label key={permission.id} className="flex gap-2 rounded border p-3">
-                <input
-                  type="checkbox"
-                  checked={permissionIds.includes(permission.id)}
-                  onChange={() => togglePermission(permission.id)}
-                />
-                <span>
-                  <span className="block font-medium">{permission.name}</span>
-                  <span className="text-xs text-gray-500">{permission.code}</span>
-                </span>
-              </label>
-            ))}
-          </div>
+          <h2 className="mb-1 font-semibold">Quyền được cấp</h2>
+          <p className="mb-4 text-sm text-gray-500">Xem: tra cứu thông tin. Thao tác: tạo, sửa, xóa hoặc xử lý nghiệp vụ trong chức năng đó.</p>
+          <label className="mb-4 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={roleActive} disabled={saving || !selectedRole || selectedRole.name === "admin"} onChange={(e) => setRoleActive(e.target.checked)} />
+            Vai trò đang hoạt động
+          </label>
+          <PermissionGroups permissions={permissions} selectedIds={permissionIds} onChange={setPermissionIds} isAdmin={selectedRole?.name === "admin"} disabled={saving || !selectedRole} />
           <button
             className="mt-5 rounded-md bg-primary-600 px-4 py-2 text-white hover:bg-primary-700 disabled:opacity-50"
             disabled={!selectedId || saving}

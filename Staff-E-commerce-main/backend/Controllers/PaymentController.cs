@@ -2,6 +2,7 @@ using backend.DTO;
 using backend.Services;
 using Microsoft.AspNetCore.Mvc;
 using backend.Models;
+using Microsoft.AspNetCore.Authorization;
 
 namespace backend.Controllers
 {
@@ -29,6 +30,7 @@ namespace backend.Controllers
         }
 
         [HttpPost("momo/ipn")]
+        [AllowAnonymous]
         public async Task<IActionResult> MomoCallback([FromBody] MomoIpnCallbackDTO callback)
         {
             bool valid = await _paymentService.HandleMomoCallbackAsync(callback);

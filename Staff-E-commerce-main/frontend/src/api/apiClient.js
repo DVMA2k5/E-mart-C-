@@ -217,7 +217,7 @@ export async function request(path, options = {}) {
       } catch (_) {
         // ignore JSON parse errors, fall back to raw text
       }
-      throw new Error(displayMessage || `${res.status} ${res.statusText}`);
+      throw Object.assign(new Error(displayMessage || `${res.status} ${res.statusText}`), { status: res.status });
     }
 
     const contentType = res.headers.get("content-type") || "";

@@ -16,6 +16,14 @@ Coverage includes granting/revoking permissions with an existing token, customer
 
 POS coverage additionally exercises upgrading the previous order schema, server pricing, cash/change, points, expired/capped/product promotions, rollback on insufficient stock, competing buyers for the final unit, duplicate checkout retries, identical consecutive sales, pending card settlement, duplicate transaction references, cancellation/payment races, signed MoMo callbacks and API bypass protection. MoMo callbacks use test keys and fixture payment attempts; these checks never contact or charge the live provider.
 
+History/POS coverage includes opening one exact app order, sale-channel metadata, looking up a lost checkout response by request key restricted to its creator, settling an existing legacy cash bill without creating an order/debiting inventory twice, cash permission checks, rejecting incomplete historical data, and blocking delivery of an unpaid non-cash order.
+
+Invoice management checks exclude paid-but-unfulfilled orders, retain completed POS invoices, apply the fulfillment filter before counting/pagination, and preserve access to historical invoice details.
+
+Delivery checks exercise adding the recipient columns to the previous schema, migrating recognized legacy notes once, preserving multiline addresses/instructions/rejection text, leaving ambiguous/counter notes and existing snapshots untouched, creating an order for a recipient different from the account owner, preserving delivery data after profile changes, exposing separate fields in admin/POS/customer history/invoices, and denying anonymous point redemption. These checks also run only in the temporary database.
+
+Frontend recovery and cart-state checks: run `node --test tests/posWorkflow.test.js` from `frontend`. They verify the exact persisted request survives reload, employee isolation, storage errors, preserving unresolved requests after network/authorization failures, and refreshing prices/stock without silently altering quantities.
+
 See [POS_CHECKOUT.md](../../POS_CHECKOUT.md) for the new checkout workflow and deployment notes.
 
 On the first application start after this change, the initializer adds `users.session_version` and seeds the permission catalog once. Existing tokens must sign in again. Default `staff` permissions preserve operational access; review them in the role page. Subsequent starts preserve permission changes. The four administrator account/role management permissions are mandatory to avoid losing access to administration.

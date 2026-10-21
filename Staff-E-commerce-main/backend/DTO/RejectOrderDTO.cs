@@ -13,6 +13,9 @@ namespace backend.DTO
         public string? CustomerName { get; set; }
         public string? CustomerPhone { get; set; }
         public string? CustomerAddress { get; set; }
+        public string? RecipientName { get; set; }
+        public string? RecipientPhone { get; set; }
+        public string? ShippingAddress { get; set; }
         public string Status { get; set; } = "pending";
         public string OrderType { get; set; } = "mobile";
         public decimal Subtotal { get; set; }

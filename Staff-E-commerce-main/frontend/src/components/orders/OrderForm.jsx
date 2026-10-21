@@ -1,333 +1,44 @@
-import React from "react";
-import DetailOrderForm from "./DetailOrderForm";
-import PosPaymentPanel from "./PosPaymentPanel";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../hook/useAuth";
+import { formatPrice } from "../../utils/formatPrice";
+import { canProcessOrder, orderStatusLabels, paymentStatusLabels, paymentMethodLabels, saleChannelLabel } from "../../utils/orderStatus";
 
-export default function OrdersForm({
-  onClose,
-  openCustomerModal,
-  openProductModal,
-  mode,
-  currentOrder,
-  setCurrentOrder,
-  payment,
-  setPayment,
-  listOrderProducts,
-  setListOrderProducts,
-  selectedProduct,
-  setSelectedProduct,
-  click_buttonCreateNewOrder,
-  completePendingOrder,
-  isSubmitting,
-  refreshCheckout,
-}) {
-  const formMode = mode;
+export default function OrdersForm({ onClose, currentOrder: order }) {
   const navigate = useNavigate();
-
-  return (
-    <div
-      className="fixed inset-0 z-40 flex justify-center items-center bg-black/50"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-xl shadow-xl p-6 mb-8 w-full max-w-3xl max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex justify-between items-center mb-6 border-b pb-4">
-          <h1 className="text-3xl font-bold text-gray-800">
-            {formMode != "create" ? "CHI TIẾT ĐƠN HÀNG" : "ĐƠN HÀNG MỚI"}
-          </h1>
-          <button
-            className="text-gray-500 hover:text-gray-700"
-            onClick={onClose}
-          >
-            <svg
-              className="w-7 h-7"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
-        </div>
-        {formMode !== "create" && (currentOrder?.status === "processing" || currentOrder?.status === "completed" || currentOrder?.paymentStatus === "paid") && (
-          <button onClick={() => navigate(`/invoices?orderId=${currentOrder.id}`)} className="mb-5 rounded-lg bg-primary-50 px-4 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-100">
-            Xem hóa đơn liên quan
-          </button>
-        )}
-
-        {/* Thông tin đơn hàng */}
-        <fieldset disabled={isSubmitting} className="min-w-0 space-y-5 mb-6">
-          {/* Mã đơn hàng */}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">
-              Mã đơn hàng
-            </label>
-            <input
-              readOnly
-              value={currentOrder?.orderNumber || " "}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50 text-gray-600 font-medium"
-            />
-          </div>
-
-          {/* Khách hàng */}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">
-              Khách hàng
-            </label>
-            <div className="flex gap-2">
-              <input
-                value={`${currentOrder?.customerName || "Khách Hàng vãng lai"} (${
-                  currentOrder?.customerId ?? 0
-                })`}
-                readOnly
-                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50 text-gray-600 font-medium"
-              />
-              {formMode == "create" && (
-                <button
-                  className="px-3 py-2.5 bg-gray-200 rounded-lg hover:bg-gray-300"
-                  onClick={openCustomerModal}
-                >
-                  {/* Nút mở modal khách hàng */}
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M4 6h16M4 12h16M4 18h16"
-                    />
-                  </svg>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Nhân viên */}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">
-              Nhân viên
-            </label>
-            {(() => {
-              const staffName =
-                currentOrder?.userName && currentOrder?.userId
-                  ? `${currentOrder.userName} (${currentOrder.userId})`
-                  : "Nhân Viên";
-              return (
-                <input
-                  value={staffName}
-                  readOnly
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50 text-gray-600 font-medium"
-                />
-              );
-            })()}
-          </div>
-
-          {/* Ngày lập phiếu */}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">
-              Ngày lập phiếu
-            </label>
-            <input
-              value={
-                currentOrder?.createdAt
-                  ? new Date(currentOrder.createdAt).toLocaleString("vi-VN", {
-                      timeZone: "Asia/Ho_Chi_Minh",
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : ""
-              }
-              readOnly
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50 text-gray-600 font-medium"
-            />
-          </div>
-
-          {/* Ngày chỉnh sửa */}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">
-              Ngày chỉnh sửa
-            </label>
-            <input
-              value={
-                currentOrder?.updatedAt
-                  ? new Date(currentOrder.updatedAt).toLocaleString("vi-VN", {
-                      timeZone: "Asia/Ho_Chi_Minh",
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : ""
-              }
-              readOnly
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50 text-gray-600 font-medium"
-            />
-          </div>
-
-          {formMode != "create" && (
-            <div>
-              {/* Trạng thái đơn */}
-              <label className="block text-sm font-bold text-gray-700 mb-1">
-                Trạng thái đơn
-              </label>
-              <select
-                value={currentOrder?.status || "pending"}
-                disabled={mode !== "create"}
-                className={`w-full px-4 py-2.5 border border-gray-300 rounded-lg font-bold ${
-                  mode !== "create" ? "bg-gray-100 text-gray-600" : ""
-                }`}
-              >
-                <option value="pending">Chưa xử lý</option>
-                <option value="paid">Đã thanh toán</option>
-                <option value="completed">Hoàn thành</option>
-                <option value="processing">Đang xử lý</option>
-                <option value="delivering">Đang giao hàng</option>
-                <option value="cancelled">Đã hủy</option>
-                <option value="refunded">Đã hoàn tiền</option>
-              </select>
-            </div>
-          )}
-
-          {/* Ghi chú */}
-          <div className="mb-6">
-            <label className="block text-sm font-bold text-gray-700 mb-1">
-              Ghi chú
-            </label>
-            <textarea
-              onChange={(e) =>
-                setCurrentOrder({ ...currentOrder, note: e.target.value })
-              }
-              value={currentOrder?.note || ""}
-              readOnly={formMode !== "create"}
-              rows="2"
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg"
-            ></textarea>
-          </div>
-
-          {/* Chi tiết đơn hàng */}
-          <DetailOrderForm
-            openProductModal={openProductModal}
-            isCreateMode={formMode}
-            listOrderProducts={listOrderProducts}
-            setListOrderProducts={setListOrderProducts}
-            selectedProduct={selectedProduct}
-            setSelectedProduct={setSelectedProduct}
-            setCurrentOrder={setCurrentOrder}
-          />
-
-          {/* Thanh toán */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
-            {/* Phương thức */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1">
-                Phương thức
-              </label>
-              {formMode === "create" ? (
-                <select
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg font-medium"
-                  value={payment.method}
-                  onChange={(e) =>
-                    setPayment({ ...payment, method: e.target.value })
-                  }
-                >
-                  <option value="cash">Tiền mặt</option>
-                  <option value="other">MoMo</option>
-                </select>
-              ) : (
-               <input
-                  readOnly
-                  value={
-                    payment?.method === "cash"
-                      ? "Tiền mặt"
-                      : payment?.method === "other"
-                        ? "MoMo"
-                        : payment?.method === "card" ? "Thẻ/ngân hàng" : payment?.method || "Không xác định"
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50"
-                />
-
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1">
-                Mã GD
-              </label>
-              <input
-                readOnly
-                  value={payment?.transaction_ref || ""}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50"
-              />
-
-              <label className="block text-sm font-bold text-gray-700 mb-1 mt-3">
-                Trạng thái
-              </label>
-              <input
-                readOnly
-                value={payment?.status || ""}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-50"
-              />
-            </div>
-          </div>
-
-          {/* Tổng tiền */}
-          {formMode === "create" && payment.method === "cash" && <label className="block text-sm font-bold text-gray-700">Tiền khách đưa
-            <input type="number" min="0" value={payment.cashReceived ?? ""} onChange={(e) => setPayment({ ...payment, cashReceived: e.target.value })} disabled={isSubmitting} className="mt-1 block w-full rounded-lg border px-4 py-2" />
-          </label>}
-          {formMode !== "create" && currentOrder?.isPosCheckout && <PosPaymentPanel order={{ ...currentOrder, paymentMethod: currentOrder.paymentMethod }} onChange={refreshCheckout} />}
-          <div className="bg-gradient-to-r from-gray-100 to-gray-200 p-6 rounded-xl mb-6 font-bold text-lg">
-            <div className="flex justify-between mb-2">
-              <span>Tổng trước giảm:</span>{" "}
-              <span>{currentOrder.subtotal}₫</span>
-            </div>
-            <div className="flex justify-between mb-2">
-              <span>Giảm giá:</span>{" "}
-              <span className="text-emerald-600">{currentOrder.discount}₫</span>
-            </div>
-            <div className="flex justify-between text-xl text-primary-600">
-              <span>Phải trả:</span>{" "}
-              <span>{Math.max(0, Number(currentOrder.subtotal || 0) - Number(currentOrder.discount || 0))}₫</span>
-            </div>
-          </div>
-
-          {/* Nút hành động */}
-          <div className="flex flex-wrap gap-4 justify-end">
-            {formMode == "create" && (
-              <button
-                onClick={click_buttonCreateNewOrder}
-                disabled={isSubmitting}
-                className="px-7 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 shadow-lg"
-              >
-                {isSubmitting ? "Đang xử lý…" : payment.method === "cash" ? "Thanh toán tiền mặt" : "Lưu đơn chờ thanh toán"}
-              </button>
-            )}
-            {formMode !== "create" && currentOrder?.status === "pending" && !currentOrder?.isPosCheckout && (
-              <button
-                onClick={() => completePendingOrder(currentOrder.id)}
-                className="px-7 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 shadow-lg"
-              >
-                Tạo Đơn Hàng
-              </button>
-            )}
-          </div>
-        </fieldset>
-      </div>
-    </div>
-  );
+  const { permissions } = useAuth();
+  const date = (value) => value ? new Date(value).toLocaleString("vi-VN") : "—";
+  const normalizeName = (value) => (value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase("vi-VN");
+  const hasDeliveryDetails = Boolean(order.orderType === "mobile" || order.recipientName || order.shippingAddress);
+  const sameDisplayName = Boolean(normalizeName(order.recipientName))
+    && normalizeName(order.customerName) === normalizeName(order.recipientName);
+  const fields = [
+    ["Mã đơn hàng", order.orderNumber], ["Kênh bán", saleChannelLabel(order.orderType)],
+    ...(!sameDisplayName ? [[hasDeliveryDetails ? "Khách hàng đặt đơn" : "Khách hàng", order.customerName || "Khách vãng lai"]] : []),
+    ["Nhân viên", order.userName || "Chưa phân công"],
+    ["Ngày tạo", date(order.createdAt)], ["Ngày cập nhật", date(order.updatedAt)],
+    ["Trạng thái đơn", orderStatusLabels[order.status] || order.status],
+    ["Trạng thái thanh toán", paymentStatusLabels[order.paymentStatus] || order.paymentStatus || "Chưa xác định"],
+    ["Phương thức thanh toán", paymentMethodLabels[order.paymentMethod] || order.paymentMethod || "Chưa xác định"],
+  ];
+  return <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <section role="dialog" aria-modal="true" aria-labelledby="order-detail-title" className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <header className="mb-5 flex items-center justify-between border-b pb-4"><h1 id="order-detail-title" className="text-xl font-bold">CHI TIẾT ĐƠN HÀNG</h1><button onClick={onClose} aria-label="Đóng" className="px-3 py-1 text-xl">×</button></header>
+      <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">{fields.map(([label, value]) => <div key={label}><dt className="text-sm text-gray-500">{label}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>)}</dl>
+      {hasDeliveryDetails && <section className="my-5 rounded-lg border p-4">
+        <h2 className="mb-3 font-semibold">Thông tin người nhận</h2>
+        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+          <div><dt className="text-gray-500">Tên người nhận</dt><dd className="mt-1 font-medium">{order.recipientName || "Chưa xác định"}</dd></div>
+          <div><dt className="text-gray-500">Số điện thoại người nhận</dt><dd className="mt-1 font-medium">{order.recipientPhone || "Chưa xác định"}</dd></div>
+          <div className="sm:col-span-2"><dt className="text-gray-500">Địa chỉ giao hàng</dt><dd className="mt-1 whitespace-pre-line break-words font-medium">{order.shippingAddress || "Chưa xác định"}</dd></div>
+        </dl>
+      </section>}
+      <div className="my-5"><h2 className="mb-2 font-semibold">Ghi chú đơn hàng</h2><p className="whitespace-pre-line break-words rounded-lg bg-gray-50 p-3 text-sm">{order.note?.trim() || "Không có ghi chú"}</p></div>
+      <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-gray-50"><tr><th className="p-3 text-left">Sản phẩm</th><th className="p-3 text-right">Số lượng</th><th className="p-3 text-right">Đơn giá</th><th className="p-3 text-right">Thành tiền</th></tr></thead><tbody>{order.items.map((item) => <tr key={item.id} className="border-t"><td className="p-3">{item.productName}</td><td className="p-3 text-right">{item.quantity}</td><td className="p-3 text-right">{formatPrice(item.unitPrice)}</td><td className="p-3 text-right">{formatPrice(item.totalPrice)}</td></tr>)}</tbody></table></div>
+      <div className="my-5 space-y-2 rounded-lg bg-gray-50 p-4">{[["Tạm tính", order.subtotal], ["Giảm giá", order.discount], ["Tổng tiền", order.totalAmount]].map(([label, value]) => <div key={label} className="flex justify-between gap-4"><span>{label}</span><strong>{formatPrice(value)}</strong></div>)}</div>
+      <footer className="flex flex-wrap justify-end gap-3">
+        {permissions.includes("invoices.read") && (order.status === "completed" || order.status === "processing" || order.paymentStatus === "paid") && <button onClick={() => navigate(`/invoices?orderId=${order.id}`)} className="rounded-lg border px-4 py-2">Xem hóa đơn</button>}
+        {canProcessOrder(order) && <button onClick={() => navigate(`/pos?orderId=${order.id}`)} className="rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white">{order.orderType === "pos" && order.paymentStatus === "pending" ? "Thanh toán tại POS" : "Xử lý tại POS"}</button>}
+      </footer>
+    </section>
+  </div>;
 }

@@ -96,12 +96,34 @@ namespace backend.Controllers
             catch (ArgumentException ex) { return NotFound(new { message = ex.Message }); }
         }
 
+        [HttpGet("checkout-request/{requestId:guid}")]
+        public async Task<IActionResult> GetCheckoutByRequest(Guid requestId)
+        {
+            var order = await _checkout.GetByRequestAsync(requestId);
+            return order == null ? NotFound() : Ok(order);
+        }
+
         [HttpPost("{orderId:int}/confirm-payment")]
         public async Task<IActionResult> ConfirmPayment(int orderId, PosPaymentConfirmation request)
         {
             try { return Ok(await _checkout.ConfirmAsync(orderId, request.Amount, request.Reference)); }
             catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
             catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+        }
+
+        [HttpPost("{orderId:int}/confirm-cash")]
+        public async Task<IActionResult> ConfirmCash(int orderId, PosCashConfirmation request)
+        {
+            try { return Ok(await _checkout.ConfirmCashAsync(orderId, request.CashReceived)); }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+        }
+
+        [HttpGet("online/{orderId:int}")]
+        public async Task<IActionResult> GetOnlineOrder(int orderId)
+        {
+            var result = await _orderService.GetOnlineOrdersAsync(1, 1, null, null, orderId);
+            return result.Items.Count == 0 ? NotFound() : Ok(result.Items[0]);
         }
 
         [HttpPost("{orderId:int}/payment-link")]
@@ -129,11 +151,14 @@ namespace backend.Controllers
             string? status = null,
             DateTime? startDate = null,
             DateTime? endDate = null,
-            string? search = null
+            string? search = null,
+            string? orderType = null
         )
         {
+            if (!string.IsNullOrEmpty(orderType) && orderType != "mobile" && orderType != "pos")
+                return BadRequest(new { message = "Kênh bán không hợp lệ." });
             var result = await _orderService.GetPagedOrdersAsync(
-                pageNumber, pageSize, status, startDate, endDate, search
+                pageNumber, pageSize, status, startDate, endDate, search, orderType
             );
 
             return Ok(result);
@@ -265,6 +290,7 @@ namespace backend.Controllers
 
                 return Ok(new { success = true, message = "Đã hoàn thành giao hàng." });
             }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = ex.Message });

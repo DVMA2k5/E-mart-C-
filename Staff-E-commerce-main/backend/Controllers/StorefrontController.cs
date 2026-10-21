@@ -255,6 +255,9 @@ namespace backend.Controllers
                     order.Discount,
                     order.TotalAmount,
                     order.Note,
+                    order.RecipientName,
+                    order.RecipientPhone,
+                    order.ShippingAddress,
                     order.CreatedAt,
                     items = order.OrderItems.Select(line => new
                     {
@@ -447,7 +450,14 @@ namespace backend.Controllers
                     select new { link.ProductId, promotion.DiscountType, promotion.Value, promotion.MaxDiscount }
                 ).ToListAsync();
 
-                var customer = await _db.Customers.FirstOrDefaultAsync(item => item.Phone == request.Phone.Trim());
+                // Order ownership/points belong to the signed-in customer, not the recipient's phone.
+                var authenticated = User.Identity?.IsAuthenticated == true;
+                var customer = authenticated ? await GetAuthenticatedCustomerAsync()
+                    : await _db.Customers.FirstOrDefaultAsync(item => item.Phone == request.Phone.Trim());
+                if (authenticated && customer == null)
+                    return Unauthorized(new { message = "Không xác định được tài khoản khách hàng đặt đơn." });
+                if (!authenticated && request.PointsUsed > 0)
+                    return Unauthorized(new { message = "Đăng nhập để sử dụng điểm của tài khoản." });
                 if (customer != null && !customer.IsActive)
                     return Conflict(new { message = "Không thể sử dụng số điện thoại này để đặt hàng." });
 
@@ -536,7 +546,10 @@ namespace backend.Controllers
                     PaymentMethod = dbPaymentMethod,
                     PaymentStatus = "pending",
                     PromotionId = appliedPromotion?.Id,
-                    Note = $"Người nhận: {request.FullName.Trim()}\nSố điện thoại: {request.Phone.Trim()}\nĐịa chỉ giao hàng: {request.Address.Trim()}{(string.IsNullOrWhiteSpace(request.Note) ? "" : $"\nGhi chú: {request.Note.Trim()}")}",
+                    RecipientName = request.FullName.Trim(),
+                    RecipientPhone = request.Phone.Trim(),
+                    ShippingAddress = request.Address.Trim(),
+                    Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim(),
                     CreatedAt = now,
                     UpdatedAt = now,
                     OrderItems = items
@@ -623,6 +636,10 @@ namespace backend.Controllers
                     order.PaymentStatus,
                     order.CreatedAt,
                     momoPayUrl,
+                    order.RecipientName,
+                    order.RecipientPhone,
+                    order.ShippingAddress,
+                    order.Note,
                     vietQrUrl,
                     pointsUsed
                 });

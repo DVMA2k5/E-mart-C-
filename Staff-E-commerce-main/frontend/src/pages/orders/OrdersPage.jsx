@@ -1,89 +1,24 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import OrdersForm from "../../components/orders/OrderForm";
 import OrderTable from "../../components/orders/OrderTable";
-import CustomerModal from "../../components/orders/CustomerModal";
-import ProductModal from "../../components/orders/ProductModal";
 import { useOrders } from "../../hook/useOrders";
 import { useDebouncedSearch } from "../../hook/useDebouncedSearch";
+import { orderStatusLabels } from "../../utils/orderStatus";
 
 export default function OrdersPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const openedOrderRef = useRef(null);
   const [searchInput, setSearchInput] = useState("");
-
-  const handleFilterDate = () => {
-    // Kiểm tra ngày
-    if (selectedStartDate && selectedEndDate) {
-      const start = new Date(selectedStartDate);
-      const end = new Date(selectedEndDate);
-
-      if (start > end) {
-        alert("Ngày bắt đầu không được lớn hơn ngày kết thúc!");
-        return; // dừng hàm
-      }
-    }
-
-    // Reset trang về 1
-    setCurrentPage(1);
-    loadOrdersAdvanced(1);
-  };
-
-  
-  const { 
-    showCustomerModal,
-    showProductModal,
-    showOrderModal, 
-    closeOrderModal,
-    openCustomerModal,
-    closeCustomerModal,
-    openProductModal,
-    closeProductModal,
-    ordersFormMode,
-    currentOrder,
-    setCurrentOrder ,
-    payment,
-    setPayment,
-    updateCustomer,
-    listOrderProducts,
-    setListOrderProducts,
-    selectedProduct, 
-    setSelectedProduct,
-    promotion,
-    setPromotion,
-    click_buttonCreateNewOrder,
-    listOrders,
-    currentPage,
- 
-    totalPages,
-    setCurrentPage,
-    
-    setSelectedStatus,
-    selectedStartDate,
-    selectedEndDate,
-    setSelectedStartDate,
-    setSelectedEndDate,
-    searchKeyword,
-    setSearchKeyword,
-    loadOrdersAdvanced ,
-    showOrder,
-    showOrderById,
-    cancelOrder,
-    completePendingOrder,
-    isSubmitting, refreshCheckout
-
-
- 
-
-    
+  const {
+    currentOrder, closeOrderModal, listOrders, currentPage, totalPages, setCurrentPage,
+    selectedStatus, setSelectedStatus, selectedStartDate, setSelectedStartDate,
+    selectedOrderType, setSelectedOrderType,
+    selectedEndDate, setSelectedEndDate, searchKeyword, setSearchKeyword,
+    loading, opening, error, loadOrdersAdvanced, showOrderById,
   } = useOrders();
-
-  useDebouncedSearch(searchInput, searchKeyword, (keyword) => {
-    setSearchKeyword(keyword);
-    setCurrentPage(1);
-  });
-
+  useDebouncedSearch(searchInput, searchKeyword, (keyword) => { setSearchKeyword(keyword); setCurrentPage(1); });
   useEffect(() => {
     const orderId = location.state?.orderId;
     if (!orderId || openedOrderRef.current === orderId) return;
@@ -91,128 +26,19 @@ export default function OrdersPage() {
     showOrderById(orderId);
     navigate(location.pathname, { replace: true, state: null });
   }, [location, navigate, showOrderById]);
-  return (
-    <div className="max-w-7xl mx-auto p-4 sm:p-6">
-
-      {/* Lọc trạng thái */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <label className="text-sm font-bold text-gray-700 whitespace-nowrap">
-            Lọc trạng thái:
-          </label>
-          <select
-              onChange={(e) => {
-                setCurrentPage(1);
-                setSelectedStatus(e.target.value);
-                console.log("Trạng thái đang được chọn",e.target.value );
-              }}
-            className="px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary"
-          >
-            <option value="">Tất cả trạng thái</option>
-            <option value="pending">Chưa xử lý</option>
-            <option value="processing">Đang xử lý</option>
-            <option value="paid">Đã thanh toán</option>
-            <option value="completed">Hoàn thành</option>
-            <option value="cancelled">Đã hủy</option>
-          </select>
-        </div>
-
-      </div>
-
-      {/* Tìm kiếm */}
-      <div className="flex gap-3 mb-4">
-        <input
-          type="text"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="Tìm theo tên khách hoặc tên nhân viên"
-          className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary"
-        />
-      </div>
-
-      {/* Lọc theo ngày */}
-      <div className="flex gap-3 mb-6">
-        <input
-          type="date"
-          
-          onChange={(e) => setSelectedStartDate(e.target.value)}
-          className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg"
-        />
-        <input
-          type="date"
-          
-          onChange={(e) => setSelectedEndDate(e.target.value)}
-          className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg"
-        />
-        <button
-          onClick={handleFilterDate}
-          className="px-6 py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700"
-        >
-          Lọc
-        </button>
-      </div>
-      
-
-      {/* Form đơn hàng */}
-      {showOrderModal && <OrdersForm 
-      onClose={closeOrderModal} 
-      openCustomerModal={openCustomerModal}
-      openProductModal={openProductModal} 
-      mode = {ordersFormMode} 
-      currentOrder={currentOrder}
-      setCurrentOrder={setCurrentOrder}
-      payment={payment}
-      setPayment={setPayment}
-      listOrderProducts={listOrderProducts}
-      setListOrderProducts={setListOrderProducts}
-      selectedProduct={selectedProduct}
-      setSelectedProduct={setSelectedProduct}
-      promotion={promotion}
-      setPromotion={setPromotion}
-      click_buttonCreateNewOrder={click_buttonCreateNewOrder}
-      completePendingOrder={completePendingOrder}
-      isSubmitting={isSubmitting}
-      refreshCheckout={refreshCheckout}
-     
-
-
-      
-     />}
-  
-
-      {/* Danh sách đơn hàng*/}
-      <OrderTable
-        cancelOrder={cancelOrder}
-        showOrder={showOrder}
-        listOrders={listOrders}
-        currentPage={currentPage}
-        totalPages={totalPages}
-        onPrev={() => {
-          if (currentPage > 1) {
-            setCurrentPage(currentPage - 1);
-          }
-        }}
-        onNext={() => {
-          if (currentPage < totalPages) {
-            setCurrentPage(currentPage + 1);
-          }
-        }}
-      />
-
-
-      {/* Modal chọn khách hàng */}
-      {showCustomerModal && <CustomerModal 
-      onClose={closeCustomerModal}  
-      updateCustomer ={updateCustomer}
-      />}
-
-      {/* Modal chọn sản phẩm */}
-      {showProductModal && <ProductModal 
-      onClose={closeProductModal}       
-      selectedProduct={selectedProduct}
-      setSelectedProduct={setSelectedProduct} 
-      />}
-
+  return <main className="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
+    <h1 className="text-2xl font-bold">Lịch sử đơn hàng</h1>
+    <div className="flex flex-wrap items-end gap-3 rounded-xl border bg-white p-4">
+      <label className="min-w-48 flex-1 text-sm">Tìm đơn hàng<input type="search" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Mã đơn, khách hàng hoặc nhân viên" className="mt-1 block w-full rounded-lg border px-3 py-2" /></label>
+      <label className="text-sm">Trạng thái đơn<select value={selectedStatus} onChange={(e) => { setSelectedStatus(e.target.value); setCurrentPage(1); }} className="mt-1 block rounded-lg border px-3 py-2"><option value="">Tất cả</option>{Object.entries(orderStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label className="text-sm">Kênh bán<select value={selectedOrderType} onChange={(e) => { setSelectedOrderType(e.target.value); setCurrentPage(1); }} className="mt-1 block rounded-lg border px-3 py-2"><option value="">Tất cả</option><option value="mobile">Online</option><option value="pos">Tại quầy</option></select></label>
+      <label className="text-sm">Từ ngày<input type="date" value={selectedStartDate} onChange={(e) => { setSelectedStartDate(e.target.value); setCurrentPage(1); }} className="mt-1 block rounded-lg border px-3 py-2" /></label>
+      <label className="text-sm">Đến ngày<input type="date" value={selectedEndDate} onChange={(e) => { setSelectedEndDate(e.target.value); setCurrentPage(1); }} className="mt-1 block rounded-lg border px-3 py-2" /></label>
+      <button disabled={loading} onClick={loadOrdersAdvanced} className="rounded-lg border px-4 py-2 disabled:opacity-50">Làm mới</button>
     </div>
-  );
+    {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">{error}</p>}
+    {opening && <p role="status" className="text-sm text-gray-500">Đang mở chi tiết đơn…</p>}
+    <OrderTable listOrders={listOrders} showOrder={showOrderById} loading={loading} currentPage={currentPage} totalPages={totalPages} onPrev={() => setCurrentPage((p) => Math.max(1, p - 1))} onNext={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} />
+    {currentOrder && <OrdersForm currentOrder={currentOrder} onClose={closeOrderModal} />}
+  </main>;
 }

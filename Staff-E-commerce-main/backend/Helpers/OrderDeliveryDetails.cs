@@ -1,10 +1,19 @@
 using System.Text.RegularExpressions;
+using backend.Models;
 
 namespace backend.Helpers;
 
-// Storefront orders keep their delivery snapshot in the legacy note column.
+// Legacy parsing is only a compatibility fallback; new orders store a delivery snapshot.
 public sealed record OrderDeliveryDetails(string? Name, string? Phone, string? Address, string? Note)
 {
+    public static OrderDeliveryDetails FromOrder(Order order)
+    {
+        if (order.RecipientName != null || order.RecipientPhone != null || order.ShippingAddress != null)
+            return new(order.RecipientName, order.RecipientPhone, order.ShippingAddress, order.Note);
+        return order.OrderType == "mobile" || order.OrderNumber.StartsWith("WEB-", StringComparison.Ordinal)
+            ? Parse(order.Note) : new(null, null, null, order.Note);
+    }
+
     public static OrderDeliveryDetails Parse(string? note)
     {
         if (string.IsNullOrWhiteSpace(note)) return new(null, null, null, note);

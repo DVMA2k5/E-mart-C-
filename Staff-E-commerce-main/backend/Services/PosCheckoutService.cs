@@ -151,7 +151,7 @@ public sealed class PosCheckoutService(AppDbContext db, IHttpContextAccessor acc
         reference = reference.Trim();
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
         await LockAsync();
-        var order = await db.Orders.Include(o => o.Customer).Include(o => o.Payments).SingleOrDefaultAsync(o => o.Id == orderId && o.CheckoutKey != null)
+        var order = await db.Orders.Include(o => o.Customer).Include(o => o.Payments).SingleOrDefaultAsync(o => o.Id == orderId && o.OrderType == "pos")
             ?? throw new ArgumentException("Không tìm thấy đơn POS.");
         if (amount != order.TotalAmount || order.PaymentMethod != (momo ? "e_wallet" : "card"))
             throw new ArgumentException("Số tiền hoặc phương thức không khớp đơn hàng.");
@@ -173,6 +173,45 @@ public sealed class PosCheckoutService(AppDbContext db, IHttpContextAccessor acc
         var result = await GetAsync(orderId);
         await transaction.CommitAsync();
         return result;
+    }
+
+    // Legacy POS lines were reserved by the old creation flow. Settle that existing bill;
+    // do not create a second order or debit its inventory again.
+    public async Task<PosCheckoutResponse> ConfirmCashAsync(int orderId, decimal cashReceived)
+    {
+        var userId = UserId;
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+        await LockAsync();
+        var order = await db.Orders.Include(o => o.Customer).Include(o => o.OrderItems).Include(o => o.Payments)
+            .SingleOrDefaultAsync(o => o.Id == orderId && o.OrderType == "pos")
+            ?? throw new ArgumentException("Không tìm thấy đơn tại quầy.");
+        if (order.PaymentMethod != "cash" || cashReceived < order.TotalAmount || cashReceived > 9999999999m || cashReceived < 0)
+            throw new ArgumentException("Phải thu đủ tiền mặt theo số tiền của đơn hàng.");
+        var reference = $"POS-CASH-{orderId}";
+        if (order.Status == "completed" && order.PaymentStatus == "paid" && order.Payments.Any(p => p.Status == "completed" && p.TransactionRef == reference))
+        {
+            if (order.CashReceived != cashReceived) throw new InvalidOperationException("Đơn đã được thu tiền với số tiền khách đưa khác.");
+        }
+        else
+        {
+            if (order.CheckoutKey != null || order.Status != "pending" || order.PaymentStatus != "pending")
+                throw new InvalidOperationException("Đơn không còn chờ thu tiền mặt.");
+            if (order.OrderItems.Count == 0 || order.OrderItems.Any(i => i.Quantity <= 0 || i.UnitPrice < 0 || i.TotalPrice != i.UnitPrice * i.Quantity)
+                || order.OrderItems.Sum(i => i.TotalPrice) != order.Subtotal || order.Discount < 0 || order.TotalAmount < 0
+                || order.Subtotal - order.Discount != order.TotalAmount)
+                throw new InvalidOperationException("Dữ liệu đơn cũ chưa đầy đủ hoặc số tiền không khớp. Cần đối soát trước khi thu tiền.");
+            if (order.Payments.Any(p => p.Status == "completed"))
+                throw new InvalidOperationException("Đơn đã có giao dịch thu tiền. Cần đối soát trước khi tiếp tục.");
+            order.CashReceived = cashReceived;
+            order.UserId ??= userId;
+            Complete(order, "cash", reference);
+            db.ActivityLogs.Add(new ActivityLog { UserId = userId, Action = "pos_cash_confirmed", EntityType = "orders", EntityId = orderId.ToString(), CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+            await invoices.SyncOrderLifecycleAsync(orderId);
+        }
+        var response = await GetAsync(orderId);
+        await transaction.CommitAsync();
+        return response;
     }
 
     public async Task<bool> CancelAsync(int orderId)
@@ -207,12 +246,23 @@ public sealed class PosCheckoutService(AppDbContext db, IHttpContextAccessor acc
     public async Task<PosCheckoutResponse> GetAsync(int id)
     {
         var order = await db.Orders.AsNoTracking().Include(o => o.User).Include(o => o.Customer).Include(o => o.OrderItems).ThenInclude(i => i.Product)
-            .SingleOrDefaultAsync(o => o.Id == id && o.CheckoutKey != null) ?? throw new ArgumentException("Không tìm thấy đơn POS.");
-        return new PosCheckoutResponse { Id = order.Id, OrderNumber = order.OrderNumber, Status = order.Status, PaymentStatus = order.PaymentStatus,
+            .SingleOrDefaultAsync(o => o.Id == id && o.OrderType == "pos") ?? throw new ArgumentException("Không tìm thấy đơn POS.");
+        var delivery = OrderDeliveryDetails.FromOrder(order);
+        return new PosCheckoutResponse { IsLegacy = order.CheckoutKey == null, Id = order.Id, OrderNumber = order.OrderNumber, Status = order.Status, PaymentStatus = order.PaymentStatus,
             PaymentMethod = order.PaymentMethod, Subtotal = order.Subtotal, Discount = order.Discount, TotalAmount = order.TotalAmount,
             CashReceived = order.CashReceived, ChangeDue = order.CashReceived.HasValue ? order.CashReceived.Value - order.TotalAmount : 0,
             PointsUsed = order.PointsUsed, PointsEarned = order.PointsEarned, CustomerName = order.Customer?.FullName, CreatedAt = order.CreatedAt,
-            CustomerId = order.CustomerId, UserId = order.UserId, UserName = order.User?.FullName, PromotionId = order.PromotionId, Note = order.Note, UpdatedAt = order.UpdatedAt,
+            CustomerId = order.CustomerId, UserId = order.UserId, UserName = order.User?.FullName, PromotionId = order.PromotionId, Note = delivery.Note, UpdatedAt = order.UpdatedAt,
+            RecipientName = delivery.Name, RecipientPhone = delivery.Phone, ShippingAddress = delivery.Address,
             Items = order.OrderItems.Select(i => new PosCheckoutItemResponse { ProductId = i.ProductId, ProductName = i.Product?.ProductName ?? "", Quantity = i.Quantity, UnitPrice = i.UnitPrice, TotalPrice = i.TotalPrice }).ToList() };
+    }
+
+    public async Task<PosCheckoutResponse?> GetByRequestAsync(Guid requestId)
+    {
+        var userId = UserId;
+        var key = requestId.ToString();
+        var id = await db.Orders.AsNoTracking().Where(o => o.CheckoutKey == key && o.UserId == userId)
+            .Select(o => (int?)o.Id).SingleOrDefaultAsync();
+        return id.HasValue ? await GetAsync(id.Value) : null;
     }
 }

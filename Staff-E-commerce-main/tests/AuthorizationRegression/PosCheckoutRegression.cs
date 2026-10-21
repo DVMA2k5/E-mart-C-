@@ -7,6 +7,7 @@ using System.Text.Json;
 using backend.Data;
 using backend.DTO;
 using backend.Models;
+using backend.Services;
 using Microsoft.EntityFrameworkCore;
 
 public static class PosCheckoutRegression
@@ -34,6 +35,8 @@ public static class PosCheckoutRegression
         Check(paid.Status == "completed" && paid.PaymentStatus == "paid" && paid.PointsEarned == 1, "Cash settlement");
         var replay = await Send("/api/orders/checkout", cashBody);
         Check(replay.Id == paid.Id, "Retry uses same order");
+        var recovered = await Get($"/api/orders/checkout-request/{cash.RequestId}");
+        Check(recovered.GetProperty("id").GetInt32() == paid.Id, "Lost-response lookup returns the existing order");
         await Db(async db =>
         {
             Check((await db.Inventory.SingleAsync(i => i.ProductId == productId)).Quantity == 18, "Stock debited once");
@@ -159,6 +162,81 @@ public static class PosCheckoutRegression
         var nextSale1 = await Send("/api/orders/checkout", Bill("cash", 1, 10000));
         var nextSale2 = await Send("/api/orders/checkout", Bill("cash", 1, 10000));
         Check(nextSale1.Id != nextSale2.Id, "Fresh request keys allow identical consecutive sales");
+
+        // Open and settle a pre-existing pending POS bill using its original ID.
+        var legacy = await Send("/api/orders/checkout", Bill("e_wallet", 1, null));
+        await Db(async db => await db.Orders.Where(o => o.Id == legacy.Id).ExecuteUpdateAsync(u => u
+            .SetProperty(o => o.CheckoutKey, (string?)null).SetProperty(o => o.CheckoutHash, (string?)null).SetProperty(o => o.PaymentMethod, "cash")));
+        var legacyView = await Get($"/api/orders/{legacy.Id}/checkout");
+        Check(legacyView.GetProperty("id").GetInt32() == legacy.Id && legacyView.GetProperty("isLegacy").GetBoolean(), "Open exact legacy POS order");
+        var legacyDetail = await Get($"/api/orders/{legacy.Id}");
+        Check(legacyDetail.GetProperty("orderType").GetString() == "pos", "History includes sale channel");
+        User? reader = null;
+        await Db(async db =>
+        {
+            var permission = await db.Permissions.SingleAsync(p => p.Code == "orders.read");
+            var role = new Role { Name = "pos_read_only", RolePermissions = [new RolePermission { PermissionId = permission.Id }] };
+            reader = new User { Username = "pos_read_only", FullName = "POS reader", PasswordHash = "unused", RoleEntity = role,
+                IsActive = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            db.Users.Add(reader); await db.SaveChangesAsync();
+        });
+        using (var jwtScope = services.CreateScope())
+        {
+            var readerToken = jwtScope.ServiceProvider.GetRequiredService<JwtService>().GenerateToken(reader!).token;
+            var forbidden = await Raw($"/api/orders/{legacy.Id}/confirm-cash", new { cashReceived = 20000 }, bearer: readerToken);
+            Check(forbidden.Status == HttpStatusCode.Forbidden, "Read-only history access cannot confirm cash");
+            using var lookup = new HttpRequestMessage(HttpMethod.Get, $"/api/orders/checkout-request/{cash.RequestId}");
+            lookup.Headers.Authorization = new AuthenticationHeaderValue("Bearer", readerToken);
+            using var lookupResponse = await client.SendAsync(lookup);
+            Check(lookupResponse.StatusCode == HttpStatusCode.NotFound, "Recovery keys do not reveal another cashier's request");
+        }
+        await Send($"/api/orders/{legacy.Id}/confirm-cash", new { cashReceived = 1 }, HttpStatusCode.BadRequest);
+        await Db(async db => { beforeStock = (await db.Inventory.SingleAsync(i => i.ProductId == productId)).Quantity; beforePoints = (await db.Customers.FindAsync(customerId))!.RewardPoints; count = await db.Orders.CountAsync(); });
+        var settledLegacy = await Send($"/api/orders/{legacy.Id}/confirm-cash", new { cashReceived = 20000 });
+        Check(settledLegacy.Id == legacy.Id && settledLegacy.PaymentStatus == "paid" && settledLegacy.ChangeDue == 10000, "Settle original legacy bill with change");
+        await Send($"/api/orders/{legacy.Id}/confirm-cash", new { cashReceived = 20000 });
+        await Send($"/api/orders/{legacy.Id}/confirm-cash", new { cashReceived = 30000 }, HttpStatusCode.Conflict);
+        await Db(async db =>
+        {
+            Check(await db.Orders.CountAsync() == count, "Legacy settlement creates no duplicate order");
+            Check((await db.Inventory.SingleAsync(i => i.ProductId == productId)).Quantity == beforeStock, "Legacy settlement does not debit reserved stock again");
+            Check((await db.Customers.FindAsync(customerId))!.RewardPoints == beforePoints + 1, "Legacy settlement earns points once");
+            Check(await db.Payments.CountAsync(p => p.OrderId == legacy.Id && p.Status == "completed") == 1, "Legacy payment recorded once");
+            Check(await db.Invoices.CountAsync(i => i.OrderId == legacy.Id) == 1, "Legacy invoice recorded once");
+        });
+        var incomplete = await Send("/api/orders/checkout", Bill("e_wallet", 1, null));
+        await Db(async db => await db.Orders.Where(o => o.Id == incomplete.Id).ExecuteUpdateAsync(u => u.SetProperty(o => o.CheckoutKey, (string?)null).SetProperty(o => o.PaymentMethod, "cash").SetProperty(o => o.Subtotal, 1m)));
+        await Send($"/api/orders/{incomplete.Id}/confirm-cash", new { cashReceived = 20000 }, HttpStatusCode.Conflict);
+        await Send($"/api/orders/{momo.Id}/confirm-cash", new { cashReceived = 20000 }, HttpStatusCode.BadRequest);
+
+        // A history link must resolve one exact app order, even outside the current list page.
+        var online = await Send("/api/orders/checkout", Bill("e_wallet", 1, null));
+        await Db(async db => await db.Orders.Where(o => o.Id == online.Id).ExecuteUpdateAsync(u => u.SetProperty(o => o.OrderType, "mobile").SetProperty(o => o.CheckoutKey, (string?)null)));
+        var onlineView = await Get($"/api/orders/online/{online.Id}");
+        Check(onlineView.GetProperty("id").GetInt32() == online.Id && onlineView.GetProperty("items").GetArrayLength() == 1, "Deep link opens exact app order with lines");
+        await Send($"/api/orders/{online.Id}/confirm-cash", new { cashReceived = 20000 }, HttpStatusCode.BadRequest);
+        await Send($"/api/orders/{online.Id}/confirm", new { });
+        await Send($"/api/orders/{online.Id}/deliver", new { }, HttpStatusCode.Conflict);
+        var progress = await Get($"/api/orders/online/{online.Id}");
+        Check(progress.GetProperty("status").GetString() == "processing" && progress.GetProperty("paymentStatus").GetString() == "pending", "Receiving an app order does not falsely mark it paid");
+
+        // Invoice management is filtered by fulfillment, not merely receipt of payment.
+        int completedInvoices = 0;
+        await Db(async db =>
+        {
+            await db.Orders.Where(o => o.Id == online.Id).ExecuteUpdateAsync(u => u.SetProperty(o => o.PaymentStatus, "paid"));
+            await db.Invoices.Where(i => i.OrderId == online.Id).ExecuteUpdateAsync(u => u.SetProperty(i => i.PaymentStatus, "paid"));
+            completedInvoices = await db.Invoices.CountAsync(i => i.Order != null && i.Order.Status == "completed");
+        });
+        var invoices = await Get("/api/invoice?pageSize=100");
+        Check(invoices.GetProperty("items").EnumerateArray().All(i => i.GetProperty("orderStatus").GetString() == "completed"), "Invoice list only contains completed orders");
+        Check(!invoices.GetProperty("items").EnumerateArray().Any(i => i.GetProperty("orderId").GetInt32() == online.Id), "Paid but unfulfilled invoice is excluded");
+        Check(invoices.GetProperty("items").EnumerateArray().Any(i => i.GetProperty("orderId").GetInt32() == paid.Id), "Completed POS invoice remains visible");
+        Check(invoices.GetProperty("totalItems").GetInt32() == completedInvoices, "Invoice count applies completed-order filter");
+        var invoicePage = await Get("/api/invoice?pageSize=1");
+        Check(invoicePage.GetProperty("totalItems").GetInt32() == completedInvoices && invoicePage.GetProperty("totalPages").GetInt32() == completedInvoices, "Invoice pagination applies fulfillment filter before paging");
+        var historicalInvoice = await Get($"/api/invoice/{online.Id}");
+        Check(historicalInvoice.GetProperty("orderStatus").GetString() == "processing", "Hidden invoice remains available for historical reconciliation");
         Console.WriteLine($"PASS: {assertions} POS checkout/payment/stock assertions.");
 
         PosCheckoutRequest Bill(string method, int qty, decimal? cash, int points = 0) => new()
@@ -173,11 +251,21 @@ public static class PosCheckoutRegression
             return order;
         }
         async Task Db(Func<AppDbContext, Task> action) { await using var scope = services.CreateAsyncScope(); await action(scope.ServiceProvider.GetRequiredService<AppDbContext>()); }
+        async Task<JsonElement> Get(string path)
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, path);
+            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = await client.SendAsync(message);
+            var body = await response.Content.ReadAsStringAsync();
+            Check(response.StatusCode == HttpStatusCode.OK, $"{path}: {response.StatusCode}: {body}");
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.Clone();
+        }
         void Check(bool valid, string message) { if (!valid) throw new Exception(message); assertions++; }
-        async Task<(HttpStatusCode Status, string Body)> Raw(string path, object body, bool anonymous = false)
+        async Task<(HttpStatusCode Status, string Body)> Raw(string path, object body, bool anonymous = false, string? bearer = null)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body) };
-            if (!anonymous) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            if (!anonymous) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer ?? token);
             using var response = await client.SendAsync(request);
             return (response.StatusCode, await response.Content.ReadAsStringAsync());
         }

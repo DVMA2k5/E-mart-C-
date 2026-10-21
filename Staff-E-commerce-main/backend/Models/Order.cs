@@ -66,6 +66,15 @@ namespace backend.Models
         [Column("note")]
         public string? Note { get; set; }
 
+        [Column("recipient_name"), StringLength(255)]
+        public string? RecipientName { get; set; }
+
+        [Column("recipient_phone"), StringLength(50)]
+        public string? RecipientPhone { get; set; }
+
+        [Column("shipping_address")]
+        public string? ShippingAddress { get; set; }
+
         [Column("created_at")]
         public DateTime CreatedAt { get; set; }
 

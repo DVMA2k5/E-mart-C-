@@ -122,6 +122,8 @@ namespace backend.Services
                 .FirstOrDefaultAsync(o => o.Id == orderId);
             if (order == null) throw new Exception("Không tìm thấy đơn hàng");
 
+            var delivery = OrderDeliveryDetails.FromOrder(order);
+
             return new OrderDTO
             {
                 Id = order.Id,
@@ -129,6 +131,7 @@ namespace backend.Services
                 CustomerId = order.CustomerId ?? 0,
                 UserId = order.UserId,
                 Status = order.Status,
+                OrderType = order.OrderType,
                 PaymentStatus = order.PaymentStatus,
                 PaymentMethod = order.PaymentMethod,
                 IsPosCheckout = order.CheckoutKey != null,
@@ -136,7 +139,10 @@ namespace backend.Services
                 Discount = order.Discount,
                 TotalAmount = order.TotalAmount,
                 PromotionId = order.PromotionId,
-                Note = order.Note,
+                Note = delivery.Note,
+                RecipientName = delivery.Name,
+                RecipientPhone = delivery.Phone,
+                ShippingAddress = delivery.Address,
                 CreatedAt = order.CreatedAt,
                 UpdatedAt = order.UpdatedAt,
                 CustomerName = order.Customer?.FullName,
@@ -152,11 +158,12 @@ namespace backend.Services
             string? status,
             DateTime? startDate,
             DateTime? endDate,
-            string? search
+            string? search,
+            string? orderType = null
         )
         {
             var (data, totalItems) = await _orderRepo.SearchPagingAsync(
-                pageNumber, pageSize, status, startDate, endDate, search
+                pageNumber, pageSize, status, startDate, endDate, search, orderType
             );
 
             return new PagedResult<OrderDTO>
@@ -170,7 +177,7 @@ namespace backend.Services
         }
         public async Task<bool> CancelOrderAsync(int orderId)
         {
-            if (await _context.Orders.AsNoTracking().AnyAsync(o => o.Id == orderId && o.CheckoutKey != null))
+            if (await _context.Orders.AsNoTracking().AnyAsync(o => o.Id == orderId && o.OrderType == "pos"))
                 return await _checkout.CancelAsync(orderId);
             // 1. Lấy user hiện tại
             int currentUserId = GetCurrentUserId();
@@ -204,7 +211,7 @@ namespace backend.Services
         // ===== ONLINE ORDER MANAGEMENT =====
 
         public async Task<PagedResult<OnlineOrderDTO>> GetOnlineOrdersAsync(
-            int pageNumber, int pageSize, string? status, string? search)
+            int pageNumber, int pageSize, string? status, string? search, int? orderId = null)
         {
             var query = _context.Orders
                 .Include(o => o.Customer)
@@ -213,6 +220,8 @@ namespace backend.Services
                     .ThenInclude(oi => oi.Product)
                 .Where(o => o.OrderType == "mobile")
                 .AsQueryable();
+
+            if (orderId.HasValue) query = query.Where(o => o.Id == orderId.Value);
 
             if (!string.IsNullOrWhiteSpace(status))
                 query = query.Where(o => o.Status == status);
@@ -237,7 +246,7 @@ namespace backend.Services
 
             var dtos = orders.Select(o =>
             {
-                var delivery = OrderDeliveryDetails.Parse(o.Note);
+                var delivery = OrderDeliveryDetails.FromOrder(o);
                 return new OnlineOrderDTO
                 {
                     Id = o.Id,
@@ -246,6 +255,9 @@ namespace backend.Services
                     CustomerName = delivery.Name ?? o.Customer?.FullName,
                     CustomerPhone = delivery.Phone ?? o.Customer?.Phone,
                     CustomerAddress = delivery.Address ?? o.Customer?.Address,
+                    RecipientName = delivery.Name,
+                    RecipientPhone = delivery.Phone,
+                    ShippingAddress = delivery.Address,
                     Status = o.Status,
                     OrderType = o.OrderType,
                     Subtotal = o.Subtotal,
@@ -356,6 +368,8 @@ namespace backend.Services
 
             if (order == null) return false;
 
+            if (order.PaymentMethod != "cash" && order.PaymentStatus != "paid")
+                throw new InvalidOperationException("Chờ xác nhận thanh toán trước khi hoàn tất giao hàng.");
             order.Status = "completed";
             order.PaymentStatus = "paid";
             order.UserId = userId;

@@ -1,5 +1,6 @@
 // src/pages/pos/POS.jsx
 import React, { useEffect, useState, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import * as signalR from "@microsoft/signalr";
 import {
   getOnlineOrders,
@@ -10,11 +11,17 @@ import {
 import {
   getProductByBarcode,
   getPaginatedProducts,
+  getCurrentUserId,
+  request,
 } from "../../api/apiClient";
 import { getCustomers } from "../../api/customerApi";
 import { formatPrice } from "../../utils/formatPrice";
-import { checkoutPos, getCheckoutRequestId } from "../../api/posCheckoutApi";
+import { checkoutPos, getCheckoutRequestId, getPosCheckout, findPosCheckoutByRequest } from "../../api/posCheckoutApi";
 import PosPaymentPanel from "../../components/orders/PosPaymentPanel";
+import { useAuth } from "../../hook/useAuth";
+import { paymentStatusLabels } from "../../utils/orderStatus";
+import { mergeLatestCart, hasUnavailableItems } from "../../utils/posCart";
+import { pendingCheckoutKey, readPendingCheckout, savePendingCheckout, isDefiniteCheckoutFailure } from "../../utils/posCheckoutSession";
 
 const STATUS_CONFIG = {
   pending:    { label: "Chờ xác nhận", color: "bg-amber-100 text-amber-800",    dot: "bg-amber-500"  },
@@ -86,6 +93,10 @@ function playNewOrderChime() {
 }
 
 export default function POS() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedOrderId = searchParams.get("orderId");
+  const { permissions } = useAuth();
+  const canWriteOrders = permissions.includes("orders.write");
   const [activeTab, setActiveTab] = useState("online");
   const [orders, setOrders] = useState([]);
   const [meta, setMeta] = useState({ totalItems: 0, totalPages: 1, pageNumber: 1, pageSize: 20 });
@@ -133,8 +144,44 @@ export default function POS() {
   const [orderNote, setOrderNote] = useState("");
   const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
   const [receiptOrder, setReceiptOrder] = useState(null);
+  const [openingOrder, setOpeningOrder] = useState(false);
+  const [openOrderError, setOpenOrderError] = useState("");
+  const [refreshingCart, setRefreshingCart] = useState(false);
+  const [sessionKey] = useState(() => pendingCheckoutKey(getCurrentUserId()));
+  const [pendingCheckout, setPendingCheckout] = useState(null);
+  const [sessionError, setSessionError] = useState("");
   const checkoutKey = useRef(null);
   const checkoutBusy = useRef(false);
+  const productRequest = useRef(0);
+  const receiptVersion = useRef("");
+
+  useEffect(() => {
+    let active = true;
+    try {
+      if (!getCurrentUserId()) throw new Error("Không xác định được nhân viên. Vui lòng đăng nhập lại trước khi bán hàng.");
+      const pending = readPendingCheckout(window.sessionStorage, sessionKey);
+      setPendingCheckout(pending);
+      if (pending) {
+        setActiveTab("pos");
+        const payload = pending.payload;
+        const restoredLines = payload.items.map((line) => ({ id: line.productId, name: `Sản phẩm #${line.productId}`, quantity: line.quantity, price: 0, stock: 0, isActive: false }));
+        setPosCart(restoredLines);
+        setOrderNote(payload.note || ""); setPointsToUse(payload.pointsUsed || 0);
+        setCashGiven(payload.cashReceived ?? ""); setPaymentMethod(payload.paymentMethod === "e_wallet" ? "other" : payload.paymentMethod);
+        setRefreshingCart(true);
+        Promise.all([
+          Promise.all(payload.items.map((line) => request(`/products/${line.productId}`).catch((error) => { if (error.status === 404) return null; throw error; }))),
+          payload.customerId ? request(`/customers/${payload.customerId}`) : Promise.resolve(null),
+        ]).then(([products, customer]) => {
+          if (!active) return;
+          setPosCart(mergeLatestCart(restoredLines, products.filter(Boolean)));
+          setSelectedCustomer(customer);
+        }).catch(() => { /* Recovery still retries the exact persisted payload, even if catalog refresh fails. */ })
+          .finally(() => { if (active) setRefreshingCart(false); });
+      }
+    } catch (e) { setSessionError(e.message || "Không thể khôi phục yêu cầu POS."); }
+    return () => { active = false; };
+  }, [sessionKey]);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -224,14 +271,15 @@ export default function POS() {
   // =========================================================
   // Tải danh sách sản phẩm mẫu cho POS quầy
   const loadPosProducts = useCallback(async (query = "") => {
+    const sequence = ++productRequest.current;
     setPosProductLoading(true);
     try {
       const res = await getPaginatedProducts(1, 24, query, null, null, null, null, "", 1);
-      setPosProducts(res.items || []);
+      if (sequence === productRequest.current) setPosProducts(res.items || []);
     } catch (err) {
       console.debug("Lỗi tải sản phẩm POS:", err);
     } finally {
-      setPosProductLoading(false);
+      if (sequence === productRequest.current) setPosProductLoading(false);
     }
   }, []);
 
@@ -244,12 +292,16 @@ export default function POS() {
 
   // Thêm sản phẩm vào giỏ hàng POS
   const addToPosCart = (product) => {
-    if (checkoutBusy.current) return;
+    if (checkoutBusy.current || pendingCheckout || refreshingCart || sessionError) return;
+    const stock = product.inventory?.quantity ?? 0;
+    if (!product.isActive || stock <= (posCart.find((item) => item.id === product.id)?.quantity || 0)) {
+      showToast("Sản phẩm ngừng bán hoặc đã đạt số lượng tồn kho.", "error"); return;
+    }
     setPosCart((current) => {
       const existing = current.find((item) => item.id === product.id);
       if (existing) {
         return current.map((item) =>
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+          item.id === product.id ? { ...item, quantity: Math.min(stock, item.quantity + 1), stock } : item
         );
       }
       return [
@@ -261,6 +313,8 @@ export default function POS() {
           barcode: product.barcode || product.sku,
           imageUrl: product.imageUrl,
           quantity: 1,
+          stock,
+          isActive: product.isActive,
         },
       ];
     });
@@ -269,7 +323,7 @@ export default function POS() {
   const updateCartQuantity = (id, delta) => {
     setPosCart((current) =>
       current
-        .map((item) => (item.id === id ? { ...item, quantity: item.quantity + delta } : item))
+        .map((item) => (item.id === id ? { ...item, quantity: delta > 0 ? (item.quantity >= item.stock ? item.quantity : item.quantity + delta) : item.quantity + delta } : item))
         .filter((item) => item.quantity > 0)
     );
   };
@@ -326,16 +380,65 @@ export default function POS() {
   const pointsToEarn = Math.floor(posTotalPayable / 10000);
 
   // Thanh toán đơn POS
-  const showCheckoutReceipt = (order) => setReceiptOrder({
+  const showCheckoutReceipt = useCallback((order) => setReceiptOrder({
     ...order,
     items: order.items.map((item) => ({ id: item.productId, name: item.productName, price: item.unitPrice, quantity: item.quantity })),
     cashGiven: order.cashReceived ?? 0,
     customer: order.customerName ? { fullName: order.customerName } : null,
-  });
+  }), []);
+
+  const handleReceiptChange = useCallback((order) => {
+    showCheckoutReceipt(order);
+    const version = `${order.id}:${order.status}:${order.paymentStatus}`;
+    if (receiptVersion.current !== version) {
+      receiptVersion.current = version;
+      loadPosProducts(posProductSearch);
+    }
+  }, [showCheckoutReceipt, loadPosProducts, posProductSearch]);
+
+  const refreshCart = async () => {
+    if (checkoutBusy.current || pendingCheckout) return;
+    setRefreshingCart(true);
+    try {
+      const [products, customer] = await Promise.all([
+        Promise.all(posCart.map((item) => request(`/products/${item.id}`).catch((error) => { if (error.status === 404) return null; throw error; }))),
+        selectedCustomer ? request(`/customers/${selectedCustomer.id}`) : Promise.resolve(null),
+      ]);
+      const updated = mergeLatestCart(posCart, products.filter(Boolean));
+      setPosCart(updated);
+      if (customer) setSelectedCustomer(customer);
+      await loadPosProducts(posProductSearch);
+      showToast(hasUnavailableItems(updated) ? "Có sản phẩm ngừng bán hoặc không đủ tồn. Hãy giảm số lượng hoặc bỏ sản phẩm." : "Đã cập nhật giá, tồn kho và điểm. Hãy kiểm tra lại tổng tiền.", hasUnavailableItems(updated) ? "error" : "success");
+    } catch (e) { showToast(e.message || "Không thể cập nhật giỏ hàng.", "error"); }
+    finally { setRefreshingCart(false); }
+  };
+
+  const submitCheckout = async (payload, recovering = false) => {
+    if (checkoutBusy.current) return;
+    checkoutBusy.current = true; setCheckoutSubmitting(true);
+    try {
+      // Never send if the request could not first be persisted for recovery.
+      const pending = savePendingCheckout(window.sessionStorage, sessionKey, payload);
+      setPendingCheckout(pending);
+      const existing = recovering ? await findPosCheckoutByRequest(payload.requestId) : null;
+      const order = existing || await checkoutPos(payload);
+      window.sessionStorage.removeItem(sessionKey);
+      setPendingCheckout(null); checkoutKey.current = null;
+      handleReceiptChange(order);
+      showToast(order.status === "cancelled" ? "Đã tìm thấy đơn đã hủy. Yêu cầu cũ đã được xử lý." : order.status === "refunded" ? "Đã tìm thấy đơn đã hoàn tiền." : order.paymentStatus === "paid" ? "Đã thanh toán và xuất hóa đơn." : "Đơn đã lưu, đang chờ xác nhận thanh toán.");
+      setPosCart([]); setSelectedCustomer(null); setPointsToUse(0); setCashGiven(""); setOrderNote("");
+    } catch (e) {
+      if (isDefiniteCheckoutFailure(e)) {
+        window.sessionStorage.removeItem(sessionKey); setPendingCheckout(null);
+      }
+      showToast(e.message || "Chưa rõ kết quả. Dùng nút kiểm tra yêu cầu đang lưu để tránh tạo trùng.", "error");
+    } finally { checkoutBusy.current = false; setCheckoutSubmitting(false); }
+  };
 
   const handleCheckoutPOS = async () => {
-    if (checkoutBusy.current) return;
+    if (checkoutBusy.current || pendingCheckout || refreshingCart || sessionError) return;
     if (!posCart.length) { showToast("Giỏ hàng đang trống!", "error"); return; }
+    if (hasUnavailableItems(posCart)) { showToast("Giỏ hàng có sản phẩm không đủ tồn hoặc đã ngừng bán.", "error"); return; }
     if (paymentMethod === "cash" && (cashGiven === "" || !Number.isFinite(Number(cashGiven)) || Number(cashGiven) < posTotalPayable)) {
       showToast("Nhập đủ số tiền khách đưa trước khi thanh toán.", "error"); return;
     }
@@ -348,23 +451,15 @@ export default function POS() {
       cashReceived: paymentMethod === "cash" ? Number(cashGiven) : null,
       items: posCart.map((item) => ({ productId: item.id, quantity: item.quantity })),
     };
-    checkoutBusy.current = true; setCheckoutSubmitting(true);
-    try {
-      checkoutKey.current = getCheckoutRequestId(checkoutKey.current, payload);
-      const order = await checkoutPos({ ...payload, requestId: checkoutKey.current.id });
-      showCheckoutReceipt(order);
-      checkoutKey.current = null;
-      showToast(order.paymentStatus === "paid" ? "Đã thanh toán và xuất hóa đơn." : "Đơn đã lưu, đang chờ xác nhận thanh toán.");
-      setPosCart([]); setSelectedCustomer(null); setPointsToUse(0); setCashGiven("");
-      setOrderNote("");
-    } catch (err) { showToast(err.message || "Chưa nhận được kết quả. Giữ nguyên giỏ và thử lại để tránh tạo trùng.", "error"); }
-    finally { checkoutBusy.current = false; setCheckoutSubmitting(false); }
+    checkoutKey.current = getCheckoutRequestId(checkoutKey.current, payload);
+    await submitCheckout({ ...payload, requestId: checkoutKey.current.id });
   };
 
   const handleConfirm = async (orderId) => {
     setActionLoading(true);
     try {
       await confirmOnlineOrder(orderId);
+      if (detailOrder?.id === orderId) setDetailOrder(await request(`/orders/online/${orderId}`));
       showToast("Đã xác nhận đơn hàng thành công!");
       fetchOrders(page);
     } catch (err) {
@@ -378,6 +473,7 @@ export default function POS() {
     setActionLoading(true);
     try {
       await deliverOnlineOrder(orderId);
+      if (detailOrder?.id === orderId) setDetailOrder(await request(`/orders/online/${orderId}`));
       showToast("Đã hoàn thành giao hàng & tích điểm cho khách!");
       fetchOrders(page);
     } catch (err) {
@@ -396,6 +492,7 @@ export default function POS() {
     setActionLoading(true);
     try {
       await rejectOnlineOrder(rejectModal.orderId, rejectReason);
+      if (detailOrder?.id === rejectModal.orderId) setDetailOrder(await request(`/orders/online/${rejectModal.orderId}`));
       showToast("Đã từ chối đơn hàng.");
       setRejectModal({ open: false, orderId: null });
       fetchOrders(page);
@@ -408,6 +505,33 @@ export default function POS() {
 
   const pendingCount = orders.filter((o) => o.status === "pending").length;
   const processingCount = orders.filter((o) => o.status === "processing").length;
+
+  useEffect(() => {
+    if (!selectedOrderId) return;
+    let active = true;
+    setOpeningOrder(true); setOpenOrderError(""); setReceiptOrder(null); setDetailOrder(null);
+    (async () => {
+      if (!/^\d+$/.test(selectedOrderId) || Number(selectedOrderId) <= 0) throw new Error("Mã đơn hàng không hợp lệ.");
+      const order = await request(`/orders/${selectedOrderId}`);
+      if (order.orderType === "mobile") {
+        const detail = await request(`/orders/online/${order.id}`);
+        if (active) { setActiveTab("online"); setDetailOrder(detail); }
+      } else if (order.orderType === "pos") {
+        const checkout = await getPosCheckout(order.id);
+        if (active) { setActiveTab("pos"); showCheckoutReceipt(checkout); }
+      } else {
+        throw new Error("Chưa xác định được kênh bán của đơn. Vui lòng tải lại thông tin trước khi xử lý.");
+      }
+    })().catch((e) => { if (active) setOpenOrderError(e.message || "Không thể mở đơn hàng."); })
+      .finally(() => { if (active) setOpeningOrder(false); });
+    return () => { active = false; };
+  }, [selectedOrderId, showCheckoutReceipt]);
+
+  const closeSavedOrder = () => {
+    if (actionLoading) return;
+    setReceiptOrder(null); setDetailOrder(null);
+    if (selectedOrderId) setSearchParams((previous) => { const next = new URLSearchParams(previous); next.delete("orderId"); return next; }, { replace: true });
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-primary-50">
@@ -458,6 +582,14 @@ export default function POS() {
       )}
 
       <div className="max-w-7xl mx-auto px-4 py-6">
+        {openingOrder && <p role="status" className="mb-4 rounded-lg bg-white p-3 text-sm">Đang mở đơn #{selectedOrderId}…</p>}
+        {openOrderError && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-red-700">{openOrderError}</p>}
+        {sessionError && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-red-700">{sessionError}</p>}
+        {pendingCheckout && <section className="mb-4 space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm" aria-label="Khôi phục yêu cầu POS">
+          <p className="font-semibold">Có yêu cầu chốt đơn chưa rõ kết quả.</p>
+          <p>Kiểm tra hoặc gửi lại đúng yêu cầu đã lưu trước khi tạo đơn khác. Hệ thống sẽ trả lại đơn cũ nếu đã tạo thành công.</p>
+          <button onClick={() => submitCheckout(pendingCheckout.payload, true)} disabled={checkoutSubmitting || !canWriteOrders} className="rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white disabled:opacity-50">{checkoutSubmitting ? "Đang kiểm tra…" : "Kiểm tra / thử lại yêu cầu đã lưu"}</button>
+        </section>}
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
           <div>
@@ -619,14 +751,14 @@ export default function POS() {
                           <>
                             <button
                               onClick={() => handleConfirm(o.id)}
-                              disabled={actionLoading}
+                              disabled={actionLoading || !canWriteOrders}
                               className="px-3 py-1.5 text-xs bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold shadow-sm transition disabled:opacity-50"
                             >
                               ✓ Xác nhận
                             </button>
                             <button
                               onClick={() => openReject(o.id)}
-                              disabled={actionLoading}
+                              disabled={actionLoading || !canWriteOrders}
                               className="px-3 py-1.5 text-xs bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-semibold transition disabled:opacity-50"
                             >
                               ✕ Huỷ
@@ -636,7 +768,7 @@ export default function POS() {
                         {o.status === "processing" && (
                           <button
                             onClick={() => handleDeliver(o.id)}
-                            disabled={actionLoading}
+                            disabled={actionLoading || !canWriteOrders || (o.paymentMethod !== "cash" && o.paymentStatus !== "paid")}
                             className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold shadow-sm transition disabled:opacity-50"
                           >
                             🚀 Giao thành công
@@ -655,7 +787,7 @@ export default function POS() {
         {/* TAB 2: BÁN TẠI QUẦY (POS CHUYÊN DỤNG VỚI BARCODE SCANNER)  */}
         {/* ========================================================= */}
         {activeTab === "pos" && (
-          <fieldset disabled={checkoutSubmitting} className="min-w-0 grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <fieldset disabled={checkoutSubmitting || refreshingCart || !!pendingCheckout || !!sessionError || !canWriteOrders} className="min-w-0 grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Cột trái: Máy quét mã vạch + Sản phẩm */}
             <div className="lg:col-span-7 space-y-5">
               {/* Ô Quét Mã Vạch Barcode (Autofocus) */}
@@ -754,6 +886,8 @@ export default function POS() {
                   )}
                 </div>
 
+                <button type="button" onClick={refreshCart} className="rounded-lg border px-3 py-2 text-xs font-semibold">{refreshingCart ? "Đang cập nhật…" : "Cập nhật giá và tồn kho"}</button>
+
                 {/* Items list */}
                 {posCart.length === 0 ? (
                   <div className="py-10 text-center text-gray-400 text-xs">
@@ -766,6 +900,7 @@ export default function POS() {
                         <div className="flex-1 pr-2">
                           <div className="font-bold text-gray-800 line-clamp-1">{item.name}</div>
                           <div className="text-gray-400">{formatPrice(item.price)}</div>
+                          <div className={item.isActive === false || item.quantity > item.stock ? "font-semibold text-red-600" : "text-gray-500"}>{item.isActive === false ? "Đã ngừng bán" : `Còn: ${item.stock}`}{item.quantity > item.stock ? " · Không đủ tồn" : ""}</div>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <button
@@ -777,6 +912,7 @@ export default function POS() {
                           <span className="font-bold w-6 text-center">{item.quantity}</span>
                           <button
                             onClick={() => updateCartQuantity(item.id, 1)}
+                            disabled={item.isActive === false || item.quantity >= item.stock}
                             className="w-6 h-6 rounded bg-gray-100 hover:bg-gray-200 font-bold"
                           >
                             +
@@ -962,7 +1098,7 @@ export default function POS() {
                 {/* Nút thanh toán */}
                 <button
                   onClick={handleCheckoutPOS}
-                  disabled={checkoutSubmitting || !posCart.length}
+                  disabled={checkoutSubmitting || refreshingCart || !!pendingCheckout || !posCart.length || hasUnavailableItems(posCart)}
                   className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm rounded-xl shadow-lg shadow-emerald-200 transition disabled:opacity-50"
                 >
                   {checkoutSubmitting ? "Đang xử lý..." : "XÁC NHẬN ĐƠN HÀNG"}
@@ -1029,16 +1165,18 @@ export default function POS() {
               </div>
             )}
 
-            <PosPaymentPanel order={receiptOrder} onChange={showCheckoutReceipt} />
+            {receiptOrder.shippingAddress && <div className="mb-3 space-y-1 border-b pb-3"><p>Người nhận: {receiptOrder.recipientName || "—"}</p><p>Điện thoại: {receiptOrder.recipientPhone || "—"}</p><p className="whitespace-pre-line break-words">Địa chỉ giao hàng: {receiptOrder.shippingAddress}</p></div>}
+            {receiptOrder.note?.trim() && <p className="mb-3 whitespace-pre-line break-words"><strong>Ghi chú: </strong>{receiptOrder.note}</p>}
+            <PosPaymentPanel key={receiptOrder.id} order={receiptOrder} onChange={handleReceiptChange} />
             <div className="text-center text-gray-400 text-xs mb-4">
               Cảm ơn quý khách và hẹn gặp lại!
             </div>
 
             <button
-              onClick={() => setReceiptOrder(null)}
+              onClick={closeSavedOrder}
               className="w-full py-2.5 bg-gray-900 hover:bg-black text-white font-bold rounded-xl transition"
             >
-              Đóng hoá đơn
+              Đóng đơn hàng
             </button>
           </div>
         </div>
@@ -1046,11 +1184,11 @@ export default function POS() {
 
       {/* Detail Modal */}
       {detailOrder && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDetailOrder(null)}>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={closeSavedOrder}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b flex items-center justify-between">
               <h2 className="font-bold text-lg">Chi tiết đơn #{detailOrder.orderNumber}</h2>
-              <button onClick={() => setDetailOrder(null)} className="text-gray-400 hover:text-gray-600 text-xl font-bold">✕</button>
+              <button onClick={closeSavedOrder} className="text-gray-400 hover:text-gray-600 text-xl font-bold">✕</button>
             </div>
             <div className="p-6 space-y-4">
               <div className="flex justify-between items-center">
@@ -1059,13 +1197,14 @@ export default function POS() {
               </div>
 
               <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
-                <div><span className="text-gray-500">Khách hàng:</span> <strong>{detailOrder.customerName || "—"}</strong></div>
-                <div><span className="text-gray-500">SĐT:</span> {detailOrder.customerPhone || "—"}</div>
-                <div className="whitespace-pre-line break-words"><span className="text-gray-500">Địa chỉ giao hàng:</span> {detailOrder.customerAddress || "—"}</div>
+                <div><span className="text-gray-500">Tên người nhận:</span> <strong>{detailOrder.recipientName || "Chưa xác định"}</strong></div>
+                <div><span className="text-gray-500">Số điện thoại người nhận:</span> {detailOrder.recipientPhone || "Chưa xác định"}</div>
+                <div className="whitespace-pre-line break-words"><span className="text-gray-500">Địa chỉ giao hàng:</span> {detailOrder.shippingAddress || "Chưa xác định"}</div>
                 <div>
                   <span className="text-gray-500">Thanh toán:</span>{" "}
                   <strong>{detailOrder.paymentMethod === "e_wallet" ? "Ví MoMo" : detailOrder.paymentMethod === "card" ? "Chuyển khoản QR" : "COD (Tiền mặt)"}</strong>
                 </div>
+                <div><span className="text-gray-500">Trạng thái thanh toán: </span><strong>{paymentStatusLabels[detailOrder.paymentStatus] || detailOrder.paymentStatus}</strong></div>
                 {detailOrder.note?.trim() && <div className="whitespace-pre-line break-words"><span className="text-gray-500">Ghi chú:</span> {detailOrder.note}</div>}
               </div>
 
@@ -1099,6 +1238,14 @@ export default function POS() {
                   <span className="text-primary-600">{formatPrice(detailOrder.totalAmount)}</span>
                 </div>
               </div>
+              <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+                {detailOrder.status === "pending" && <button disabled={actionLoading || !canWriteOrders} onClick={() => handleConfirm(detailOrder.id)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Xác nhận nhận đơn</button>}
+                {detailOrder.status === "processing" && <button disabled={actionLoading || !canWriteOrders || (detailOrder.paymentMethod !== "cash" && detailOrder.paymentStatus !== "paid")} onClick={() => {
+                  if (window.confirm(detailOrder.paymentMethod === "cash" ? `Xác nhận đã giao hàng và thu đủ ${formatPrice(detailOrder.totalAmount)} tiền COD?` : "Xác nhận đã giao hàng thành công?")) handleDeliver(detailOrder.id);
+                }} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{detailOrder.paymentMethod === "cash" ? "Đã giao và thu đủ tiền COD" : "Hoàn tất giao hàng"}</button>}
+                {["pending", "processing"].includes(detailOrder.status) && <button disabled={actionLoading || !canWriteOrders} onClick={() => openReject(detailOrder.id)} className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 disabled:opacity-50">Hủy đơn</button>}
+              </div>
+              {detailOrder.status === "processing" && detailOrder.paymentMethod !== "cash" && detailOrder.paymentStatus !== "paid" && <p className="text-sm text-amber-700">Chờ xác nhận thanh toán trước khi hoàn tất giao hàng.</p>}
             </div>
           </div>
         </div>
@@ -1106,7 +1253,7 @@ export default function POS() {
 
       {/* Reject Modal */}
       {rejectModal.open && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
             <h2 className="font-bold text-lg mb-4">Từ chối / Huỷ đơn hàng</h2>
             <textarea
@@ -1125,7 +1272,7 @@ export default function POS() {
               </button>
               <button
                 onClick={handleReject}
-                disabled={actionLoading}
+                disabled={actionLoading || !canWriteOrders}
                 className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 disabled:opacity-50"
               >
                 {actionLoading ? "Đang xử lý..." : "Xác nhận từ chối"}

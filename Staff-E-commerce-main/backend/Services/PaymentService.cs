@@ -170,7 +170,7 @@ namespace backend.Services
                     var pendingOrder = await _context.Orders.AsNoTracking().SingleAsync(o => o.Id == payment.OrderId);
                     if (!decimal.TryParse(callback.Amount.ToString(), out var received) || received != payment.Amount || received != pendingOrder.TotalAmount)
                         return false;
-                    if (pendingOrder.CheckoutKey != null)
+                    if (pendingOrder.OrderType == "pos")
                     {
                         try { await _checkout.ConfirmAsync(payment.OrderId, received, callback.OrderId!, momo: true); return true; }
                         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { return false; }

@@ -27,8 +27,14 @@ public class PosPaymentConfirmation
     [Range(typeof(decimal), "0", "9999999999")] public decimal Amount { get; set; }
 }
 
+public class PosCashConfirmation
+{
+    [Range(typeof(decimal), "0", "9999999999")] public decimal CashReceived { get; set; }
+}
+
 public class PosCheckoutResponse
 {
+    public bool IsLegacy { get; set; }
     public int Id { get; set; }
     public string OrderNumber { get; set; } = "";
     public string Status { get; set; } = "";
@@ -48,6 +54,9 @@ public class PosCheckoutResponse
     public int? PromotionId { get; set; }
     public string? Note { get; set; }
     public DateTime UpdatedAt { get; set; }
+    public string? RecipientName { get; set; }
+    public string? RecipientPhone { get; set; }
+    public string? ShippingAddress { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<PosCheckoutItemResponse> Items { get; set; } = [];
 }

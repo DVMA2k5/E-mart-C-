@@ -151,11 +151,15 @@ namespace backend.Data
                 IF COL_LENGTH('orders', 'points_used') IS NULL ALTER TABLE orders ADD points_used INT NOT NULL DEFAULT 0;
                 IF COL_LENGTH('orders', 'points_earned') IS NULL ALTER TABLE orders ADD points_earned INT NOT NULL DEFAULT 0;
                 IF COL_LENGTH('orders', 'cash_received') IS NULL ALTER TABLE orders ADD cash_received DECIMAL(12,2) NULL;
+                IF COL_LENGTH('orders', 'recipient_name') IS NULL ALTER TABLE orders ADD recipient_name NVARCHAR(255) NULL;
+                IF COL_LENGTH('orders', 'recipient_phone') IS NULL ALTER TABLE orders ADD recipient_phone NVARCHAR(50) NULL;
+                IF COL_LENGTH('orders', 'shipping_address') IS NULL ALTER TABLE orders ADD shipping_address NVARCHAR(MAX) NULL;
                 """);
             await db.Database.ExecuteSqlRawAsync("""
                 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('orders') AND name = 'ux_orders_checkout_key')
                     CREATE UNIQUE INDEX ux_orders_checkout_key ON orders(checkout_key) WHERE checkout_key IS NOT NULL;
                 """);
+            await OrderDeliverySchemaMigration.MigrateAsync(db);
             await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
             if (!await db.Database.SqlQuery<int>($"SELECT COUNT(*) AS Value FROM authorization_migrations WITH (UPDLOCK, HOLDLOCK) WHERE name = 'permissions-v1'").AnyAsync(value => value > 0))
             {

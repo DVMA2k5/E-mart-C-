@@ -55,6 +55,13 @@ const CUSTOMER_KEY = "e-mart-mobile-customer";
 const CUSTOMER_TOKEN_KEY = "e-mart-mobile-customer-token";
 const ADDRESS_KEY = "e-mart-mobile-delivery-address";
 
+function deliveryAddressFromProfile(value) {
+  const parts = (value || "").trim().split(",").map((part) => part.trim()).filter(Boolean);
+  return parts.length >= 3
+    ? { street: parts.slice(0, -2).join(", "), ward: parts.at(-2), city: parts.at(-1), otherReceiver: false }
+    : { street: (value || "").trim(), ward: "", city: "", otherReceiver: false };
+}
+
 // Bảng màu chuẩn Bách Hóa Xanh
 const BHX_GREEN = "#008848";
 const BHX_DARK_GREEN = "#006837";
@@ -470,6 +477,12 @@ function CustomerInvoice({ order, token, onClose }) {
                 {!!invoice.customerEmail && <Text style={styles.invoiceText}>Email: {invoice.customerEmail}</Text>}
                 {!!invoice.customerAddress && <Text style={styles.invoiceText}>Địa chỉ: {invoice.customerAddress}</Text>}
               </View>
+              {!!invoice.shippingAddress && <View style={styles.orderInfoCard}>
+                <Text style={styles.orderInfoLabel}>Thông tin giao hàng</Text>
+                <Text style={styles.invoiceText}>Người nhận: {invoice.recipientName || "—"}</Text>
+                <Text style={styles.invoiceText}>Số điện thoại: {invoice.recipientPhone || "—"}</Text>
+                <Text style={styles.invoiceText}>Địa chỉ giao hàng: {invoice.shippingAddress}</Text>
+              </View>}
               <View style={styles.orderItemsCard}>
                 {(invoice.items || []).map((item, index) => (
                   <View key={`${item.sku}-${index}`} style={styles.orderItemRow}>
@@ -539,6 +552,8 @@ export default function App() {
 
   const [customer, setCustomer] = useState(null);
   const [customerToken, setCustomerToken] = useState("");
+  const customerSession = useRef(customerToken);
+  customerSession.current = customerToken;
   const [accountReady, setAccountReady] = useState(false);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -580,13 +595,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    AsyncStorage.getItem(ADDRESS_KEY).then((stored) => {
-      if (!stored) return;
+    let active = true;
+    const profileAddress = customer?.id && customerToken ? (customer.address || "").trim() : "";
+    setDeliveryAddress(deliveryAddressFromProfile(profileAddress));
+    setCheckoutForm((form) => ({ ...form, address: profileAddress }));
+    if (!customer?.id || !customerToken) return () => { active = false; };
+    AsyncStorage.getItem(`${ADDRESS_KEY}:${customer.id}`).then((stored) => {
+      if (!active || !stored) return;
       const address = JSON.parse(stored);
+      // Only reuse structured fields when they still match the current server profile.
+      if ([address.street, address.ward, address.city].filter(Boolean).join(", ") !== profileAddress) return;
       setDeliveryAddress(address);
-      setCheckoutForm((form) => ({ ...form, address: [address.street, address.ward, address.city].filter(Boolean).join(", ") }));
     }).catch(() => { });
-  }, []);
+    return () => { active = false; };
+  }, [customer?.id, customer?.address, customerToken]);
 
   const loadStore = useCallback(async () => {
     setLoading(true);
@@ -673,6 +695,8 @@ export default function App() {
     let active = true;
     const restoreAccount = async () => {
       try {
+        // Retire the old shared address cache so another account cannot reuse it.
+        await AsyncStorage.removeItem(ADDRESS_KEY);
         const values = await AsyncStorage.multiGet([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY]);
         const token = values[0][1];
         const storedCustomer = values[1][1] ? JSON.parse(values[1][1]) : null;
@@ -692,7 +716,7 @@ export default function App() {
         setAccountDateOfBirth(profile.dateOfBirth ? profile.dateOfBirth.slice(0, 10) : "");
         setCheckoutForm((form) => ({ ...form, fullName: profile.fullName || "", phone: profile.phone || "" }));
       } catch {
-        await AsyncStorage.multiRemove([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY]).catch(() => { });
+        await AsyncStorage.multiRemove([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY]).catch(() => { });
       } finally {
         if (active) setAccountReady(true);
       }
@@ -839,6 +863,9 @@ export default function App() {
   const saveDeliveryAddress = async () => {
     if (addressBusy) return;
     if (!accountReady) { setAddressMessage("Đang tải tài khoản, vui lòng thử lại sau."); return; }
+    if (!customer || !customerToken) { setProfilePage(""); setAccountError("Vui lòng đăng nhập để quản lý địa chỉ nhận hàng."); return; }
+    const sessionToken = customerToken;
+    const addressKey = `${ADDRESS_KEY}:${customer.id}`;
     if (!deliveryAddress.city.trim() || !deliveryAddress.ward.trim() || !deliveryAddress.street.trim()) {
       setAddressMessage("Vui lòng nhập tỉnh/thành phố, phường/xã và số nhà, tên đường.");
       return;
@@ -858,20 +885,24 @@ export default function App() {
         });
         if (!response.ok) throw new Error(await readError(response));
         const profile = await response.json();
+        if (customerSession.current !== sessionToken) return;
         await AsyncStorage.multiSet([
-          [ADDRESS_KEY, JSON.stringify(address)],
+          [addressKey, JSON.stringify(address)],
           [CUSTOMER_KEY, JSON.stringify(profile)],
         ]);
+        if (customerSession.current !== sessionToken) {
+          await AsyncStorage.removeItem(addressKey);
+          if (!customerSession.current) await AsyncStorage.removeItem(CUSTOMER_KEY);
+          return;
+        }
         setCustomer(profile);
         setAccountAddress(profile.address || fullAddress);
-      } else {
-        await AsyncStorage.setItem(ADDRESS_KEY, JSON.stringify(address));
       }
       setDeliveryAddress(address);
       setCheckoutForm((form) => ({ ...form, address: fullAddress }));
-      setAddressMessage(customer ? "Đã cập nhật địa chỉ tài khoản và địa chỉ nhận hàng." : "Đã lưu địa chỉ nhận hàng trên thiết bị.");
+      setAddressMessage("Đã cập nhật địa chỉ tài khoản và địa chỉ nhận hàng.");
     } catch (error) {
-      setAddressMessage(error.message || "Không thể lưu địa chỉ. Vui lòng thử lại.");
+      if (customerSession.current === sessionToken) setAddressMessage(error.message || "Không thể lưu địa chỉ. Vui lòng thử lại.");
     } finally {
       setAddressBusy(false);
     }
@@ -884,7 +915,7 @@ export default function App() {
         text: "Đăng xuất",
         style: "destructive",
         onPress: async () => {
-          await AsyncStorage.multiRemove([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY]);
+          customerSession.current = "";
           setCustomer(null);
           setCustomerToken("");
           setAccountName("");
@@ -897,7 +928,17 @@ export default function App() {
           setRegisterPhone("");
           setAccountError("");
           setAccountMessage("");
-          setCheckoutForm((form) => ({ ...form, fullName: "", phone: "" }));
+          setDeliveryAddress({ city: "", ward: "", street: "", otherReceiver: false });
+          setAddressMessage("");
+          setProfilePage("");
+          setDatePickerOpen(false);
+          setCheckoutOpen(false);
+          setCheckoutForm({ fullName: "", phone: "", address: "", note: "" });
+          try {
+            await AsyncStorage.multiRemove([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY, `${ADDRESS_KEY}:${customer.id}`]);
+          } catch {
+            Alert.alert("Đăng xuất", "Không thể xóa dữ liệu đăng nhập trên thiết bị. Vui lòng thử lại.");
+          }
         },
       },
     ]);
@@ -1155,8 +1196,8 @@ export default function App() {
         },
         body: JSON.stringify({
           ...checkoutForm,
-          fullName: customer?.fullName?.trim() || checkoutForm.fullName.trim(),
-          phone: customer?.phone || checkoutForm.phone.trim(),
+          fullName: checkoutForm.fullName.trim(),
+          phone: checkoutForm.phone.trim(),
           paymentMethod,
           pointsUsed: useRewardPoints ? maxPointsUsable : 0,
           items: cart.map((item) => ({ productId: item.id, quantity: item.quantity })),
@@ -1178,7 +1219,10 @@ export default function App() {
       const placedOrder = {
         ...result,
         paymentMethod,
-        note: `Người nhận: ${customer?.fullName?.trim() || checkoutForm.fullName.trim()}\nSố điện thoại: ${customer?.phone || checkoutForm.phone.trim()}\nĐịa chỉ giao hàng: ${checkoutForm.address.trim()}${checkoutForm.note.trim() ? `\nGhi chú: ${checkoutForm.note.trim()}` : ""}`,
+        recipientName: result.recipientName || checkoutForm.fullName.trim(),
+        recipientPhone: result.recipientPhone || checkoutForm.phone.trim(),
+        shippingAddress: result.shippingAddress || checkoutForm.address.trim(),
+        note: result.note ?? (checkoutForm.note.trim() || null),
         paymentStatus: "pending",
         orderType: "mobile",
         items: cart.map((item) => ({
@@ -1429,8 +1473,9 @@ export default function App() {
   }[String(status || "").toLowerCase()] || status || "Đang xử lý");
 
   const orderAddress = (order) => {
+    if (order.shippingAddress) return order.shippingAddress;
     const match = (order.note || "").match(/Địa chỉ giao hàng:\s*([\s\S]*?)(?:\nGhi chú:|$)/i);
-    return match?.[1]?.trim() || "Nhận hàng tại cửa hàng";
+    return match?.[1]?.trim() || (order.orderType === "pos" ? "Nhận hàng tại cửa hàng" : "Chưa có địa chỉ giao hàng");
   };
 
   const visibleOrders = customerOrders.filter((order) => {
@@ -1469,6 +1514,9 @@ export default function App() {
                   <Text style={styles.orderInfoDate}>{purchasedAt}</Text>
                 </View>
                 <Text style={styles.orderAddress}>{address}</Text>
+                {!!selectedOrder.recipientName && <Text style={styles.orderStatusText}>Người nhận: {selectedOrder.recipientName}</Text>}
+                {!!selectedOrder.recipientPhone && <Text style={styles.orderStatusText}>Số điện thoại: {selectedOrder.recipientPhone}</Text>}
+                {!!selectedOrder.note && (selectedOrder.shippingAddress || !selectedOrder.note.startsWith("Người nhận:")) && <Text style={styles.orderStatusText}>Ghi chú: {selectedOrder.note}</Text>}
                 <Text style={styles.orderStatusText}>Trạng thái: {orderStatusLabel(selectedOrder.status)}</Text>
               </View>
 
@@ -1593,7 +1641,7 @@ export default function App() {
 
   const renderProfile = () => (
     <ScrollView contentContainerStyle={styles.pageContent} keyboardShouldPersistTaps="handled">
-      {profilePage ? <>
+      {profilePage && customer && customerToken ? <>
         <View style={styles.accountPageHeading}><Pressable style={styles.accountBackButton} onPress={() => { setProfilePage(""); setAccountError(""); setAccountMessage(""); setAddressMessage(""); }}><Text style={styles.accountBack}>‹</Text></Pressable><Text style={styles.accountPageTitle}>{profilePage === "personal" ? "Thông tin tài khoản" : "Địa chỉ nhận hàng"}</Text></View>
         {profilePage === "personal" ? <View style={styles.infoCard}>
           <TextInput value={accountName} onChangeText={setAccountName} placeholder="Họ và tên *" style={styles.accountInput} maxLength={150} autoCapitalize="words" />
@@ -1702,7 +1750,16 @@ export default function App() {
           {/* Thanh Giao Tại */}
           <Pressable
             style={styles.locationBar}
-            onPress={() => { setTab("profile"); setProfilePage("address"); }}
+            onPress={() => {
+              setTab("profile");
+              if (!customer || !customerToken) {
+                setProfilePage("");
+                setAccountError("Vui lòng đăng nhập để quản lý địa chỉ nhận hàng.");
+                return;
+              }
+              setAddressMessage("");
+              setProfilePage("address");
+            }}
           >
             <View style={styles.locationLeft}>
               <IconLocation size={13} color={BHX_GREEN} />
@@ -2030,24 +2087,22 @@ export default function App() {
 
                 <Text style={styles.inputLabel}>HỌ VÀ TÊN</Text>
                 <TextInput
-                  value={customer?.fullName || checkoutForm.fullName}
+                  value={checkoutForm.fullName}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, fullName: value }))}
                   placeholder="Ví dụ: Nguyễn Văn An"
                   style={styles.formInput}
                   maxLength={150}
                   autoCapitalize="words"
-                  editable={!customer?.fullName}
                 />
 
                 <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI</Text>
                 <TextInput
-                  value={customer?.phone || checkoutForm.phone}
+                  value={checkoutForm.phone}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, phone: value }))}
                   placeholder="Ví dụ: 0912345678"
                   style={styles.formInput}
                   keyboardType="phone-pad"
                   maxLength={13}
-                  editable={!customer}
                 />
 
                 <Text style={styles.inputLabel}>ĐỊA CHỈ NHẬN HÀNG</Text>

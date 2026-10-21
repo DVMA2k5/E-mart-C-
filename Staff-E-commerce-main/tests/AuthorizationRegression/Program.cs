@@ -49,6 +49,8 @@ builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<PaymentService>();
 builder.Services.AddScoped<OrderItemRepository>();
 builder.Services.AddScoped<OrderItemService>();
+builder.Services.AddScoped<PromotionRepository>();
+builder.Services.AddScoped<PromotionService>();
 builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Momo:AccessKey"] = "test-access", ["Momo:SecretKey"] = "test-secret" });
 builder.Services.AddScoped<PermissionFilter>();
 builder.Services.AddScoped<AccountMutationFilter>();
@@ -79,7 +81,7 @@ try
     // Exercise upgrading the previous order schema, not only a freshly generated model.
     await WithDb(async db => await db.Database.ExecuteSqlRawAsync("""
         DROP INDEX ux_orders_checkout_key ON orders;
-        ALTER TABLE orders DROP COLUMN checkout_key, checkout_hash, points_used, points_earned, cash_received;
+        ALTER TABLE orders DROP COLUMN checkout_key, checkout_hash, points_used, points_earned, cash_received, recipient_name, recipient_phone, shipping_address;
         """));
     await AuthorizationSchemaInitializer.InitializeAsync(app.Services);
     int adminId = 0, staffId = 0, employeeId = 0, customerId = 0, adminEmployeeId = 0;
@@ -262,6 +264,7 @@ try
     await Expect(HttpMethod.Delete, $"/api/users/{loggedInId}", adminToken, null, HttpStatusCode.Conflict);
     Console.WriteLine($"PASS: {assertions} authorization and account lifecycle assertions.");
     await PosCheckoutRegression.RunAsync(app.Services, client, adminToken);
+    await OrderDeliveryRegression.RunAsync(app.Services, client, adminToken);
 
     async Task CheckUserFilter(string query, int expectedTotal, int? expectedId = null, int? expectedPage = null)
     {

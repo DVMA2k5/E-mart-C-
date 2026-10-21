@@ -7,6 +7,7 @@ namespace backend.DTO
         public int? CustomerId { get; set; } = 0;
         public int? UserId { get; set; }
         public string Status { get; set; } = "pending";
+        public string OrderType { get; set; } = "pos";
         public string? PaymentStatus { get; set; }
         public string? PaymentMethod { get; set; }
         public bool IsPosCheckout { get; set; }
@@ -15,6 +16,9 @@ namespace backend.DTO
         public decimal TotalAmount { get; set; } = 0m;
         public int? PromotionId { get; set; } = null;
         public string? Note { get; set; } = null;
+        public string? RecipientName { get; set; }
+        public string? RecipientPhone { get; set; }
+        public string? ShippingAddress { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 

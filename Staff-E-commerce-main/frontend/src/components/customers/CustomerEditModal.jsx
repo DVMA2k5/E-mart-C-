@@ -7,6 +7,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
     email: "",
     phone: "",
     address: "",
+    dateOfBirth: "",
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -81,6 +82,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
           email: data.email || "",
           phone: data.phone || "",
           address: data.address || "",
+          dateOfBirth: data.dateOfBirth ? data.dateOfBirth.slice(0, 10) : "",
         });
       } catch (err) {
         setError(err.message || "Error loading customer details");
@@ -193,12 +195,16 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
               )}
 
               {successMessage && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <p className="text-green-800">{successMessage}</p>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                  <p className="text-emerald-800">{successMessage}</p>
                 </div>
               )}
 
               {/* Full Name */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Ngày sinh</label>
+                <input type="date" name="dateOfBirth" value={formData.dateOfBirth} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg" />
+              </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Tên Khách Hàng <span className="text-red-500">*</span>
@@ -212,7 +218,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
                   className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 transition ${
                     errors.fullName
                       ? "border-red-500 bg-red-50 focus:ring-red-500"
-                      : "border-gray-300 focus:ring-blue-500"
+                      : "border-gray-300 focus:ring-primary-500"
                   }`}
                   placeholder="Nhập tên khách hàng"
                 />
@@ -234,7 +240,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
                   className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 transition ${
                     errors.email
                       ? "border-red-500 bg-red-50 focus:ring-red-500"
-                      : "border-gray-300 focus:ring-blue-500"
+                      : "border-gray-300 focus:ring-primary-500"
                   }`}
                   placeholder="Nhập email"
                 />
@@ -256,7 +262,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
                   className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 transition ${
                     errors.phone
                       ? "border-red-500 bg-red-50 focus:ring-red-500"
-                      : "border-gray-300 focus:ring-blue-500"
+                      : "border-gray-300 focus:ring-primary-500"
                   }`}
                   placeholder="Nhập số điện thoại"
                 />
@@ -278,7 +284,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
                   className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 transition ${
                     errors.address
                       ? "border-red-500 bg-red-50 focus:ring-red-500"
-                      : "border-gray-300 focus:ring-blue-500"
+                      : "border-gray-300 focus:ring-primary-500"
                   }`}
                   placeholder="Nhập địa chỉ"
                 />
@@ -302,7 +308,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
           <button
             onClick={handleSubmit}
             disabled={saving || loading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50"
           >
             {saving ? "Đang lưu..." : "Lưu Thay Đổi"}
           </button>

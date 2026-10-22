@@ -30,7 +30,7 @@ export default function ProductCard({ product }) {
         </h3>
         <div className="mt-2 flex items-center justify-between">
           <div>
-            <div className="text-lg font-semibold text-indigo-600">
+            <div className="text-lg font-semibold text-primary-600">
               {Intl.NumberFormat("vi-VN").format(price)} ₫
             </div>
             <div className="text-xs text-gray-500">{unit}</div>

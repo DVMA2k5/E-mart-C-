@@ -44,6 +44,11 @@ export default function LoginPage() {
       const data = await login(trimmedUsername, trimmedPassword);
       console.log("✅ Login successful:", data);
 
+      if (String(data.role || "").toLowerCase() === "customer") {
+        logout();
+        throw new Error("Tài khoản khách hàng chỉ đăng nhập trên ứng dụng khách hàng.");
+      }
+
       // Token đã được set tự động trong apiClient.login()
 
       // Lưu thông tin bổ sung
@@ -78,11 +83,11 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-primary-100 via-primary-50 to-pink-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo/Brand */}
         <div className="text-center mb-8">
-          <div className="inline-block p-3 bg-indigo-600 rounded-full mb-4">
+          <div className="inline-block p-3 bg-primary-600 rounded-full mb-4">
             <svg
               className="w-12 h-12 text-white"
               fill="none"
@@ -168,7 +173,7 @@ export default function LoginPage() {
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                  className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent transition"
                   placeholder="Nhập tên đăng nhập"
                   required
                   autoComplete="username"
@@ -201,7 +206,7 @@ export default function LoginPage() {
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-12 py-2.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                  className="w-full pl-10 pr-12 py-2.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent transition"
                   placeholder="Nhập mật khẩu"
                   required
                   autoComplete="current-password"
@@ -209,7 +214,7 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={togglePasswordVisibility}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center hover:text-indigo-600 transition"
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center hover:text-primary-600 transition"
                 >
                   {showPassword ? (
                     <svg
@@ -255,7 +260,7 @@ export default function LoginPage() {
               <label className="flex items-center">
                 <input
                   type="checkbox"
-                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                 />
                 <span className="ml-2 text-sm text-gray-600">
                   Ghi nhớ đăng nhập
@@ -263,7 +268,7 @@ export default function LoginPage() {
               </label>
               <a
                 href="#"
-                className="text-sm text-indigo-600 hover:text-indigo-700"
+                className="text-sm text-primary-600 hover:text-primary-700"
               >
                 Quên mật khẩu?
               </a>
@@ -273,7 +278,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-indigo-600 text-white py-3 rounded-md font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+              className="w-full bg-primary-600 text-white py-3 rounded-md font-medium hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
             >
               {loading ? (
                 <>

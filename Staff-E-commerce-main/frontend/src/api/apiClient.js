@@ -164,6 +164,7 @@ export async function request(path, options = {}) {
         : "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.";
       try {
         const errText = await res.text();
+        displayMessage = errText || displayMessage;
         const parsed = errText ? JSON.parse(errText) : null;
         if (parsed) {
           if (typeof parsed === "string") {
@@ -172,27 +173,14 @@ export async function request(path, options = {}) {
             displayMessage = parsed.message;
           }
         }
-      } catch (_) {
-        // ignore parse errors, keep default message
+      } catch {
+        // Keep the plain-text response or default message if JSON parsing fails.
       }
 
       // call optional callback (e.g. redirect to login)
 
-      if (path === "/auth/login" || options.skipAuth) {
-        // Parse error message từ backend
-        const errText = await res.text();
-        let errorMessage = "Invalid username or password";
-
-        try {
-          const parsed = JSON.parse(errText);
-          if (parsed?.message) {
-            errorMessage = parsed.message;
-          }
-        } catch (_) {
-          errorMessage = errText || errorMessage;
-        }
-
-        throw new Error(errorMessage);
+      if (isLoginPath || options.skipAuth) {
+        throw new Error(displayMessage);
       }
 
       clearAuthToken();
@@ -229,7 +217,7 @@ export async function request(path, options = {}) {
       } catch (_) {
         // ignore JSON parse errors, fall back to raw text
       }
-      throw new Error(displayMessage || `${res.status} ${res.statusText}`);
+      throw Object.assign(new Error(displayMessage || `${res.status} ${res.statusText}`), { status: res.status });
     }
 
     const contentType = res.headers.get("content-type") || "";
@@ -274,7 +262,7 @@ export async function login(username, password) {
         );
         const decoded = JSON.parse(jsonPayload);
         if (decoded?.uid) setCurrentUserId(decoded.uid);
-      } catch (_) {
+      } catch {
         // ignore decode errors
       }
     }
@@ -349,9 +337,29 @@ export const getPaginatedProducts = getProductsPaginated;
 
 // Users -------------------------------------------------------------
 
-export async function getUsersPaginated(page = 1, pageSize = 10) {
-  const q = `?page=${page}&pageSize=${pageSize}`;
-  return request(`/users/paginated${q}`);
+export async function getUsersPaginated(page = 1, pageSize = 10, { role = "", status = "", search = "" } = {}) {
+  const params = new URLSearchParams({ page, pageSize });
+  if (role) params.set("role", role);
+  if (status) params.set("isActive", status === "active" ? "true" : "false");
+  if (search.trim()) params.set("search", search.trim());
+  return request(`/users/paginated?${params}`);
+}
+
+export async function getRoles() {
+  return request("/roles");
+}
+
+export async function getEmployees() { return request("/employees"); }
+export async function createEmployee(payload) { return request("/employees", { method: "POST", body: payload }); }
+export async function updateEmployee(id, payload) { return request(`/employees/${id}`, { method: "PUT", body: payload }); }
+export async function deleteEmployee(id) { return request(`/employees/${id}`, { method: "DELETE" }); }
+
+export async function getPermissions() {
+  return request("/roles/permissions");
+}
+
+export async function updateRole(id, payload) {
+  return request(`/roles/${id}`, { method: "PUT", body: payload });
 }
 
 export async function getUserById(id) {

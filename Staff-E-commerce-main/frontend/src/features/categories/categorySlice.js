@@ -132,11 +132,13 @@ const categorySlice = createSlice({
   extraReducers: (builder) => {
     // Fetch Categories
     builder
-      .addCase(fetchCategories.pending, (state) => {
+      .addCase(fetchCategories.pending, (state, action) => {
+        state.listRequestId = action.meta.requestId;
         state.loading = true;
         state.error = null;
       })
       .addCase(fetchCategories.fulfilled, (state, action) => {
+        if (state.listRequestId !== action.meta.requestId) return;
         state.loading = false;
         state.items = action.payload.items || [];
         state.pagination = {
@@ -147,6 +149,7 @@ const categorySlice = createSlice({
         };
       })
       .addCase(fetchCategories.rejected, (state, action) => {
+        if (state.listRequestId !== action.meta.requestId) return;
         state.loading = false;
         state.error = action.payload;
       });

@@ -31,6 +31,7 @@ namespace backend.Services
                 Phone = c.Phone,
                 Email = c.Email,
                 Address = c.Address,
+                DateOfBirth = c.DateOfBirth,
                 RewardPoints = c.RewardPoints
             }).ToList();
 
@@ -48,6 +49,7 @@ namespace backend.Services
                 Phone = c.Phone,
                 Email = c.Email,
                 Address = c.Address,
+                DateOfBirth = c.DateOfBirth,
                 RewardPoints = c.RewardPoints
             }).ToList();
         }
@@ -93,6 +95,7 @@ namespace backend.Services
                 Phone = createDto.Phone,
                 Email = createDto.Email,
                 Address = createDto.Address,
+                DateOfBirth = createDto.DateOfBirth,
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
             };
@@ -141,6 +144,11 @@ namespace backend.Services
                 customer.Address = updateDto.Address;
                 hasChanges = true;
             }
+            if (updateDto.DateOfBirth != customer.DateOfBirth)
+            {
+                customer.DateOfBirth = updateDto.DateOfBirth;
+                hasChanges = true;
+            }
 
             if (!hasChanges)
             {
@@ -166,6 +174,7 @@ namespace backend.Services
             {
                 return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(404, "Customer not found.");
             }
+
             Console.WriteLine($"[SERVICE] Found customer with Id={exists.Id}, Current IsActive={exists.IsActive}");
             if (exists.IsActive == isActive)
             {
@@ -181,6 +190,7 @@ namespace backend.Services
             return ServiceResultDTO<CustomerResponseDTO>.CreateSuccessResult(MapToCustomerResponseDto(updatedCustomer), 200);
         }
 
+        public async Task<bool> DeleteCustomerAsync(int id) => await _repo.DeleteAsync(id);
 
         public CustomerResponseDTO MapToCustomerResponseDto(Customer customer)
         {
@@ -191,6 +201,7 @@ namespace backend.Services
                 Phone = customer.Phone!,
                 Email = customer.Email,
                 Address = customer.Address,
+                DateOfBirth = customer.DateOfBirth,
                 IsActive = customer.IsActive,
                 RewardPoints = customer.RewardPoints,
                 CreatedAt = customer.CreatedAt,

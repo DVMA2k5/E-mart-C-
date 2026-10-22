@@ -5,6 +5,9 @@ async function request(path, options = {}) {
   const res = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
+      ...(localStorage.getItem("auth_token")
+        ? { Authorization: `Bearer ${localStorage.getItem("auth_token")}` }
+        : {}),
     },
     ...options,
   });
@@ -41,6 +44,7 @@ export async function getCustomers(
 export async function getCustomerById(customerId) {
   return request(`/customers/${customerId}`);
 }
+
 
 // Tạo khách hàng mới
 export async function createCustomer(customerData) {

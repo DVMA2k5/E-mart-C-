@@ -91,12 +91,20 @@ export default function CustomerDetailModal({ onClose, customerId }) {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-600 mb-1">
+                    Ngày Sinh
+                  </label>
+                  <p className="text-lg text-gray-800">
+                    {customer.dateOfBirth ? new Date(customer.dateOfBirth).toLocaleDateString("vi-VN") : "-"}
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-600 mb-1">
                     Trạng Thái
                   </label>
                   <span
                     className={`inline-block px-3 py-1 rounded-full text-sm font-semibold ${
                       customer.isActive
-                        ? "bg-green-100 text-green-800"
+                        ? "bg-emerald-100 text-emerald-800"
                         : "bg-red-100 text-red-800"
                     }`}
                   >

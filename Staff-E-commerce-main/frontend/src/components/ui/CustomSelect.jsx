@@ -14,10 +14,10 @@ const CustomSelect = ({
       ...base,
       minHeight: "32px",
       fontSize: "14px",
-      borderColor: error ? "#ef4444" : state.isFocused ? "#6366f1" : "#d1d5db",
-      boxShadow: state.isFocused ? "0 0 0 1px #6366f1" : "none",
+      borderColor: error ? "#ef4444" : state.isFocused ? "var(--color-primary-500)" : "#d1d5db",
+      boxShadow: state.isFocused ? "0 0 0 1px var(--color-primary-500)" : "none",
       "&:hover": {
-        borderColor: error ? "#ef4444" : "#6366f1",
+        borderColor: error ? "#ef4444" : "var(--color-primary-500)",
       },
     }),
     valueContainer: (base) => ({
@@ -58,14 +58,14 @@ const CustomSelect = ({
       fontSize: "14px",
       padding: "8px 12px",
       backgroundColor: state.isSelected
-        ? "#6366f1"
+        ? "var(--color-primary-500)"
         : state.isFocused
-        ? "#e0e7ff"
+        ? "var(--color-primary-100)"
         : "white",
       color: state.isSelected ? "white" : "#374151",
       cursor: "pointer",
       ":active": {
-        backgroundColor: "#6366f1",
+        backgroundColor: "var(--color-primary-500)",
       },
     }),
     placeholder: (base) => ({
@@ -96,9 +96,9 @@ const CustomSelect = ({
         borderRadius: 6,
         colors: {
           ...theme.colors,
-          primary: "#6366f1",
-          primary25: "#e0e7ff",
-          primary50: "#c7d2fe",
+          primary: "var(--color-primary-500)",
+          primary25: "var(--color-primary-100)",
+          primary50: "var(--color-primary-200)",
         },
       })}
     />

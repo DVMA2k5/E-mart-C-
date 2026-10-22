@@ -95,5 +95,13 @@ namespace backend.Controllers
             }
             return Ok(result.Data);
         }
+
+        [HttpDelete("{id:int}")]
+        public async Task<IActionResult> DeleteCustomer(int id)
+        {
+            if (!await _service.DeleteCustomerAsync(id))
+                return NotFound("Customer not found.");
+            return NoContent();
+        }
     }
 }

@@ -63,7 +63,7 @@ namespace backend.Controllers
 
         // POST api/units
         [HttpPost]
-        [Authorize(Roles = "admin")]
+        [Authorize]
         public async Task<ActionResult<UnitDTO>> Create([FromBody] UnitDTO dto)
         {
             // Validate
@@ -103,7 +103,7 @@ namespace backend.Controllers
 
         // PUT api/units/{id}
         [HttpPut("{id}")]
-        [Authorize(Roles = "admin")]
+        [Authorize]
         public async Task<ActionResult<UnitDTO>> Update(int id, [FromBody] UnitDTO dto)
         {
             // Validate
@@ -144,7 +144,7 @@ namespace backend.Controllers
 
         // DELETE api/units/{id}
         [HttpDelete("{id}")]
-        [Authorize(Roles = "admin")]
+        [Authorize]
         public async Task<IActionResult> Delete(int id)
         {
             try
@@ -163,7 +163,7 @@ namespace backend.Controllers
 
         // PATCH api/units/{id}/toggle-active
         [HttpPatch("{id}/toggle-active")]
-        [Authorize(Roles = "admin")]
+        [Authorize]
         public async Task<ActionResult<UnitDTO>> ToggleActive(int id)
         {
             var unit = await _unitRepo.GetByIdAsync(id);

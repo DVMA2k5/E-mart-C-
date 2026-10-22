@@ -2,6 +2,7 @@ using backend.DTO;
 using backend.Services;
 using Microsoft.AspNetCore.Mvc;
 using backend.Models;
+using Microsoft.AspNetCore.Authorization;
 
 namespace backend.Controllers
 {
@@ -23,22 +24,34 @@ namespace backend.Controllers
         {
             
 
-            var result = await _paymentService.CreatePaymentAsync(req);
-            if (!result.Success) return BadRequest(new { message = "Tạo payment MoMo thất bại" });
-            return Ok(new { payUrl = result.PayUrl, orderId = req.OrderId });
+            try
+            {
+                var result = await _paymentService.CreatePaymentAsync(req);
+                if (!result.Success) return BadRequest(new { message = "Tạo payment MoMo thất bại" });
+                return Ok(new { payUrl = result.PayUrl, orderId = req.OrderId });
+            }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
+        [HttpGet("momo/return")]
+        [AllowAnonymous]
+        public IActionResult MomoReturn() => Content("""
+            <!doctype html><html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Trở về từ MoMo</title><body style="font-family:system-ui;max-width:600px;margin:60px auto;padding:24px">
+            <h1>Đã trở về từ MoMo</h1><p>Quay lại màn hình đơn hàng để kiểm tra trạng thái thanh toán. Hệ thống sẽ cập nhật khi nhận được xác nhận từ MoMo.</p>
+            <p>Bạn có thể đóng tab này.</p></body></html>
+            """, "text/html; charset=utf-8");
+
         [HttpPost("momo/ipn")]
+        [AllowAnonymous]
         public async Task<IActionResult> MomoCallback([FromBody] MomoIpnCallbackDTO callback)
         {
             bool valid = await _paymentService.HandleMomoCallbackAsync(callback);
             if (!valid)
             {
-                await _logService.LogAsync(0, "INVALID_SIGNATURE", "Payment", callback.OrderId ?? "", "Sai chữ ký MoMo", "system");
                 return BadRequest(new { message = "Invalid signature" });
             }
 
-            await _logService.LogAsync(0, "MOMO_IPN_RECEIVED", "Payment", callback.OrderId ?? "", $"Callback: {callback.Message}", "system");
             return Ok(new { message = "Callback handled successfully" });
         }
 
@@ -46,8 +59,8 @@ namespace backend.Controllers
         [HttpPost("offlinepayment")]
         public async Task<IActionResult> CreateOfflinePayment([FromBody] Payment payment)
         {
-            var savedPayment = await _paymentService.CreatePaymentAsync(payment);
-            return Ok(savedPayment);
+            try { return Ok(await _paymentService.CreatePaymentAsync(payment)); }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
             // Lấy 1 payment duy nhất theo orderId

@@ -132,11 +132,13 @@ const customerSlice = createSlice({
   extraReducers: (builder) => {
     // Fetch Customers
     builder
-      .addCase(fetchCustomers.pending, (state) => {
+      .addCase(fetchCustomers.pending, (state, action) => {
+        state.listRequestId = action.meta.requestId;
         state.loading = true;
         state.error = null;
       })
       .addCase(fetchCustomers.fulfilled, (state, action) => {
+        if (state.listRequestId !== action.meta.requestId) return;
         state.loading = false;
         // Backend returns: { Items, CurrentPage, TotalPages, TotalItems }
         state.items = action.payload.items || [];
@@ -148,6 +150,7 @@ const customerSlice = createSlice({
         };
       })
       .addCase(fetchCustomers.rejected, (state, action) => {
+        if (state.listRequestId !== action.meta.requestId) return;
         state.loading = false;
         state.error = action.payload;
       });

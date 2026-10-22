@@ -1,12 +1,18 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   getUsersPaginated,
   getUserById,
   updateUser,
   createUser,
+  getRoles,
+  getEmployees,
+  deleteUser,
+  updateUserStatus,
 } from "../../api/apiClient";
 import Pagination from "../../components/ui/Pagination";
-import { Eye, Edit2 } from "lucide-react";
+import { Eye, Edit2, Lock, Unlock, Trash2 } from "lucide-react";
+import { getCustomers } from "../../api/customerApi";
+import { Link } from "react-router-dom";
 
 const emptyForm = {
   username: "",
@@ -15,14 +21,24 @@ const emptyForm = {
   role: "staff",
   isActive: true,
   password: "",
+  employeeId: "",
+  customerId: "",
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isAccountActive = (user) => user.isActive && !user.isLocked;
 
 const roleBadgeClass = (role) =>
   role?.toLowerCase() === "admin"
     ? "bg-red-50 text-red-700"
-    : "bg-sky-50 text-sky-700";
+    : role?.toLowerCase() === "customer"
+      ? "bg-amber-50 text-amber-700"
+      : "bg-sky-50 text-sky-700";
+
+const roleLabel = (role) =>
+  ({ admin: "Admin", staff: "Nhân viên", customer: "Khách hàng" }[
+    role?.toLowerCase()
+  ] ?? role);
 
 function Modal({ title, onClose, children }) {
   return (
@@ -43,6 +59,15 @@ function Modal({ title, onClose, children }) {
 
 export default function UserManagement() {
   const [users, setUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [filterRoles, setFilterRoles] = useState([]);
+  const [roleFilter, setRoleFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const latestRequest = useRef(0);
+  const [employees, setEmployees] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
   const [meta, setMeta] = useState(null);
@@ -62,18 +87,51 @@ export default function UserManagement() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchUsers();
-  }, [page]);
+    const keyword = searchInput.trim();
+    if (keyword === search) return;
+    const timer = window.setTimeout(() => {
+      setSearch(keyword);
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput, search]);
 
-  async function fetchUsers() {
+  useEffect(() => {
+    fetchRoles();
+    fetchEmployees();
+    fetchCustomers();
+  }, []);
+
+  async function fetchEmployees() {
+    try { setEmployees(await getEmployees()); } catch (err) { setError(err.message || "Không thể tải hồ sơ nhân viên."); }
+  }
+
+  async function fetchCustomers() {
+    try {
+      const result = await getCustomers(1, 500, "", "all");
+      setCustomers(result.items ?? []);
+    } catch (err) { setError(err.message || "Không thể tải hồ sơ khách hàng."); }
+  }
+
+  async function fetchRoles() {
+    try {
+      const result = await getRoles();
+      setFilterRoles(result ?? []);
+      setRoles((result ?? []).filter((role) => role.isActive));
+    } catch (err) {
+      setError(err.message || "Không thể tải danh sách vai trò.");
+    }
+  }
+
+  const fetchUsers = useCallback(async () => {
+    const requestId = ++latestRequest.current;
     setLoading(true);
     setError("");
     try {
-      const result = await getUsersPaginated(page, pageSize);
-      const filtered = (result.items ?? []).filter(
-        (u) => (u.role || "").toLowerCase() !== "admin"
-      );
-      setUsers(filtered);
+      const result = await getUsersPaginated(page, pageSize, { role: roleFilter, status: statusFilter, search });
+      if (requestId !== latestRequest.current) return;
+      if (result.currentPage && result.currentPage !== page) setPage(result.currentPage);
+      setUsers(result.items ?? []);
       setMeta({
         currentPage: result.currentPage ?? page,
         totalPages:
@@ -82,11 +140,20 @@ export default function UserManagement() {
         pageSize: result.pageSize ?? pageSize,
       });
     } catch (err) {
+      if (requestId !== latestRequest.current) return;
+      setUsers([]);
+      setMeta(null);
       setError(err.message || "Không thể tải danh sách người dùng.");
     } finally {
-      setLoading(false);
+      if (requestId === latestRequest.current) setLoading(false);
     }
-  }
+  }, [page, pageSize, roleFilter, statusFilter, search]);
+
+  useEffect(() => {
+    const requests = latestRequest;
+    fetchUsers();
+    return () => { requests.current++; };
+  }, [fetchUsers]);
 
   function openEditModal(user) {
     setEditUserId(user.id);
@@ -95,7 +162,9 @@ export default function UserManagement() {
       email: user.email ?? "",
       fullName: user.fullName ?? "",
       role: user.role ?? "staff",
-      isActive: user.isActive ?? true,
+      employeeId: user.employeeId ?? "",
+      customerId: user.customerId ?? "",
+      isActive: isAccountActive(user),
       password: "",
     });
     setFieldErrors({});
@@ -130,16 +199,10 @@ export default function UserManagement() {
     setFieldErrors({});
 
     const trimmedUsername = formData.username.trim();
-    const trimmedEmail = formData.email.trim();
     const trimmedPassword = formData.password.trim();
 
     if (trimmedUsername.length < 3) {
       setFieldErrors({ username: "Username phải có ít nhất 3 kí tự!" });
-      return;
-    }
-
-    if (!EMAIL_REGEX.test(trimmedEmail)) {
-      setFieldErrors({ email: "Email không hợp lệ!" });
       return;
     }
 
@@ -148,20 +211,33 @@ export default function UserManagement() {
       return;
     }
 
+    if ((formData.role !== "admin" && formData.role !== "customer") && !formData.employeeId) {
+      setFieldErrors({ employeeId: "Vui lòng chọn hồ sơ nhân viên." });
+      return;
+    }
+    if (formData.role === "customer" && !formData.customerId) {
+      setFieldErrors({ customerId: "Vui lòng chọn hồ sơ khách hàng." });
+      return;
+    }
+
     setSaving(true);
     setAlert(null);
     try {
       const payload = {
-        ...formData,
         username: trimmedUsername,
-        email: trimmedEmail,
         password: trimmedPassword,
-        fullName: formData.fullName ? formData.fullName.trim() : "",
+        role: formData.role,
+        isActive: formData.isActive,
       };
+      if (formData.role !== "customer" && formData.employeeId) {
+        payload.employeeId = Number(formData.employeeId);
+      } else if (formData.role === "customer") {
+        payload.customerId = Number(formData.customerId);
+      }
       const created = await createUser(payload);
       setAlert({
         type: "success",
-        message: `Đã thêm nhân viên ${created.username}.`,
+        message: `Đã thêm tài khoản ${created.username} với vai trò ${roleLabel(created.role)}.`,
       });
       closeCreateModal();
       if (page !== 1) {
@@ -170,7 +246,7 @@ export default function UserManagement() {
         fetchUsers();
       }
     } catch (err) {
-      const msg = err.message || "Thêm nhân viên thất bại.";
+      const msg = err.message || "Thêm tài khoản thất bại.";
       if (msg.toLowerCase().includes("username")) {
         setFieldErrors({ username: msg });
       } else if (msg.toLowerCase().includes("email")) {
@@ -199,7 +275,7 @@ export default function UserManagement() {
       return;
     }
 
-    if (!EMAIL_REGEX.test(trimmedEmail)) {
+    if (trimmedEmail && !EMAIL_REGEX.test(trimmedEmail)) {
       setFieldErrors({ email: "Email không hợp lệ." });
       return;
     }
@@ -213,14 +289,16 @@ export default function UserManagement() {
     setAlert(null);
     try {
       const payload = {
-        ...formData,
         username: trimmedUsername,
-        email: trimmedEmail,
-        fullName: formData.fullName ? formData.fullName.trim() : "",
+        role: formData.role,
+        isActive: formData.isActive,
       };
+      if (formData.role !== "customer" && formData.employeeId) payload.employeeId = Number(formData.employeeId);
+      else if (formData.role === "customer") payload.customerId = Number(formData.customerId);
       if (!payload.password) {
-        delete payload.password;
+        payload.password = undefined;
       }
+      if (formData.password) payload.password = formData.password;
       const updated = await updateUser(editUserId, payload);
       setAlert({
         type: "success",
@@ -266,30 +344,57 @@ export default function UserManagement() {
     setDetailLoading(false);
   }
 
+  async function handleStatusToggle(user) {
+    try {
+      const updated = await updateUserStatus(user.id, !isAccountActive(user));
+      setUsers((current) => current.map((item) => item.id === updated.id ? updated : item));
+      fetchUsers();
+    } catch (err) {
+      setAlert({ type: "error", message: err.message || "Không thể cập nhật trạng thái tài khoản." });
+    }
+  }
+
+  async function handleDelete(user) {
+    if (!window.confirm(`Xóa tài khoản ${user.username}? Chỉ tài khoản chưa đăng nhập và chưa có hoạt động hoặc dữ liệu nghiệp vụ mới được xóa. Hồ sơ nhân viên/khách hàng vẫn được giữ lại.`)) return;
+    try {
+      await deleteUser(user.id);
+      setAlert({ type: "success", message: `Đã xóa tài khoản ${user.username}.` });
+      fetchUsers();
+    } catch (err) {
+      setAlert({ type: "error", message: err.message || "Không thể xóa tài khoản." });
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-gray-800">
-            Quản lý Nhân viên
+            Quản lý tài khoản
           </h1>
           <p className="text-sm text-gray-500">
-            Theo dõi trạng thái tài khoản và thao tác cập nhật.
+            CRUD tài khoản, active/inactive và phân role admin, nhân viên, khách hàng.
           </p>
         </div>
         <button
-          className="px-4 py-2 rounded-md bg-indigo-600 text-white shadow-sm hover:bg-indigo-700"
+          className="px-4 py-2 rounded-md bg-primary-600 text-white shadow-sm hover:bg-primary-700"
           onClick={openCreateModal}
         >
-          + Thêm nhân viên
+          + Thêm tài khoản
         </button>
+        <Link
+          to="/roles"
+          className="rounded-md border border-primary-600 px-4 py-2 text-primary-600 hover:bg-primary-50"
+        >
+          Phân quyền role
+        </Link>
       </div>
 
       {alert && (
         <div
           className={`rounded-md px-4 py-2 text-sm ${
             alert.type === "success"
-              ? "bg-green-50 text-green-700"
+              ? "bg-emerald-50 text-emerald-700"
               : "bg-red-50 text-red-700"
           }`}
         >
@@ -303,6 +408,34 @@ export default function UserManagement() {
         </div>
       )}
 
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="text-sm font-medium text-gray-700">
+            Tìm tài khoản
+            <input type="search" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Tên đăng nhập, họ tên, email" className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 font-normal" />
+          </label>
+          <label className="text-sm font-medium text-gray-700">
+            Vai trò
+            <select value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setPage(1); }} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 font-normal">
+              <option value="">Tất cả vai trò</option>
+              {filterRoles.map((role) => <option key={role.id} value={role.name}>{roleLabel(role.name)}{!role.isActive ? " (ngừng hoạt động)" : ""}</option>)}
+            </select>
+          </label>
+          <label className="text-sm font-medium text-gray-700">
+            Trạng thái tài khoản
+            <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 font-normal">
+              <option value="">Tất cả trạng thái</option>
+              <option value="active">Đang hoạt động</option>
+              <option value="inactive">Đã khóa</option>
+            </select>
+          </label>
+          <div className="flex items-end gap-2">
+            <button type="button" onClick={() => { setRoleFilter(""); setStatusFilter(""); setSearchInput(""); setSearch(""); setPage(1); }} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Xóa bộ lọc</button>
+          </div>
+        </div>
+        {meta && !loading && <p className="mt-3 text-sm text-gray-500">Tìm thấy {meta.totalItems} tài khoản</p>}
+      </div>
+
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-left">
           <thead className="bg-gray-50 text-xs font-semibold uppercase text-gray-500">
@@ -310,6 +443,7 @@ export default function UserManagement() {
               <th className="px-4 py-3">Email</th>
               <th className="px-4 py-3">Username</th>
               <th className="px-4 py-3">Role</th>
+              <th className="px-4 py-3">Hồ sơ liên kết</th>
               <th className="px-4 py-3">Trạng thái</th>
               <th className="px-4 py-3 text-right">Hành động</th>
             </tr>
@@ -317,15 +451,15 @@ export default function UserManagement() {
           <tbody className="text-sm divide-y divide-gray-100">
             {loading && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
+                <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
                   Đang tải...
                 </td>
               </tr>
             )}
             {!loading && users.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
-                  Chưa có người dùng nào.
+                <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                  {roleFilter || statusFilter || search ? "Không có tài khoản phù hợp với bộ lọc." : "Chưa có người dùng nào."}
                 </td>
               </tr>
             )}
@@ -333,7 +467,7 @@ export default function UserManagement() {
               users.map((user) => (
                 <tr
                   key={user.id}
-                  className="hover:bg-indigo-50/60 transition-colors"
+                  className="hover:bg-primary-50/60 transition-colors"
                 >
                   <td className="px-4 py-3">{user.email || "—"}</td>
                   <td className="px-4 py-3 font-medium text-gray-800">
@@ -345,35 +479,56 @@ export default function UserManagement() {
                         user.role
                       )}`}
                     >
-                      {user.role}
+                      {roleLabel(user.role)}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {user.employeeName || user.customerName || "Tài khoản quản trị"}
                   </td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        user.isActive
-                          ? "bg-green-50 text-green-700"
+                        isAccountActive(user)
+                          ? "bg-emerald-50 text-emerald-700"
                           : "bg-red-50 text-red-700"
                       }`}
                     >
-                      {user.isActive ? "Đang hoạt động" : "Đã khóa"}
+                      {isAccountActive(user) ? "Đang hoạt động" : "Đã khóa"}
                     </span>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
                       <button
-                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                        className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition"
                         onClick={() => handleViewDetail(user)}
                         title="Xem chi tiết"
                       >
                         <Eye size={16} />
                       </button>
                       <button
-                        className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
+                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
                         onClick={() => openEditModal(user)}
                         title="Sửa thông tin"
                       >
                         <Edit2 size={16} />
+                      </button>
+                      <button
+                        className={`p-2 rounded-lg transition ${
+                          isAccountActive(user)
+                            ? "text-amber-600 hover:bg-amber-50"
+                            : "text-emerald-600 hover:bg-emerald-50"
+                        }`}
+                        onClick={() => handleStatusToggle(user)}
+                        title={isAccountActive(user) ? "Khóa tài khoản" : "Mở khóa tài khoản"}
+                      >
+                        {isAccountActive(user) ? <Lock size={16} /> : <Unlock size={16} />}
+                      </button>
+                      <button
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                        onClick={() => handleDelete(user)}
+                        title="Xóa tài khoản chưa có hoạt động"
+                      >
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </td>
@@ -414,13 +569,13 @@ export default function UserManagement() {
               <div>
                 <dt className="text-gray-500">Vai trò</dt>
                 <dd className="font-semibold text-gray-800">
-                  {detailUser.role}
+                  {roleLabel(detailUser.role)}
                 </dd>
               </div>
               <div>
                 <dt className="text-gray-500">Trạng thái</dt>
                 <dd className="font-semibold text-gray-800">
-                  {detailUser.isActive ? "Đang hoạt động" : "Đã khóa"}
+                  {isAccountActive(detailUser) ? "Đang hoạt động" : "Đã khóa"}
                 </dd>
               </div>
               <div>
@@ -437,7 +592,7 @@ export default function UserManagement() {
       )}
 
       {createModalOpen && (
-        <Modal title="Thêm nhân viên" onClose={closeCreateModal}>
+        <Modal title="Thêm tài khoản" onClose={closeCreateModal}>
           <form className="space-y-4" onSubmit={handleCreateSubmit}>
             <div>
               <label className="block text-sm font-medium text-gray-700">
@@ -460,37 +615,9 @@ export default function UserManagement() {
                 </p>
               )}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Email
-              </label>
-              <input
-                type="email"
-                className="mt-1 w-full rounded-md border px-3 py-2"
-                value={formData.email}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, email: e.target.value }))
-                }
-                required
-                aria-invalid={Boolean(fieldErrors.email)}
-              />
-              {fieldErrors.email && (
-                <p className="text-sm text-red-600 mt-1">{fieldErrors.email}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Ho ten
-              </label>
-              <input
-                type="text"
-                className="mt-1 w-full rounded-md border px-3 py-2"
-                value={formData.fullName}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, fullName: e.target.value }))
-                }
-              />
-            </div>
+            <p className="rounded-md bg-gray-50 p-3 text-sm text-gray-600">
+              Họ tên và email sẽ được lấy tự động từ hồ sơ đã chọn.
+            </p>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">
@@ -500,12 +627,44 @@ export default function UserManagement() {
                   className="mt-1 w-full rounded-md border px-3 py-2"
                   value={formData.role}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, role: e.target.value }))
+                    setFormData((prev) => ({
+                      ...prev,
+                      role: e.target.value,
+                      employeeId: e.target.value === "customer" ? "" : prev.employeeId,
+                      customerId: e.target.value === "customer" ? prev.customerId : "",
+                    }))
                   }
                 >
-                  <option value="staff">Staff</option>
-                  <option value="admin">Admin</option>
+                  {roles.map((role) => (
+                    <option key={role.id} value={role.name}>
+                      {role.name}
+                    </option>
+                  ))}
                 </select>
+                {formData.role !== "customer" && (
+                  <select
+                    className="mt-2 w-full rounded-md border px-3 py-2"
+                    value={formData.employeeId}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, employeeId: e.target.value }))}
+                    required={formData.role !== "admin"}
+                  >
+                    <option value="">Chọn hồ sơ nhân viên để cấp tài khoản</option>
+                    {employees.filter((item) => !item.hasAccount || String(item.id) === String(formData.employeeId)).map((item) => (
+                      <option key={item.id} value={item.id}>{item.fullName}</option>
+                    ))}
+                  </select>
+                )}
+                {formData.role === "customer" && (
+                  <select
+                    className="mt-2 w-full rounded-md border px-3 py-2"
+                    value={formData.customerId}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, customerId: e.target.value }))}
+                    required
+                  >
+                    <option value="">Chọn hồ sơ khách hàng để cấp tài khoản</option>
+                    {customers.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}
+                  </select>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">
@@ -565,7 +724,7 @@ export default function UserManagement() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-50"
+                className="px-4 py-2 rounded-md bg-primary-600 text-white disabled:opacity-50 hover:bg-primary-700"
                 disabled={saving}
               >
                 {saving ? "Đang lưu..." : "Thêm mới"}
@@ -599,38 +758,10 @@ export default function UserManagement() {
                 </p>
               )}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Email
-              </label>
-              <input
-                type="email"
-                className="mt-1 w-full rounded-md border px-3 py-2 bg-gray-100 cursor-not-allowed"
-                value={formData.email}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, email: e.target.value }))
-                }
-                required
-                aria-invalid={Boolean(fieldErrors.email)}
-                readOnly
-              />
-              {fieldErrors.email && (
-                <p className="text-sm text-red-600 mt-1">{fieldErrors.email}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Họ tên
-              </label>
-              <input
-                type="text"
-                className="mt-1 w-full rounded-md border px-3 py-2"
-                value={formData.fullName}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, fullName: e.target.value }))
-                }
-              />
-            </div>
+            <p className="rounded-md bg-gray-50 p-3 text-sm text-gray-600">
+              Họ tên và email được lấy tự động từ hồ sơ nhân viên hoặc khách hàng
+              đã liên kết.
+            </p>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">
@@ -640,12 +771,32 @@ export default function UserManagement() {
                   className="mt-1 w-full rounded-md border px-3 py-2"
                   value={formData.role}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, role: e.target.value }))
+                    setFormData((prev) => ({
+                      ...prev,
+                      role: e.target.value,
+                      employeeId: e.target.value === "customer" ? "" : prev.employeeId,
+                      customerId: e.target.value === "customer" ? prev.customerId : "",
+                    }))
                   }
                 >
-                  <option value="staff">Staff</option>
-                  <option value="admin">Admin</option>
+                  {roles.map((role) => (
+                    <option key={role.id} value={role.name}>
+                      {role.name}
+                    </option>
+                  ))}
                 </select>
+                {formData.role !== "customer" && (
+                  <select className="mt-2 w-full rounded-md border px-3 py-2" value={formData.employeeId} onChange={(e) => setFormData((prev) => ({ ...prev, employeeId: e.target.value }))} required={formData.role !== "admin"}>
+                    <option value="">Chọn hồ sơ nhân viên</option>
+                    {employees.filter((item) => !item.hasAccount || String(item.id) === String(formData.employeeId)).map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}
+                  </select>
+                )}
+                {formData.role === "customer" && (
+                  <select className="mt-2 w-full rounded-md border px-3 py-2" value={formData.customerId} onChange={(e) => setFormData((prev) => ({ ...prev, customerId: e.target.value }))} required>
+                    <option value="">Chọn hồ sơ khách hàng</option>
+                    {customers.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}
+                  </select>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">
@@ -708,7 +859,7 @@ export default function UserManagement() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-50"
+                className="px-4 py-2 rounded-md bg-primary-600 text-white disabled:opacity-50 hover:bg-primary-700"
                 disabled={saving}
               >
                 {saving ? "Đang lưu..." : "Lưu thay đổi"}

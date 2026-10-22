@@ -188,7 +188,7 @@ const ReportsPage = () => {
                   type="date"
                   value={fromDate}
                   onChange={(e) => setFromDate(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 pr-10"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 pr-10"
                 />
                 <Calendar className="absolute right-3 top-2.5 w-5 h-5 text-gray-400 pointer-events-none" />
               </div>
@@ -202,7 +202,7 @@ const ReportsPage = () => {
                   type="date"
                   value={toDate}
                   onChange={(e) => setToDate(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 pr-10"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 pr-10"
                 />
                 <Calendar className="absolute right-3 top-2.5 w-5 h-5 text-gray-400 pointer-events-none" />
               </div>
@@ -210,7 +210,7 @@ const ReportsPage = () => {
             <button
               onClick={handleApply}
               disabled={loading}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+              className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50"
             >
               Áp dụng
             </button>
@@ -221,7 +221,7 @@ const ReportsPage = () => {
             <button
               onClick={() => handleExportSales("csv")}
               disabled={exporting}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50 flex items-center gap-2"
             >
               <FileText size={18} />
               Xuất bán hàng CSV
@@ -229,7 +229,7 @@ const ReportsPage = () => {
             <button
               onClick={() => handleExportSales("xlsx")}
               disabled={exporting}
-              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50 flex items-center gap-2"
             >
               <FileSpreadsheet size={18} />
               Xuất bán hàng XLSX
@@ -237,7 +237,7 @@ const ReportsPage = () => {
             <button
               onClick={() => handleExportInventory("csv")}
               disabled={exporting}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50 flex items-center gap-2"
             >
               <FileText size={18} />
               Xuất tồn kho CSV
@@ -245,7 +245,7 @@ const ReportsPage = () => {
             <button
               onClick={() => handleExportInventory("xlsx")}
               disabled={exporting}
-              className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50 flex items-center gap-2"
             >
               <FileSpreadsheet size={18} />
               Xuất tồn kho XLSX
@@ -511,7 +511,7 @@ const ReportsPage = () => {
           <div className="bg-white p-6 rounded-lg shadow mb-6">
             <h2 className="text-xl font-bold mb-4">So sánh với kỳ trước</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 bg-blue-50 rounded-lg">
+              <div className="p-4 bg-primary-50 rounded-lg">
                 <p className="text-sm text-gray-600 mb-2">Doanh thu</p>
                 <div className="flex items-center justify-between">
                   <p className="text-2xl font-bold text-gray-800">
@@ -520,7 +520,7 @@ const ReportsPage = () => {
                   <span
                     className={`text-sm font-semibold ${
                       periodComparison.revenueChangePercent >= 0
-                        ? "text-green-600"
+                        ? "text-emerald-600"
                         : "text-red-600"
                     }`}
                   >
@@ -532,7 +532,7 @@ const ReportsPage = () => {
                   Kỳ trước: {formatCurrency(periodComparison.previousPeriod.netRevenue)}
                 </p>
               </div>
-              <div className="p-4 bg-green-50 rounded-lg">
+              <div className="p-4 bg-emerald-50 rounded-lg">
                 <p className="text-sm text-gray-600 mb-2">Đơn hàng</p>
                 <div className="flex items-center justify-between">
                   <p className="text-2xl font-bold text-gray-800">
@@ -541,7 +541,7 @@ const ReportsPage = () => {
                   <span
                     className={`text-sm font-semibold ${
                       periodComparison.ordersChangePercent >= 0
-                        ? "text-green-600"
+                        ? "text-emerald-600"
                         : "text-red-600"
                     }`}
                   >
@@ -553,7 +553,7 @@ const ReportsPage = () => {
                   Kỳ trước: {periodComparison.previousPeriod.totalOrders}
                 </p>
               </div>
-              <div className="p-4 bg-purple-50 rounded-lg">
+              <div className="p-4 bg-primary-50 rounded-lg">
                 <p className="text-sm text-gray-600 mb-2">Sản phẩm bán ra</p>
                 <div className="flex items-center justify-between">
                   <p className="text-2xl font-bold text-gray-800">
@@ -562,7 +562,7 @@ const ReportsPage = () => {
                   <span
                     className={`text-sm font-semibold ${
                       periodComparison.productsSoldChangePercent >= 0
-                        ? "text-green-600"
+                        ? "text-emerald-600"
                         : "text-red-600"
                     }`}
                   >

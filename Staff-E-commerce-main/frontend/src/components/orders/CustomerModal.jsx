@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { request } from "../../api/apiClient";
 
 export default function CustomerModal({ onClose, updateCustomer }) {
   const [customers, setCustomers] = useState([]);
@@ -14,26 +15,26 @@ export default function CustomerModal({ onClose, updateCustomer }) {
   const [loading, setLoading] = useState(false);
 
   // Fetch danh sách khách hàng
-  const fetchCustomers = async () => {
+  useEffect(() => {
+    let active = true;
+    const fetchCustomers = async () => {
     setLoading(true);
     try {
       let url = "";
       if (searchMode && searchInput.trim() !== "") {
         // Tìm kiếm -> lấy tất cả
         const params = new URLSearchParams({ keyword: searchInput });
-        url = `/api/customers/search?${params.toString()}`;
+        url = `/customers/search?${params.toString()}`;
       } else {
         // Phân trang bình thường
         const params = new URLSearchParams({ page, pageSize });
-        url = `/api/customers/paginated?${params.toString()}`;
+        url = `/customers/paginated?${params.toString()}`;
       }
 
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch customers");
+      const data = await request(url);
+      if (!active) return;
 
-      const data = await res.json();
-
-      if (searchMode) {
+      if (searchMode && searchInput.trim()) {
         setCustomers(data || []);
         setPage(1);
         setTotalPages(1);
@@ -46,15 +47,12 @@ export default function CustomerModal({ onClose, updateCustomer }) {
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (active) setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    if (!searchMode) {
-      fetchCustomers();
-    }
-  }, [page]);
+    };
+    fetchCustomers();
+    return () => { active = false; };
+  }, [page, pageSize, searchMode, searchInput]);
 
 
   const handleSelect = () => {
@@ -96,11 +94,10 @@ export default function CustomerModal({ onClose, updateCustomer }) {
               className="flex-1 px-4 py-2 border rounded-lg"
             />
             <button
-              className="px-4 py-2 bg-blue-500 text-white rounded"
+              className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700"
               onClick={() => {
                 setPage(1);
                 setSearchMode(true);
-                fetchCustomers();
               }}
             >
               Tìm kiếm
@@ -160,7 +157,7 @@ export default function CustomerModal({ onClose, updateCustomer }) {
         {!searchMode && (
           <div className="flex justify-center items-center gap-3 mt-4">
             <button
-              className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-gray-300"
+              className="px-3 py-1 bg-primary-600 text-white rounded hover:bg-gray-300 hover:bg-primary-700"
               disabled={page <= 1}
               onClick={() => setPage(p => Math.max(1, p - 1))}
             >
@@ -168,7 +165,7 @@ export default function CustomerModal({ onClose, updateCustomer }) {
             </button>
             <span>{page} / {totalPages}</span>
             <button
-              className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-gray-300"
+              className="px-3 py-1 bg-primary-600 text-white rounded hover:bg-gray-300 hover:bg-primary-700"
               disabled={page >= totalPages}
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
             >
@@ -180,7 +177,7 @@ export default function CustomerModal({ onClose, updateCustomer }) {
         {/* Footer */}
         <div className="flex justify-end gap-3 p-5 border-t">
           <button
-            className="px-6 py-2 bg-purple-500 text-white rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50"
+            className="px-6 py-2 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 disabled:opacity-50"
             onClick={handleSelect}
             disabled={!selectedCustomerId}
           >

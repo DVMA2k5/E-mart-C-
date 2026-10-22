@@ -7,6 +7,7 @@ public class InvoiceDTO
     public int InvoiceId { get; set; }
     public string InvoiceStatus { get; set; } = string.Empty;
     public string OrderNumber { get; set; } = string.Empty;
+    public string OrderStatus { get; set; } = string.Empty;
     public DateTime IssuedAt { get; set; }
     public string PaymentStatus { get; set; } = string.Empty;
     public string? PaymentMethod { get; set; }
@@ -19,6 +20,9 @@ public class InvoiceDTO
     public string? CustomerPhone { get; set; }
     public string? CustomerEmail { get; set; }
     public string? CustomerAddress { get; set; }
+    public string? RecipientName { get; set; }
+    public string? RecipientPhone { get; set; }
+    public string? ShippingAddress { get; set; }
     public List<InvoiceItemDTO> Items { get; set; } = new();
 }
 
@@ -29,9 +33,4 @@ public class InvoiceItemDTO
     public int Quantity { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal TotalPrice { get; set; }
-}
-
-public class UpdateInvoicePaymentStatusDTO
-{
-    public string Status { get; set; } = string.Empty;
 }

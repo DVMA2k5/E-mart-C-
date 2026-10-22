@@ -213,7 +213,7 @@ export default function UnitList() {
           {!isStaff && (
             <button
               onClick={() => openModal("create")}
-              className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 flex items-center gap-2 transition"
+              className="bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700 flex items-center gap-2 transition"
             >
               <svg
                 className="w-5 h-5"
@@ -238,7 +238,7 @@ export default function UnitList() {
           <div
             className={`mb-4 p-4 rounded-md flex items-start ${
               notification.type === "success"
-                ? "bg-green-50 border border-green-200 text-green-800"
+                ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
                 : "bg-red-50 border border-red-200 text-red-800"
             }`}
           >
@@ -294,14 +294,14 @@ export default function UnitList() {
                 placeholder="Tìm kiếm theo mã hoặc tên..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
             <div>
               <select
                 value={filterActive}
                 onChange={(e) => setFilterActive(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 <option value="">Tất cả trạng thái</option>
                 <option value="true">Đang sử dụng</option>
@@ -323,7 +323,7 @@ export default function UnitList() {
               <p className="text-red-600">{error}</p>
               <button
                 onClick={fetchUnits}
-                className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                className="mt-4 px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
               >
                 Thử lại
               </button>
@@ -370,7 +370,7 @@ export default function UnitList() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                       {unit.name}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-indigo-600 font-semibold">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-primary-600 font-semibold">
                       {unit.productCount || 0}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-center">
@@ -379,7 +379,7 @@ export default function UnitList() {
                         disabled={isStaff}
                         className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
                           unit.isActive
-                            ? "bg-green-100 text-green-800 hover:bg-green-200"
+                            ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
                             : "bg-gray-100 text-gray-800 hover:bg-gray-200"
                         } ${isStaff ? "opacity-50 cursor-not-allowed" : ""}`}
                       >
@@ -390,7 +390,7 @@ export default function UnitList() {
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => openModal("view", unit)}
-                          className="px-3 py-1 bg-blue-100 text-blue-800 rounded hover:bg-blue-200 transition"
+                          className="px-3 py-1 bg-primary-100 text-primary-800 rounded hover:bg-primary-200 transition"
                         >
                           Chi tiết
                         </button>
@@ -398,7 +398,7 @@ export default function UnitList() {
                           <>
                             <button
                               onClick={() => openModal("edit", unit)}
-                              className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 transition"
+                              className="px-3 py-1 bg-amber-100 text-amber-800 rounded hover:bg-amber-200 transition"
                             >
                               Sửa
                             </button>

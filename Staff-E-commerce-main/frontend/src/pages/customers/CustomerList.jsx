@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDebouncedSearch } from "../../hook/useDebouncedSearch";
 import { useDispatch, useSelector } from "react-redux";
 import {
   fetchCustomers,
@@ -15,17 +16,17 @@ import CustomerAddModal from "../../components/customers/CustomerAddModal";
 import {
   Search,
   Edit2,
-  Power,
   Eye,
   RotateCcw,
   Tag,
   CheckCircle,
   Clock,
   XCircle,
+  Trash2,
   Upload,
 } from "lucide-react";
 import ImportModal from "../../components/import/ImportModal";
-import { getCustomers } from "../../api/customerApi";
+import { getCustomers, deleteCustomer } from "../../api/customerApi";
 import { useAuth } from "../../hook/useAuth";
 
 const CustomerList = () => {
@@ -41,7 +42,7 @@ const CustomerList = () => {
   const { user } = useAuth();
   const isStaff = user?.role?.toLowerCase() === "staff";
 
-  const [localSearchTerm, setLocalSearchTerm] = useState("");
+  const [localSearchTerm, setLocalSearchTerm] = useState(filters.search || "");
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -91,15 +92,9 @@ const CustomerList = () => {
     pagination.pageSize,
   ]);
 
-  const handleSearch = () => {
-    dispatch(setSearchTerm(localSearchTerm));
-  };
-
-  const handleSearchKeyPress = (e) => {
-    if (e.key === "Enter") {
-      handleSearch();
-    }
-  };
+  useDebouncedSearch(localSearchTerm, filters.search, (keyword) => {
+    dispatch(setSearchTerm(keyword));
+  });
 
   const handleStatusFilter = (status) => {
     dispatch(setStatusFilter(status));
@@ -160,6 +155,21 @@ const CustomerList = () => {
     setEditingCustomerId(customerId);
   };
 
+  const handleDelete = async (customerId) => {
+    if (!window.confirm("Xóa hồ sơ khách hàng này?")) return;
+    try {
+      await deleteCustomer(customerId);
+      await dispatch(fetchCustomers({
+        page: pagination.currentPage,
+        pageSize: pagination.pageSize,
+        search: filters.search,
+        status: filters.status,
+      }));
+    } catch (error) {
+      console.error("Error deleting customer:", error);
+    }
+  };
+
   const handlePageChange = (page) => {
     dispatch(setCurrentPage(page));
   };
@@ -185,14 +195,14 @@ const CustomerList = () => {
         <div className="flex gap-3">
           <button
             onClick={() => setIsImportModalOpen(true)}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-2"
           >
             <Upload size={18} />
             Import Khách Hàng
           </button>
           <button
             onClick={() => setIsAddModalOpen(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
           >
             + Thêm Khách Hàng
           </button>
@@ -206,8 +216,8 @@ const CustomerList = () => {
           onClick={() => handleStatusFilter("all")}
         >
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <Tag className="w-5 h-5 text-blue-600" />
+            <div className="p-2 bg-primary-100 rounded-lg">
+              <Tag className="w-5 h-5 text-primary-600" />
             </div>
           </div>
           <p className="text-sm text-gray-600 mb-1">Tổng số</p>
@@ -218,8 +228,8 @@ const CustomerList = () => {
           onClick={() => handleStatusFilter("active")}
         >
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-green-600" />
+            <div className="p-2 bg-emerald-100 rounded-lg">
+              <CheckCircle className="w-5 h-5 text-emerald-600" />
             </div>
           </div>
           <p className="text-sm text-gray-600 mb-1">Đang hoạt động</p>
@@ -256,22 +266,14 @@ const CustomerList = () => {
             placeholder="Tìm kiếm theo tên, email, số điện thoại..."
             value={localSearchTerm}
             onChange={(e) => setLocalSearchTerm(e.target.value)}
-            onKeyPress={handleSearchKeyPress}
-            className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
           <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400 pointer-events-none" />
         </div>
-        <button
-          onClick={handleSearch}
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
-        >
-          <Search size={18} />
-          Tìm kiếm
-        </button>
         <select
           value={filters.status}
           onChange={(e) => handleStatusFilter(e.target.value)}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
         >
           <option value="all">Tất Cả Trạng Thái</option>
           <option value="active">Đang Hoạt Động</option>
@@ -303,10 +305,10 @@ const CustomerList = () => {
                   Điện Thoại
                 </th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                  Địa Chỉ
+                  Ngày Sinh
                 </th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                  Trạng Thái
+                  Địa Chỉ
                 </th>
                 <th className="px-6 py-3 text-center text-sm font-semibold text-gray-700">
                   Hành Động
@@ -362,30 +364,16 @@ const CustomerList = () => {
                       {customer.phone || "-"}
                     </td>
                     <td className="px-6 py-3 text-sm text-gray-600">
-                      {customer.address || "-"}
+                      {customer.dateOfBirth ? new Date(customer.dateOfBirth).toLocaleDateString("vi-VN") : "-"}
                     </td>
-                    <td className="px-6 py-3">
-                      {(() => {
-                        const statusClass = customer.isActive
-                          ? "bg-green-100 text-green-800"
-                          : "bg-red-100 text-red-800";
-                        const statusText = customer.isActive
-                          ? "Hoạt Động"
-                          : "Ngừng Hoạt Động";
-                        return (
-                          <span
-                            className={`px-3 py-1 rounded-full text-sm font-semibold ${statusClass}`}
-                          >
-                            {statusText}
-                          </span>
-                        );
-                      })()}
+                    <td className="px-6 py-3 text-sm text-gray-600">
+                      {customer.address || "-"}
                     </td>
                     <td className="px-6 py-3 text-center">
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => handleView(customer.id)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                          className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition"
                           title="Xem chi tiết"
                         >
                           <Eye size={18} />
@@ -394,25 +382,17 @@ const CustomerList = () => {
                           <>
                             <button
                               onClick={() => handleEdit(customer.id)}
-                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
+                              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
                               title="Sửa"
                             >
                               <Edit2 size={18} />
                             </button>
                             <button
-                              onClick={() => handleToggleStatus(customer.id)}
-                              className={`p-2 rounded-lg transition ${
-                                customer.isActive
-                                  ? "text-red-600 hover:bg-red-50"
-                                  : "text-orange-600 hover:bg-orange-50"
-                              }`}
-                              title={
-                                customer.isActive
-                                  ? "Ngừng hoạt động"
-                                  : "Kích hoạt"
-                              }
+                              onClick={() => handleDelete(customer.id)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                              title="Xóa hồ sơ"
                             >
-                              <Power size={18} />
+                              <Trash2 size={18} />
                             </button>
                           </>
                         )}

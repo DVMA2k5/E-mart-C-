@@ -6,23 +6,26 @@ namespace backend.DTO
     public class UserDTO
     {
         public int Id { get; set; }
+        public int? EmployeeId { get; set; }
+        public int? CustomerId { get; set; }
+        public string? EmployeeName { get; set; }
+        public string? CustomerName { get; set; }
 
         [Required]
         [MinLength(3)]
         [MaxLength(150)]
         public string Username { get; set; } = string.Empty;
 
-        [Required]
         [EmailAddress]
         [RegularExpression(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", ErrorMessage = "Email is invalid.")]
         [MaxLength(255)]
-        public string Email { get; set; } = string.Empty;
+        public string? Email { get; set; }
 
         [MaxLength(255)]
         public string? FullName { get; set; }
 
         [Required]
-        [RegularExpression("^(admin|staff)$", ErrorMessage = "Role must be either 'admin' or 'staff'.")]
+        [RegularExpression("^[a-zA-Z0-9_-]+$", ErrorMessage = "Role contains invalid characters.")]
         public string Role { get; set; } = "staff";
 
         public bool IsActive { get; set; }

@@ -1,6 +1,7 @@
 using backend.Data;
 using backend.DTO;
 using backend.Models;
+using backend.Helpers;
 using Microsoft.EntityFrameworkCore;
 
 namespace backend.Services;
@@ -69,17 +70,27 @@ public class InvoiceService
         }
     }
 
-    public async Task<PagedResult<InvoiceDTO>> GetInvoicesAsync(int page, int pageSize, DateTime? from, DateTime? to, string? paymentStatus)
+    public async Task<PagedResult<InvoiceDTO>> GetInvoicesAsync(int page, int pageSize, DateTime? from, DateTime? to, string? paymentStatus, string? customerSearch = null)
     {
         page = Math.Max(1, page); pageSize = Math.Clamp(pageSize, 1, 100);
-        var query = _db.Invoices.AsNoTracking().AsQueryable();
+        // The management list contains invoices for fulfilled orders only.
+        // Keep other invoice records available for historical detail/reconciliation.
+        var query = _db.Invoices.AsNoTracking().Where(i => i.Order != null && i.Order.Status == "completed");
         if (from.HasValue) query = query.Where(i => i.IssuedAt >= from.Value);
         if (to.HasValue) query = query.Where(i => i.IssuedAt < to.Value.Date.AddDays(1));
         if (!string.IsNullOrWhiteSpace(paymentStatus)) query = query.Where(i => i.PaymentStatus == paymentStatus);
+        if (!string.IsNullOrWhiteSpace(customerSearch))
+        {
+            var keyword = customerSearch.Trim();
+            query = query.Where(i =>
+                (i.CustomerName != null && i.CustomerName.Contains(keyword)) ||
+                (i.CustomerPhone != null && i.CustomerPhone.Contains(keyword)) ||
+                (i.CustomerEmail != null && i.CustomerEmail.Contains(keyword)));
+        }
         var total = await query.CountAsync();
         var items = await query.OrderByDescending(i => i.IssuedAt).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(i => new InvoiceDTO { InvoiceId = i.Id, OrderId = i.OrderId, InvoiceNumber = i.InvoiceNumber,
-                OrderNumber = i.Order != null ? i.Order.OrderNumber : "", InvoiceStatus = i.InvoiceStatus,
+                OrderNumber = i.Order != null ? i.Order.OrderNumber : "", OrderStatus = i.Order != null ? i.Order.Status : "", InvoiceStatus = i.InvoiceStatus,
                 IssuedAt = i.IssuedAt, PaymentStatus = i.PaymentStatus, PaymentMethod = i.PaymentMethod,
                 Subtotal = i.Subtotal, Discount = i.DiscountAmount, TaxAmount = i.TaxAmount, FeeAmount = i.ShippingFee,
                 TotalAmount = i.TotalAmount, CustomerName = i.CustomerName, CustomerPhone = i.CustomerPhone })
@@ -91,30 +102,17 @@ public class InvoiceService
     {
         var i = await _db.Invoices.AsNoTracking().Include(x => x.Items).Include(x => x.Order)
             .FirstOrDefaultAsync(x => x.OrderId == orderId);
-        return i == null ? null : new InvoiceDTO { InvoiceId = i.Id, OrderId = i.OrderId,
-            InvoiceNumber = i.InvoiceNumber, OrderNumber = i.Order?.OrderNumber ?? "", InvoiceStatus = i.InvoiceStatus,
+        if (i == null) return null;
+        var delivery = i.Order == null ? null : OrderDeliveryDetails.FromOrder(i.Order);
+        return new InvoiceDTO { InvoiceId = i.Id, OrderId = i.OrderId,
+            InvoiceNumber = i.InvoiceNumber, OrderNumber = i.Order?.OrderNumber ?? "", OrderStatus = i.Order?.Status ?? "", InvoiceStatus = i.InvoiceStatus,
             IssuedAt = i.IssuedAt, PaymentStatus = i.PaymentStatus, PaymentMethod = i.PaymentMethod,
             Subtotal = i.Subtotal, Discount = i.DiscountAmount, TaxAmount = i.TaxAmount, FeeAmount = i.ShippingFee,
             TotalAmount = i.TotalAmount, CustomerName = i.CustomerName, CustomerPhone = i.CustomerPhone,
             CustomerEmail = i.CustomerEmail, CustomerAddress = i.CustomerAddress,
+            RecipientName = delivery?.Name, RecipientPhone = delivery?.Phone, ShippingAddress = delivery?.Address,
             Items = i.Items.Select(x => new InvoiceItemDTO { ProductName = x.ProductName, Sku = x.Sku,
                 Quantity = x.Quantity, UnitPrice = x.UnitPrice, TotalPrice = x.TotalPrice }).ToList() };
     }
 
-    public async Task<bool> UpdatePaymentStatusAsync(int orderId, string status)
-    {
-        var normalized = status.Trim().ToLowerInvariant();
-        if (normalized is not ("pending" or "paid" or "failed")) throw new ArgumentException("Trạng thái thanh toán không hợp lệ.");
-        var invoice = await _db.Invoices.FirstOrDefaultAsync(i => i.OrderId == orderId);
-        if (invoice == null) return false;
-        if (invoice.InvoiceStatus is "voided" or "refunded") throw new InvalidOperationException("Hóa đơn đã hủy/hoàn tiền, không thể cập nhật thanh toán.");
-        var order = await _db.Orders.FirstAsync(o => o.Id == orderId);
-        invoice.PaymentStatus = order.PaymentStatus = normalized;
-        if (normalized == "paid") invoice.InvoiceStatus = "paid";
-        else if (invoice.InvoiceStatus == "paid") invoice.InvoiceStatus = "issued";
-        invoice.PaymentMethod = order.PaymentMethod;
-        invoice.UpdatedAt = order.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-        return true;
-    }
 }

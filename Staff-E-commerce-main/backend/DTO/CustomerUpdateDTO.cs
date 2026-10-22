@@ -17,5 +17,6 @@ namespace backend.DTO
 
         [MaxLength(250, ErrorMessage = "Address must be at most 250 characters long")]
         public string? Address { get; set; }
+        public DateTime? DateOfBirth { get; set; }
     }
 }

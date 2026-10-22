@@ -37,13 +37,13 @@ export default function AuditDetail({ onClose ,selectedActivityLog}) {
             </div>
             <div>
               <strong>Hành động:</strong>{" "}
-              <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs">
+              <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded-full text-xs">
                 {selectedActivityLog.action}
               </span>
             </div>
             <div>
               <strong>Đối tượng:</strong>{" "}
-              <span className="text-blue-600 font-medium">{selectedActivityLog.entityType}</span>
+              <span className="text-primary-600 font-medium">{selectedActivityLog.entityType}</span>
             </div>
             <div>
               <strong>IP:</strong>{" "}

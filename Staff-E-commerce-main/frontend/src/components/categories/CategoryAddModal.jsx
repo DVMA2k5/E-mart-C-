@@ -133,8 +133,8 @@ const CategoryAddModal = ({ isOpen, onClose, onSuccess }) => {
         {/* Body */}
         <div className="p-6">
           {successMessage && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-              <p className="text-green-800">{successMessage}</p>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-4">
+              <p className="text-emerald-800">{successMessage}</p>
             </div>
           )}
 
@@ -163,7 +163,7 @@ const CategoryAddModal = ({ isOpen, onClose, onSuccess }) => {
                 className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 transition ${
                   errors.name
                     ? "border-red-500 bg-red-50 focus:ring-red-500"
-                    : "border-gray-300 focus:ring-blue-500"
+                    : "border-gray-300 focus:ring-primary-500"
                 }`}
                 placeholder="Nhập tên danh mục"
               />
@@ -186,7 +186,7 @@ const CategoryAddModal = ({ isOpen, onClose, onSuccess }) => {
                 className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 transition ${
                   errors.description
                     ? "border-red-500 bg-red-50 focus:ring-red-500"
-                    : "border-gray-300 focus:ring-blue-500"
+                    : "border-gray-300 focus:ring-primary-500"
                 }`}
                 placeholder="Nhập mô tả (nếu có)"
               />
@@ -213,7 +213,7 @@ const CategoryAddModal = ({ isOpen, onClose, onSuccess }) => {
             type="submit"
             form="category-add-form"
             disabled={loading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition disabled:opacity-50"
           >
             {loading ? "Đang thêm..." : "Thêm Danh Mục"}
           </button>

@@ -24,7 +24,7 @@ export default function InventoryPage() {
             onClick={() => setActiveTab("list")}
             className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200
               ${activeTab === "list"
-                ? "bg-white text-indigo-700 shadow-sm"
+                ? "bg-white text-primary-700 shadow-sm"
                 : "text-gray-600 hover:text-gray-900"}`}
           >
             📦 Danh sách tồn kho
@@ -33,7 +33,7 @@ export default function InventoryPage() {
             onClick={() => setActiveTab("history")}
             className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200
               ${activeTab === "history"
-                ? "bg-white text-indigo-700 shadow-sm"
+                ? "bg-white text-primary-700 shadow-sm"
                 : "text-gray-600 hover:text-gray-900"}`}
           >
             📋 Lịch sử biến động

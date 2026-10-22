@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { request } from "../../api/apiClient";
 
 export default function ProductModal({ onClose, selectedProduct, setSelectedProduct }) {
   const [products, setProducts] = useState([]);
@@ -8,46 +9,35 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
   const [searchInput, setSearchInput] = useState("");
   const [searchMode, setSearchMode] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   // -------------------------------
   // Fetch sản phẩm
   // -------------------------------
-  const fetchProducts = async () => {
-    setLoading(true);
-    try {
-      let url = "";
-      if (searchMode && searchInput.trim() !== "") {
-        const params = new URLSearchParams({ keyword: searchInput });
-        url = `/api/products/search?${params.toString()}`;
-      } else {
-        const params = new URLSearchParams({ page, pageSize });
-        url = `/api/products/available?${params.toString()}`;
-      }
-
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch products");
-      const data = await res.json();
-      console.log("Danh sách sản phẩm còn hàng",data);
-      
-
-      if (searchMode) {
-        setProducts(data || []);
-        setTotalPages(1);
-        setPage(1);
-      } else {
-        setProducts(data.items || []);
-        setTotalPages(data.totalPages || 1);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
+    let active = true;
+    const fetchProducts = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ page, pageSize, status: 1, stockStatus: "available" });
+      if (searchMode && searchInput.trim()) params.set("search", searchInput.trim());
+      const url = `/products/paginated?${params}`;
+
+      const data = await request(url);
+      if (!active) return;
+
+      setProducts(data.items || []);
+      setTotalPages(data.totalPages || 1);
+    } catch (err) {
+      if (active) setError(err.message || "Không thể tải sản phẩm.");
+    } finally {
+      if (active) setLoading(false);
+    }
+    };
     fetchProducts();
-  }, [page, searchMode]);
+    return () => { active = false; };
+  }, [page, pageSize, searchMode, searchInput]);
 
   // -------------------------------
   // Nhấn chọn sản phẩm
@@ -58,7 +48,7 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
       const normalized = {
         id: selectedProduct.id,
         name: selectedProduct.name,
-        price: Number(selectedProduct.price ?? 0),
+        price: Number(selectedProduct.discountPrice ?? selectedProduct.price ?? 0),
         quantity: selectedProduct.quantity
       };
       setSelectedProduct(normalized); // Cập nhật lên component cha
@@ -107,8 +97,8 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
               className="flex-1 px-4 py-2 border rounded-lg"
             />
             <button
-              className="px-4 py-2 bg-blue-500 text-white rounded"
-              onClick={() => setSearchMode(true)}
+              className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700"
+              onClick={() => { setPage(1); setSearchMode(true); }}
             >
               Tìm kiếm
             </button>
@@ -123,6 +113,7 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
           </div>
 
           {/* Bảng sản phẩm */}
+          {error && <p role="alert" className="mb-3 text-red-600">{error}</p>}
           {loading ? (
             <div className="text-center py-10">Đang tải...</div>
           ) : (
@@ -148,21 +139,21 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
                       <tr
                         key={p.id}
                         className={`hover:bg-gray-50 cursor-pointer ${
-                          selectedProduct?.id === p.id ? "bg-blue-50" : ""
+                          selectedProduct?.id === p.id ? "bg-primary-50" : ""
                         }`}
-                        onClick={() => setSelectedProduct({ id: p.id, name: p.productName, price: p.price, quantity: p.inventory.quantity})}
+                        onClick={() => setSelectedProduct({ id: p.id, name: p.productName, price: p.discountPrice ?? p.price, quantity: p.inventory?.quantity ?? 0})}
                       >
                         <td className="px-4 py-2">{p.id}</td>
                         <td className="px-4 py-2">{p.productName}</td>
                         <td className="px-4 py-2 text-right font-bold">
-                          {p.price?.toLocaleString()}₫
+                          {(p.discountPrice ?? p.price)?.toLocaleString()}₫
                         </td>
                         <td className="px-4 py-2 text-center">
                           <input
                             type="radio"
                             name="selectedProduct"
                             checked={selectedProduct?.id === p.id}
-                            onChange={() => setSelectedProduct({ id: p.id, name: p.productName, price: p.price, quantity: p.inventory.quantity})}
+                            onChange={() => setSelectedProduct({ id: p.id, name: p.productName, price: p.discountPrice ?? p.price, quantity: p.inventory?.quantity ?? 0})}
                           />
                         </td>
                       </tr>
@@ -175,10 +166,10 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
         </div>
 
         {/* Pagination */}
-        {!searchMode && (
+        {(
           <div className="flex justify-center items-center gap-3 mt-4">
             <button
-              className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+              className="px-3 py-1 bg-primary-600 text-white rounded disabled:opacity-50 hover:bg-primary-700"
               disabled={page <= 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
@@ -186,7 +177,7 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
             </button>
             <span>{page} / {totalPages}</span>
             <button
-              className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+              className="px-3 py-1 bg-primary-600 text-white rounded disabled:opacity-50 hover:bg-primary-700"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             >
@@ -198,7 +189,7 @@ export default function ProductModal({ onClose, selectedProduct, setSelectedProd
         {/* Footer */}
         <div className="flex justify-end gap-3 p-5 border-t">
           <button
-            className="px-6 py-2 bg-purple-500 text-white rounded-lg font-bold hover:bg-purple-600 disabled:opacity-50"
+            className="px-6 py-2 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 disabled:opacity-50"
             onClick={handleSelect}
             disabled={!selectedProduct}
           >

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using backend.Data;
 using backend.Repository;
 using backend.Services;
+using backend.Security;
 
 using backend.Middlewares;
 using backend.Hubs;
@@ -30,7 +31,13 @@ builder.Services.AddDataProtection()
 // -------------------------
 // Configure Services
 // -------------------------
-builder.Services.AddControllers()
+builder.Services.AddScoped<PermissionFilter>();
+builder.Services.AddScoped<AccountMutationFilter>();
+builder.Services.AddControllers(options =>
+    {
+        options.Filters.AddService<PermissionFilter>();
+        options.Filters.AddService<AccountMutationFilter>();
+    })
     .AddJsonOptions(options =>
     {
         // Giữ cả ReferenceHandler.IgnoreCycles (bạn bè) và PropertyNamingPolicy (cả 2)
@@ -89,6 +96,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ProductService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<InvoiceService>();
+builder.Services.AddScoped<PosCheckoutService>();
 builder.Services.AddScoped<ActivityLogService>();
 builder.Services.AddScoped<CustomerService>();
 builder.Services.AddScoped<CategoryService>();
@@ -125,6 +133,7 @@ builder.Services.AddAuthentication(options =>
 {
     options.RequireHttpsMetadata = false; // true in production
     options.SaveToken = true;
+    options.Events = new JwtBearerEvents { OnTokenValidated = SessionValidator.ValidateAsync };
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
@@ -150,6 +159,16 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+try
+{
+    await AuthorizationSchemaInitializer.InitializeAsync(app.Services);
+}
+catch (Exception ex)
+{
+    app.Logger.LogCritical(ex, "Authorization schema initialization failed.");
+    throw;
+}
 
 // -------------------------
 // Middleware pipeline

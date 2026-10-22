@@ -54,11 +54,26 @@ namespace backend.Models
         [StringLength(20)]
         public string PaymentStatus { get; set; } = "pending";
 
+        [Column("checkout_key"), StringLength(36)] public string? CheckoutKey { get; set; }
+        [Column("checkout_hash"), StringLength(64)] public string? CheckoutHash { get; set; }
+        [Column("points_used")] public int PointsUsed { get; set; }
+        [Column("points_earned")] public int PointsEarned { get; set; }
+        [Column("cash_received", TypeName = "decimal(12,2)")] public decimal? CashReceived { get; set; }
+
         [Column("promotion_id")]
         public int? PromotionId { get; set; }
 
         [Column("note")]
         public string? Note { get; set; }
+
+        [Column("recipient_name"), StringLength(255)]
+        public string? RecipientName { get; set; }
+
+        [Column("recipient_phone"), StringLength(50)]
+        public string? RecipientPhone { get; set; }
+
+        [Column("shipping_address")]
+        public string? ShippingAddress { get; set; }
 
         [Column("created_at")]
         public DateTime CreatedAt { get; set; }

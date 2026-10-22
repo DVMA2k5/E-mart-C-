@@ -22,6 +22,7 @@ namespace backend.Controllers
         private readonly PromotionService _promotions;
         private readonly PaymentService _paymentService;
         private readonly IConfiguration _config;
+        private readonly InvoiceService _invoiceService;
         private readonly IHubContext<OrderHub>? _orderHub;
 
         public StorefrontController(
@@ -30,6 +31,7 @@ namespace backend.Controllers
             PromotionService promotions,
             PaymentService paymentService,
             IConfiguration config,
+            InvoiceService invoiceService,
             IHubContext<OrderHub>? orderHub = null)
         {
             _db = db;
@@ -37,6 +39,7 @@ namespace backend.Controllers
             _promotions = promotions;
             _paymentService = paymentService;
             _config = config;
+            _invoiceService = invoiceService;
             _orderHub = orderHub;
         }
 
@@ -45,27 +48,42 @@ namespace backend.Controllers
         public async Task<IActionResult> GetStorefrontPromotions()
         {
             var promotions = await _promotions.GetActivePromotionsAsync();
-            return Ok(promotions.Where(item => item.Type == "voucher"));
+            return Ok(promotions.Where(item => item.Type == "event"));
         }
 
         [HttpPost("promotions/validate")]
         [AllowAnonymous]
         public async Task<IActionResult> ValidateStorefrontPromotion([FromBody] StorefrontPromotionRequest request)
         {
-            if (string.IsNullOrWhiteSpace(request.Code)) return BadRequest(new { message = "Nhập mã phiếu mua hàng." });
-            var result = await _promotions.ValidatePromotionAsync(request.Code, request.OrderAmount);
+            if (request.EventPromotionId.HasValue && !string.IsNullOrWhiteSpace(request.Code))
+                return BadRequest(new { message = "Chỉ chọn một ưu đãi sự kiện hoặc nhập một mã voucher." });
+            if (!request.EventPromotionId.HasValue && string.IsNullOrWhiteSpace(request.Code))
+                return BadRequest(new { message = "Nhập mã voucher hoặc chọn ưu đãi sự kiện." });
+            var result = request.EventPromotionId.HasValue
+                ? await _promotions.ValidateEventPromotionAsync(request.EventPromotionId.Value, request.OrderAmount)
+                : await _promotions.ValidatePromotionAsync(request.Code, request.OrderAmount);
             return Ok(result);
         }
 
-        [HttpPost("login")]
+        [HttpPost("register")]
         [AllowAnonymous]
-        public async Task<IActionResult> Login([FromBody] StorefrontPhoneLoginRequest request)
+        public async Task<IActionResult> RegisterCustomer([FromBody] StorefrontCustomerRegisterRequest request)
         {
             var phone = NormalizePhone(request.Phone);
             if (!Regex.IsMatch(phone, "^0[35789]\\d{8}$"))
                 return BadRequest(new { message = "Số điện thoại Việt Nam chưa đúng định dạng." });
+            if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Trim().Length < 3)
+                return BadRequest(new { message = "Tên đăng nhập phải có ít nhất 3 ký tự." });
+            if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 6)
+                return BadRequest(new { message = "Mật khẩu phải có ít nhất 6 ký tự." });
+            if (string.IsNullOrWhiteSpace(request.FullName) || request.FullName.Trim().Length < 2)
+                return BadRequest(new { message = "Họ tên phải có ít nhất 2 ký tự." });
 
             var internationalPhone = $"+84{phone[1..]}";
+            var username = request.Username.Trim();
+            if (await _db.Users.AnyAsync(user => user.Username == username))
+                return Conflict(new { message = "Tên đăng nhập đã tồn tại." });
+
             var customer = await _db.Customers.FirstOrDefaultAsync(item =>
                 item.Phone == phone || item.Phone == internationalPhone);
 
@@ -73,36 +91,73 @@ namespace backend.Controllers
             {
                 customer = new Customer
                 {
-                    FullName = string.Empty,
+                    FullName = request.FullName.Trim(),
                     Phone = phone,
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
                 _db.Customers.Add(customer);
-                try
-                {
-                    await _db.SaveChangesAsync();
-                }
-                catch (DbUpdateException)
-                {
-                    _db.Entry(customer).State = EntityState.Detached;
-                    customer = await _db.Customers.FirstOrDefaultAsync(item =>
-                        item.Phone == phone || item.Phone == internationalPhone);
-                    if (customer == null) throw;
-                }
             }
+            else if (await _db.Users.AnyAsync(user => user.CustomerId == customer.Id))
+                return Conflict(new { message = "Số điện thoại này đã được đăng ký." });
 
-            if (!customer.IsActive)
+            customer.FullName = request.FullName.Trim();
+            customer.UpdatedAt = DateTime.UtcNow;
+            var role = await _db.Roles.FirstOrDefaultAsync(item => item.Name == "customer" && item.IsActive);
+            if (role == null)
+                return StatusCode(500, new { message = "Vai trò khách hàng chưa được cấu hình." });
+
+            var user = new User
+            {
+                Username = username,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password, 11),
+                FullName = customer.FullName,
+                Email = customer.Email,
+                RoleId = role.Id,
+                RoleEntity = role,
+                Customer = customer,
+                IsActive = true,
+                IsLocked = false,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            _db.Users.Add(user);
+            await _db.SaveChangesAsync();
+
+            var (token, expiresIn) = _jwt.GenerateToken(user);
+            return Ok(new { token, tokenType = "Bearer", expiresIn, customer = ToCustomerProfile(customer) });
+        }
+
+        [HttpPost("login")]
+        [AllowAnonymous]
+        public async Task<IActionResult> Login([FromBody] StorefrontCustomerLoginRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+                return BadRequest(new { message = "Vui lòng nhập tên đăng nhập và mật khẩu." });
+
+            var user = await _db.Users
+                .Include(item => item.RoleEntity)
+                .Include(item => item.Customer)
+                .FirstOrDefaultAsync(item => item.Username == request.Username.Trim());
+
+            if (user?.Customer == null || !string.Equals(user.RoleEntity?.Name, "customer", StringComparison.OrdinalIgnoreCase) ||
+                !user.IsActive || user.IsLocked || !user.RoleEntity.IsActive ||
+                !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+                return Unauthorized(new { message = "Tên đăng nhập hoặc mật khẩu không đúng." });
+
+            if (!user.Customer.IsActive)
                 return Unauthorized(new { message = "Tài khoản khách hàng đã bị khóa." });
 
-            var (token, expiresIn) = _jwt.GenerateCustomerToken(customer);
+            user.LastLogin = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            var (token, expiresIn) = _jwt.GenerateToken(user);
             return Ok(new
             {
                 token,
                 tokenType = "Bearer",
                 expiresIn,
-                customer = ToCustomerProfile(customer)
+                customer = ToCustomerProfile(user.Customer)
             });
         }
 
@@ -116,12 +171,33 @@ namespace backend.Controllers
                 : Ok(ToCustomerProfile(customer));
         }
 
+        [HttpPut("account/address")]
+        [Authorize(Roles = "customer")]
+        public async Task<IActionResult> UpdateAccountAddress([FromBody] StorefrontAddressUpdateRequest request)
+        {
+            var address = request.Address.Trim();
+            if (string.IsNullOrWhiteSpace(address))
+                return BadRequest(new { message = "Địa chỉ không được để trống." });
+
+            var customer = await GetAuthenticatedCustomerAsync();
+            if (customer == null)
+                return Unauthorized(new { message = "Phiên đăng nhập không hợp lệ." });
+
+            customer.Address = address;
+            customer.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return Ok(ToCustomerProfile(customer));
+        }
+
         [HttpPut("account")]
         [Authorize(Roles = "customer")]
-        public async Task<IActionResult> UpdateAccount([FromBody] StorefrontAccountUpdateRequest request)
+        public async Task<IActionResult> UpdateAccount([FromBody] StorefrontAccountUpdateRequest? request)
         {
-            var fullName = request.FullName.Trim();
-            if (fullName.Length < 2)
+            if (request == null)
+                return BadRequest(new { message = "Thông tin cập nhật không được để trống." });
+
+            var fullName = request.FullName?.Trim();
+            if (string.IsNullOrWhiteSpace(fullName) || fullName.Length < 2)
                 return BadRequest(new { message = "Họ tên cần có ít nhất 2 ký tự." });
 
             var customer = await GetAuthenticatedCustomerAsync();
@@ -129,8 +205,28 @@ namespace backend.Controllers
                 return Unauthorized(new { message = "Phiên đăng nhập không hợp lệ." });
 
             customer.FullName = fullName;
+            customer.Email = request.Email?.Trim();
+            customer.Address = request.Address?.Trim();
+            customer.DateOfBirth = request.DateOfBirth;
+            if (!string.IsNullOrWhiteSpace(customer.Email) &&
+                await _db.Customers.AnyAsync(item => item.Id != customer.Id && item.Email == customer.Email))
+                return Conflict(new { message = "Email này đã được sử dụng cho khách hàng khác." });
             customer.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
+            var account = await _db.Users.FirstOrDefaultAsync(user => user.CustomerId == customer.Id);
+            if (account != null)
+            {
+                account.FullName = customer.FullName;
+                account.Email = customer.Email;
+                account.UpdatedAt = DateTime.UtcNow;
+            }
+            try
+            {
+                await _db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                return Conflict(new { message = "Không thể lưu thông tin. Email hoặc dữ liệu hồ sơ có thể bị trùng." });
+            }
             return Ok(ToCustomerProfile(customer));
         }
 
@@ -159,6 +255,9 @@ namespace backend.Controllers
                     order.Discount,
                     order.TotalAmount,
                     order.Note,
+                    order.RecipientName,
+                    order.RecipientPhone,
+                    order.ShippingAddress,
                     order.CreatedAt,
                     items = order.OrderItems.Select(line => new
                     {
@@ -175,6 +274,29 @@ namespace backend.Controllers
             return Ok(orders);
         }
 
+        [HttpGet("orders/{id:int}/invoice")]
+        [Authorize(Roles = "customer")]
+        public async Task<IActionResult> GetCustomerInvoice(int id)
+        {
+            var customer = await GetAuthenticatedCustomerAsync();
+            if (customer == null)
+                return Unauthorized(new { message = "Phiên đăng nhập không hợp lệ." });
+
+            var order = await _db.Orders.AsNoTracking()
+                .Where(item => item.Id == id && item.CustomerId == customer.Id)
+                .Select(item => new { item.Status })
+                .FirstOrDefaultAsync();
+            if (order == null)
+                return NotFound(new { message = "Không tìm thấy đơn hàng." });
+            if (order.Status != "completed")
+                return Conflict(new { message = "Chỉ xem được hóa đơn của đơn hàng đã thành công." });
+
+            var invoice = await _invoiceService.GetInvoiceAsync(id);
+            return invoice == null
+                ? NotFound(new { message = "Hóa đơn chưa được phát hành. Vui lòng thử lại sau." })
+                : Ok(invoice);
+        }
+
         private async Task<Customer?> GetAuthenticatedCustomerAsync()
         {
             var idClaim = User.FindFirst("customer_id")?.Value;
@@ -188,6 +310,9 @@ namespace backend.Controllers
             Id = customer.Id,
             FullName = customer.FullName,
             Phone = customer.Phone ?? string.Empty,
+            Email = customer.Email,
+            Address = customer.Address,
+            DateOfBirth = customer.DateOfBirth,
             RewardPoints = customer.RewardPoints
         };
 
@@ -211,10 +336,13 @@ namespace backend.Controllers
                 {
                     Id = product.Id,
                     ProductName = product.ProductName,
+                    Description = product.Description,
                     CategoryId = product.CategoryId,
                     CategoryName = product.Category != null ? product.Category.Name : null,
                     Price = product.Price,
                     OriginalPrice = product.Price,
+                    UnitName = product.Unit != null ? product.Unit.Name : null,
+                    StockQuantity = product.Inventory != null ? product.Inventory.Quantity : 0,
                     ImageUrl = product.ImageUrl
                 })
                 .ToListAsync();
@@ -292,6 +420,8 @@ namespace backend.Controllers
                 .Select(group => new { ProductId = group.Key, Quantity = group.Sum(line => line.Quantity) })
                 .ToList();
 
+            if (request.EventPromotionId.HasValue && !string.IsNullOrWhiteSpace(request.PromotionCode))
+                return BadRequest(new { message = "Chỉ chọn một ưu đãi sự kiện hoặc nhập một mã voucher." });
             if (requestedLines.Any(line => line.Quantity > 1000))
                 return BadRequest(new { message = "Số lượng mỗi sản phẩm không được vượt quá 1.000." });
 
@@ -320,7 +450,14 @@ namespace backend.Controllers
                     select new { link.ProductId, promotion.DiscountType, promotion.Value, promotion.MaxDiscount }
                 ).ToListAsync();
 
-                var customer = await _db.Customers.FirstOrDefaultAsync(item => item.Phone == request.Phone.Trim());
+                // Order ownership/points belong to the signed-in customer, not the recipient's phone.
+                var authenticated = User.Identity?.IsAuthenticated == true;
+                var customer = authenticated ? await GetAuthenticatedCustomerAsync()
+                    : await _db.Customers.FirstOrDefaultAsync(item => item.Phone == request.Phone.Trim());
+                if (authenticated && customer == null)
+                    return Unauthorized(new { message = "Không xác định được tài khoản khách hàng đặt đơn." });
+                if (!authenticated && request.PointsUsed > 0)
+                    return Unauthorized(new { message = "Đăng nhập để sử dụng điểm của tài khoản." });
                 if (customer != null && !customer.IsActive)
                     return Conflict(new { message = "Không thể sử dụng số điện thoại này để đặt hàng." });
 
@@ -361,9 +498,11 @@ namespace backend.Controllers
                 var subtotal = items.Sum(item => item.TotalPrice);
                 var discount = 0m;
                 Promotion? appliedPromotion = null;
-                if (!string.IsNullOrWhiteSpace(request.PromotionCode))
+                if (request.EventPromotionId.HasValue || !string.IsNullOrWhiteSpace(request.PromotionCode))
                 {
-                    var validation = await _promotions.ValidatePromotionAsync(request.PromotionCode, subtotal);
+                    var validation = request.EventPromotionId.HasValue
+                        ? await _promotions.ValidateEventPromotionAsync(request.EventPromotionId.Value, subtotal)
+                        : await _promotions.ValidatePromotionAsync(request.PromotionCode!, subtotal);
                     if (!validation.IsValid || validation.Promotion == null)
                         return BadRequest(new { message = validation.Message });
                     discount = Math.Min(subtotal, validation.DiscountAmount);
@@ -407,7 +546,10 @@ namespace backend.Controllers
                     PaymentMethod = dbPaymentMethod,
                     PaymentStatus = "pending",
                     PromotionId = appliedPromotion?.Id,
-                    Note = $"Người nhận: {request.FullName.Trim()}\nSố điện thoại: {request.Phone.Trim()}\nĐịa chỉ giao hàng: {request.Address.Trim()}{(string.IsNullOrWhiteSpace(request.Note) ? "" : $"\nGhi chú: {request.Note.Trim()}")}",
+                    RecipientName = request.FullName.Trim(),
+                    RecipientPhone = request.Phone.Trim(),
+                    ShippingAddress = request.Address.Trim(),
+                    Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim(),
                     CreatedAt = now,
                     UpdatedAt = now,
                     OrderItems = items
@@ -494,6 +636,10 @@ namespace backend.Controllers
                     order.PaymentStatus,
                     order.CreatedAt,
                     momoPayUrl,
+                    order.RecipientName,
+                    order.RecipientPhone,
+                    order.ShippingAddress,
+                    order.Note,
                     vietQrUrl,
                     pointsUsed
                 });
@@ -570,10 +716,13 @@ namespace backend.Controllers
     {
         public int Id { get; set; }
         public string ProductName { get; set; } = string.Empty;
+        public string? Description { get; set; }
         public int? CategoryId { get; set; }
         public string? CategoryName { get; set; }
         public decimal Price { get; set; }
         public decimal OriginalPrice { get; set; }
+        public string? UnitName { get; set; }
+        public int StockQuantity { get; set; }
         public decimal DiscountAmount { get; set; }
         public decimal DiscountPercent { get; set; }
         public string? PromotionName { get; set; }
@@ -587,16 +736,37 @@ namespace backend.Controllers
         public string Name { get; set; } = string.Empty;
     }
 
-    public class StorefrontPhoneLoginRequest
+    public class StorefrontCustomerLoginRequest
     {
+        [Required, StringLength(150)]
+        public string Username { get; set; } = string.Empty;
+
+        [Required, StringLength(128, MinimumLength = 6)]
+        public string Password { get; set; } = string.Empty;
+    }
+
+    public class StorefrontCustomerRegisterRequest : StorefrontCustomerLoginRequest
+    {
+        [Required, StringLength(150, MinimumLength = 2)]
+        public string FullName { get; set; } = string.Empty;
+
         [Required, StringLength(20)]
         public string Phone { get; set; } = string.Empty;
+    }
+
+    public class StorefrontAddressUpdateRequest
+    {
+        [Required, StringLength(500)]
+        public string Address { get; set; } = string.Empty;
     }
 
     public class StorefrontAccountUpdateRequest
     {
         [Required, StringLength(150)]
         public string FullName { get; set; } = string.Empty;
+        public string? Email { get; set; }
+        public string? Address { get; set; }
+        public DateTime? DateOfBirth { get; set; }
     }
 
     public class StorefrontCustomerProfile
@@ -604,6 +774,9 @@ namespace backend.Controllers
         public int Id { get; set; }
         public string FullName { get; set; } = string.Empty;
         public string Phone { get; set; } = string.Empty;
+        public string? Email { get; set; }
+        public string? Address { get; set; }
+        public DateTime? DateOfBirth { get; set; }
         public int RewardPoints { get; set; } = 0;
     }
 
@@ -622,6 +795,9 @@ namespace backend.Controllers
         public string? Note { get; set; }
 
         public string? PromotionCode { get; set; }
+
+        [Range(1, int.MaxValue)]
+        public int? EventPromotionId { get; set; }
 
         /// <summary>Số điểm thưởng muốn dùng để giảm giá (1 điểm = 1.000 VNĐ)</summary>
         public int PointsUsed { get; set; } = 0;
@@ -645,7 +821,10 @@ namespace backend.Controllers
 
     public class StorefrontPromotionRequest
     {
+        [Range(1, int.MaxValue)]
+        public int? EventPromotionId { get; set; }
         public string Code { get; set; } = string.Empty;
+        [Range(typeof(decimal), "0", "79228162514264337593543950335")]
         public decimal OrderAmount { get; set; }
     }
 }

@@ -5,6 +5,8 @@
 -- Customer: tài khoản riêng cho App.
 -- Schema bám theo ERD: Users, Customers, Categories, Products,
 -- Suppliers, Purchase Orders, Promotions (3 loại), Orders, Payments...
+-- Đã tích hợp schema phân quyền: employees, roles, permissions,
+-- role_permissions và các khóa ngoại role_id/employee_id/customer_id của users.
 -- =========================================================
 -- IMPORTANT:
 -- 1) If you already have data in the original DB, adding constraints may fail. 
@@ -34,6 +36,8 @@ GO
 USE [store_management];
 GO
 
+IF OBJECT_ID(N'ai_messages', N'U') IS NOT NULL DROP TABLE ai_messages;
+IF OBJECT_ID(N'ai_conversations', N'U') IS NOT NULL DROP TABLE ai_conversations;
 
 IF OBJECT_ID(N'activity_logs', N'U') IS NOT NULL DROP TABLE activity_logs;
 IF OBJECT_ID(N'promotion_redemptions', N'U') IS NOT NULL DROP TABLE promotion_redemptions;
@@ -85,6 +89,7 @@ CREATE TABLE customers (
   phone VARCHAR(50),
   password_hash VARCHAR(512) DEFAULT NULL,
   email VARCHAR(255),
+  date_of_birth DATE NULL,
   reward_points INT NOT NULL DEFAULT 0,
   address NVARCHAR(MAX),
   note NVARCHAR(MAX),
@@ -103,6 +108,33 @@ ON customers(email)
 WHERE email IS NOT NULL;
 GO
 
+CREATE TABLE employees (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  full_name NVARCHAR(255) NOT NULL,
+  phone VARCHAR(50),
+  email VARCHAR(255),
+  date_of_birth DATE NULL,
+  address NVARCHAR(MAX),
+  note NVARCHAR(MAX),
+  is_active BIT NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT GETDATE(),
+  updated_at DATETIME NOT NULL DEFAULT GETDATE()
+);
+CREATE UNIQUE INDEX ux_employees_email ON employees(email) WHERE email IS NOT NULL;
+
+CREATE TABLE roles (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  name VARCHAR(50) NOT NULL UNIQUE,
+  description NVARCHAR(255),
+  is_active BIT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE permissions (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  code VARCHAR(100) NOT NULL UNIQUE,
+  name NVARCHAR(150) NOT NULL,
+  description NVARCHAR(255)
+);
 
 CREATE TABLE users (
   id INT IDENTITY(1,1) PRIMARY KEY,
@@ -111,19 +143,31 @@ CREATE TABLE users (
   full_name NVARCHAR(255) NOT NULL,
   email VARCHAR(255),
   phone VARCHAR(20),
-  role VARCHAR(20) NOT NULL DEFAULT 'staff',
+  role_id INT NOT NULL,
+  employee_id INT NULL,
+  customer_id INT NULL,
   is_active BIT NOT NULL DEFAULT 1,
   locked BIT NOT NULL DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_login DATETIME DEFAULT NULL,
-  CONSTRAINT ck_users_role CHECK (role IN ('admin','staff'))
+  CONSTRAINT fk_users_role FOREIGN KEY (role_id) REFERENCES roles(id),
+  CONSTRAINT fk_users_employee FOREIGN KEY (employee_id) REFERENCES employees(id),
+  CONSTRAINT fk_users_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
 GO
 CREATE UNIQUE INDEX ux_users_email
 ON users(email)
 WHERE email IS NOT NULL;
 GO
+
+CREATE TABLE role_permissions (
+  role_id INT NOT NULL,
+  permission_id INT NOT NULL,
+  PRIMARY KEY (role_id, permission_id),
+  CONSTRAINT fk_role_permissions_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+  CONSTRAINT fk_role_permissions_permission FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+);
 
 CREATE TABLE promotions (
   id INT IDENTITY(1,1) PRIMARY KEY,
@@ -463,13 +507,23 @@ CREATE INDEX idx_orders_created_at ON [orders] (created_at);
 CREATE INDEX idx_inventory_quantity ON inventory (quantity);
 CREATE INDEX idx_products_created_at ON products (created_at);
 
--- ===== USERS (ADMIN + EMPLOYEE, phân quyền bằng role) =====
+-- ===== USERS (ADMIN + EMPLOYEE, role ánh xạ qua khóa ngoại) =====
+INSERT INTO roles (name, description)
+VALUES ('admin', N'Quản trị toàn hệ thống'), ('staff', N'Nhân viên bán hàng'), ('customer', N'Khách hàng');
+INSERT INTO permissions (code, name)
+VALUES ('users.read', N'Xem tài khoản'), ('users.write', N'Tạo và cập nhật tài khoản'),
+       ('roles.read', N'Xem vai trò và quyền'), ('roles.write', N'Gán quyền cho vai trò'),
+       ('customers.read', N'Tra cứu khách hàng'), ('customers.write', N'Tạo và cập nhật khách hàng');
+
 INSERT INTO users
-(username, password_hash, full_name, email, role, is_active, locked, created_at)
+(username, password_hash, full_name, email, role_id, is_active, locked, created_at)
 VALUES
-  ('admin', '$2a$11$B5Pre4vLwlsfDIMg/gXXjuH/CyqianiPXHXSXikWE5R0djN/9Tf7.', N'Quản trị viên', 'admin@example.com', 'admin', 1, 0, GETDATE()),
-  ('staff01', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Nguyễn Văn A', 'staff01@example.com', 'staff', 1, 0, GETDATE()),
-  ('staff02', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Lê Thị B', 'staff02@example.com', 'staff', 1, 0, GETDATE());
+  ('admin', '$2a$11$B5Pre4vLwlsfDIMg/gXXjuH/CyqianiPXHXSXikWE5R0djN/9Tf7.', N'Quản trị viên', 'admin@example.com', (SELECT id FROM roles WHERE name = 'admin'), 1, 0, GETDATE()),
+  ('staff01', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Nguyễn Văn A', 'staff01@example.com', (SELECT id FROM roles WHERE name = 'staff'), 1, 0, GETDATE()),
+  ('staff02', '$2a$11$NChyYqe5MniZi.l08LVuP.SkfLMRMtyK6guvRRyq/PdaGdjYoTaO2', N'Lê Thị B', 'staff02@example.com', (SELECT id FROM roles WHERE name = 'staff'), 1, 0, GETDATE());
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r CROSS JOIN permissions p WHERE r.name = 'admin';
 
 -- password của admin là admin123
 -- password của employee là 123456
@@ -878,6 +932,29 @@ VALUES
 
 
 
+-- ===== AI CONVERSATIONS & MESSAGES =====
+CREATE TABLE ai_conversations (
+  id INT IDENTITY(1,1) PRIMARY KEY,
+  user_id INT NOT NULL,
+  title VARCHAR(255),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ai_conversations_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX idx_ai_conversations_user ON ai_conversations (user_id);
+
+CREATE TABLE ai_messages (
+  id BIGINT IDENTITY(1,1) PRIMARY KEY,
+  conversation_id INT NOT NULL,
+  role VARCHAR(20) NOT NULL,
+  content NVARCHAR(MAX) NOT NULL,
+  function_called VARCHAR(100),
+  function_data NVARCHAR(MAX),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ai_messages_conversation FOREIGN KEY (conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX idx_ai_messages_conversation ON ai_messages (conversation_id);
+
 -- ===== VERIFICATION =====
 SELECT DB_NAME() AS current_database;
 SELECT name FROM sys.tables ORDER BY name;
@@ -886,8 +963,8 @@ SELECT COUNT(*) AS products_count FROM products;
 SELECT COUNT(*) AS orders_count FROM [orders];
 SELECT COUNT(*) AS purchase_orders_count FROM purchase_orders;
 SELECT COUNT(*) AS promotions_count FROM promotions;
-SELECT COUNT(*) AS staff_count FROM users WHERE role = 'staff';
-SELECT COUNT(*) AS admins_count FROM users WHERE role = 'admin';
+SELECT COUNT(*) AS staff_count FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = 'staff';
+SELECT COUNT(*) AS admins_count FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = 'admin';
 GO
 
 /*

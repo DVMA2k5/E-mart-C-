@@ -105,7 +105,7 @@ export default function Pagination({ meta, onPageChange }) {
                 onClick={() => onPageChange(p)}
                 className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
                   p === currentPage
-                    ? "z-10 bg-blue-50 border-blue-500 text-blue-600"
+                    ? "z-10 bg-primary-50 border-primary-500 text-primary-600"
                     : "bg-white border-gray-300 text-gray-500 hover:bg-gray-50"
                 }`}
               >

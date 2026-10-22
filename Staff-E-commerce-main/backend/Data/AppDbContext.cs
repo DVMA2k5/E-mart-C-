@@ -22,6 +22,10 @@ namespace backend.Data
         public DbSet<Category> Categories { get; set; }
         public DbSet<Customer> Customers { get; set; }
         public DbSet<User> Users { get; set; }
+        public DbSet<Employee> Employees { get; set; }
+        public DbSet<Role> Roles { get; set; }
+        public DbSet<Permission> Permissions { get; set; }
+        public DbSet<RolePermission> RolePermissions { get; set; }
         public DbSet<Promotion> Promotions { get; set; }
         public DbSet<PurchaseOrder> PurchaseOrders { get; set; }
         public DbSet<PurchaseOrderDetail> PurchaseOrderDetails { get; set; }
@@ -32,7 +36,45 @@ namespace backend.Data
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Entity<Order>().HasIndex(o => o.CheckoutKey).IsUnique()
+                .HasFilter("[checkout_key] IS NOT NULL").HasDatabaseName("ux_orders_checkout_key");
             base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<Role>()
+                .HasIndex(r => r.Name)
+                .IsUnique()
+                .HasDatabaseName("ux_roles_name");
+
+            modelBuilder.Entity<Permission>()
+                .HasIndex(p => p.Code)
+                .IsUnique()
+                .HasDatabaseName("ux_permissions_code");
+
+            modelBuilder.Entity<RolePermission>()
+                .HasKey(rp => new { rp.RoleId, rp.PermissionId });
+
+            modelBuilder.Entity<RolePermission>()
+                .HasOne(rp => rp.Role)
+                .WithMany(r => r.RolePermissions)
+                .HasForeignKey(rp => rp.RoleId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<RolePermission>()
+                .HasOne(rp => rp.Permission)
+                .WithMany(p => p.RolePermissions)
+                .HasForeignKey(rp => rp.PermissionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<User>()
+                .HasOne(u => u.RoleEntity)
+                .WithMany(r => r.Users)
+                .HasForeignKey(u => u.RoleId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<User>().HasOne(u => u.Employee).WithOne(e => e.Account)
+                .HasForeignKey<User>(u => u.EmployeeId).OnDelete(DeleteBehavior.SetNull);
+            modelBuilder.Entity<User>().HasOne(u => u.Customer).WithMany()
+                .HasForeignKey(u => u.CustomerId).OnDelete(DeleteBehavior.SetNull);
 
             // If your EF Core version doesn't support [Index] attribute, define indexes here:
             modelBuilder.Entity<Category>()
@@ -122,7 +164,12 @@ namespace backend.Data
                 .HasForeignKey(oi => oi.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-            // Payment -> Order
+            // Invoice tables have triggers; SQL Server disallows direct OUTPUT on them.
+            modelBuilder.Entity<Invoice>()
+                .ToTable(table => table.UseSqlOutputClause(false));
+            modelBuilder.Entity<InvoiceItem>()
+                .ToTable(table => table.UseSqlOutputClause(false));
+
             modelBuilder.Entity<Invoice>().HasIndex(i => i.OrderId).IsUnique();
             modelBuilder.Entity<Invoice>().HasIndex(i => i.InvoiceNumber).IsUnique();
             modelBuilder.Entity<Invoice>().HasOne(i => i.Order).WithOne(o => o.Invoice)
@@ -242,4 +289,3 @@ namespace backend.Data
         }
     }
 }
-

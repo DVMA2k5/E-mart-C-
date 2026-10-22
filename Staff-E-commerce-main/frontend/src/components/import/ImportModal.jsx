@@ -154,14 +154,14 @@ export default function ImportModal({ isOpen, onClose, onSuccess, type = "produc
         {/* Content */}
         <div className="p-6">
           {/* Download Template */}
-          <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+          <div className="mb-4 p-3 bg-primary-50 rounded-lg">
             <p className="text-sm text-gray-700 mb-2">
               Tải file mẫu để biết định dạng dữ liệu:
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => handleDownloadTemplate("excel")}
-                className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700"
               >
                 Tải Excel Template
               </button>
@@ -179,7 +179,7 @@ export default function ImportModal({ isOpen, onClose, onSuccess, type = "produc
             <div
               className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
                 dragActive
-                  ? "border-blue-500 bg-blue-50"
+                  ? "border-primary-500 bg-primary-50"
                   : "border-gray-300 hover:border-gray-400"
               }`}
               onDragEnter={handleDrag}
@@ -189,7 +189,7 @@ export default function ImportModal({ isOpen, onClose, onSuccess, type = "produc
             >
               {file ? (
                 <div className="space-y-2">
-                  <div className="text-green-600 text-lg">✓</div>
+                  <div className="text-emerald-600 text-lg">✓</div>
                   <p className="text-gray-700 font-medium">{file.name}</p>
                   <p className="text-sm text-gray-500">
                     {formatFileSize(file.size)}
@@ -215,7 +215,7 @@ export default function ImportModal({ isOpen, onClose, onSuccess, type = "produc
                     </p>
                     <button
                       onClick={() => fileInputRef.current?.click()}
-                      className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                      className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700"
                     >
                       Chọn file
                     </button>
@@ -246,7 +246,7 @@ export default function ImportModal({ isOpen, onClose, onSuccess, type = "produc
           {importing && (
             <div className="mt-4">
               <div className="flex items-center justify-center space-x-2">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
                 <p className="text-gray-700">Đang xử lý file...</p>
               </div>
             </div>
@@ -257,20 +257,20 @@ export default function ImportModal({ isOpen, onClose, onSuccess, type = "produc
             <div className="mt-4 space-y-4">
               {/* Summary */}
               <div className="grid grid-cols-4 gap-4">
-                <div className="p-4 bg-green-50 rounded-lg text-center">
-                  <div className="text-2xl font-bold text-green-600">
+                <div className="p-4 bg-emerald-50 rounded-lg text-center">
+                  <div className="text-2xl font-bold text-emerald-600">
                     {result.created || 0}
                   </div>
                   <div className="text-sm text-gray-600">Đã tạo</div>
                 </div>
-                <div className="p-4 bg-blue-50 rounded-lg text-center">
-                  <div className="text-2xl font-bold text-blue-600">
+                <div className="p-4 bg-primary-50 rounded-lg text-center">
+                  <div className="text-2xl font-bold text-primary-600">
                     {result.updated || 0}
                   </div>
                   <div className="text-sm text-gray-600">Đã cập nhật</div>
                 </div>
-                <div className="p-4 bg-yellow-50 rounded-lg text-center">
-                  <div className="text-2xl font-bold text-yellow-600">
+                <div className="p-4 bg-amber-50 rounded-lg text-center">
+                  <div className="text-2xl font-bold text-amber-600">
                     {result.skipped || 0}
                   </div>
                   <div className="text-sm text-gray-600">Đã bỏ qua</div>
@@ -316,7 +316,7 @@ export default function ImportModal({ isOpen, onClose, onSuccess, type = "produc
 
               {/* Success Message */}
               {!result.hasErrors && (
-                <div className="p-3 bg-green-50 border border-green-200 rounded text-green-700">
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded text-emerald-700">
                   ✓ Import thành công!
                 </div>
               )}
@@ -337,7 +337,7 @@ export default function ImportModal({ isOpen, onClose, onSuccess, type = "produc
             <button
               onClick={handleImport}
               disabled={!file || importing}
-              className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {importing ? "Đang xử lý..." : "Import"}
             </button>

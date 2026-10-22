@@ -74,7 +74,8 @@ namespace backend.Repository
             string? status,
             DateTime? startDate,
             DateTime? endDate,
-            string? search
+            string? search,
+            string? orderType = null
         )
         {
             var query = _context.Orders
@@ -86,6 +87,9 @@ namespace backend.Repository
             // === LỌC TRẠNG THÁI ===
             if (!string.IsNullOrEmpty(status))
                 query = query.Where(o => o.Status == status);
+
+            if (!string.IsNullOrEmpty(orderType))
+                query = query.Where(o => o.OrderType == orderType);
 
             // === LỌC TỪ NGÀY ===
             if (startDate.HasValue)
@@ -107,6 +111,7 @@ namespace backend.Repository
                 string keyword = $"%{search}%";
 
                 query = query.Where(o =>
+                    EF.Functions.Like(o.OrderNumber, keyword) ||
                     (o.Customer != null && EF.Functions.Like(o.Customer.FullName, keyword)) ||
                     (o.User != null && EF.Functions.Like(o.User.FullName, keyword))
                 );
@@ -129,6 +134,8 @@ namespace backend.Repository
                     CustomerId = o.CustomerId,
                     UserId = o.UserId,
                     Status = o.Status,
+                    OrderType = o.OrderType,
+                    IsPosCheckout = o.CheckoutKey != null,
                     PaymentStatus = o.PaymentStatus,
                     PaymentMethod = o.PaymentMethod,
                     Subtotal = o.Subtotal,
@@ -136,6 +143,9 @@ namespace backend.Repository
                     TotalAmount = o.TotalAmount,
                     PromotionId = o.PromotionId,
                     Note = o.Note,
+                    RecipientName = o.RecipientName,
+                    RecipientPhone = o.RecipientPhone,
+                    ShippingAddress = o.ShippingAddress,
                     CreatedAt = o.CreatedAt,
                     UpdatedAt = o.UpdatedAt,
                     CustomerName = o.Customer != null ? o.Customer.FullName : null,

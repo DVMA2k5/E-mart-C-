@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import CustomSelect from "../ui/CustomSelect";
 import { request } from "../../api/apiClient";
 import { getAllCategories } from "../../api/categoryApi";
+import ProductDescriptionEditor, { ProductDescriptionContent } from "./ProductDescription";
 
 const ProductModal = ({
   title = null,
@@ -17,6 +18,8 @@ const ProductModal = ({
 }) => {
   const [formData, setFormData] = useState({});
   const [errors, setErrors] = useState({});
+  const [descriptionLoading, setDescriptionLoading] = useState(false);
+  const [descriptionError, setDescriptionError] = useState("");
 
   // Fallback options nếu component cha chưa tải xong
   const [categoryList, setCategoryList] = useState(Array.isArray(categories) ? categories : []);
@@ -100,12 +103,15 @@ const ProductModal = ({
     }
   }, [mode, product]);
 
-  // Khi ở mode edit, tải thông tin chi tiết đầy đủ từ backend để đảm bảo không thiếu field nào
+  // Fetch the saved description in both detail and edit views.
   useEffect(() => {
-    if (mode === "edit" && product?.id) {
+    let active = true;
+    setDescriptionError("");
+    setDescriptionLoading(mode === "view" && !!product?.id);
+    if ((mode === "edit" || mode === "view") && product?.id) {
       request(`/products/${product.id}`)
         .then((detail) => {
-          if (detail) {
+          if (active && detail) {
             setFormData((prev) => ({
               ...prev,
               id: detail.id,
@@ -116,14 +122,18 @@ const ProductModal = ({
               unitId: prev.unitId || detail.unitId || detail.unit?.id || "",
               categoryId: prev.categoryId || detail.categoryId || detail.category?.id || "",
               supplierId: prev.supplierId || detail.supplierId || detail.supplier?.id || "",
-              description: prev.description !== undefined && prev.description !== "" ? prev.description : (detail.description || ""),
+              description: mode === "view" ? (detail.description || "") : (prev.description !== undefined && prev.description !== "" ? prev.description : (detail.description || "")),
               imageUrl: prev.imageUrl || detail.imageUrl || "",
               isActive: prev.isActive !== undefined ? prev.isActive : detail.isActive,
             }));
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          if (active && mode === "view") setDescriptionError("Không tải được mô tả mới nhất. Vui lòng mở lại chi tiết sản phẩm.");
+        })
+        .finally(() => { if (active) setDescriptionLoading(false); });
     }
+    return () => { active = false; };
   }, [mode, product?.id]);
 
   const modalTitle =
@@ -382,7 +392,7 @@ const ProductModal = ({
                   onClick={() =>
                     document.getElementById("image-upload").click()
                   }
-                  className="w-full px-3 py-2 border border-dashed border-gray-300 rounded-md text-sm text-gray-600 hover:bg-gray-50 hover:border-indigo-300 transition-colors"
+                  className="w-full px-3 py-2 border border-dashed border-gray-300 rounded-md text-sm text-gray-600 hover:bg-gray-50 hover:border-primary-300 transition-colors"
                 >
                   <div className="flex items-center justify-center gap-2">
                     <svg
@@ -532,7 +542,7 @@ const ProductModal = ({
 
               <div>
                 <label className="text-xs text-gray-600">Giá giảm</label>
-                <div className="p-2 border rounded bg-gray-50 text-rose-600 font-medium">
+                <div className="p-2 border rounded bg-gray-50 text-red-600 font-medium">
                   {formData.discountPrice != null && Number(formData.discountPrice) < Number(formData.price)
                     ? formatPrice(formData.discountPrice)
                     : "Chưa có khuyến mãi áp dụng"}
@@ -661,20 +671,20 @@ const ProductModal = ({
               </div>
 
               {/* --- MÔ TẢ --- */}
-              <div>
+              <div className="col-span-2 min-w-0">
                 <label className="text-xs text-gray-600">Mô tả</label>
                 {isView ? (
-                  <div className="p-2 border rounded bg-gray-50">
-                    {formData.description || "Không có mô tả"}
+                  <div className="mt-1 rounded-lg border border-gray-200 bg-white px-3 py-2" aria-busy={descriptionLoading}>
+                    {descriptionLoading ? <p className="text-sm text-gray-500">Đang tải mô tả sản phẩm...</p> : <>
+                      {descriptionError && <p role="alert" className="mb-2 text-sm text-red-600">{descriptionError}</p>}
+                      <ProductDescriptionContent value={formData.description} />
+                    </>}
                   </div>
                 ) : (
-                  <textarea
-                    className="w-full border px-2 py-1 rounded"
+                  <ProductDescriptionEditor
                     value={formData.description || ""}
-                    onChange={(e) =>
-                      handleFieldChange("description", e.target.value)
-                    }
-                    rows={3}
+                    onChange={(value) => handleFieldChange("description", value)}
+                    disabled={saving}
                   />
                 )}
               </div>
@@ -686,7 +696,7 @@ const ProductModal = ({
                 </label>
                 {(() => {
                   const statusColor = formData.isActive
-                    ? "bg-green-500"
+                    ? "bg-emerald-500"
                     : "bg-red-500";
                   const statusText = formData.isActive
                     ? "Đang hoạt động"
@@ -706,7 +716,7 @@ const ProductModal = ({
                         onChange={(e) =>
                           handleFieldChange("isActive", e.target.checked)
                         }
-                        className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                        className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500"
                       />
                       <span className="text-sm text-gray-700">
                         Đang hoạt động
@@ -723,7 +733,7 @@ const ProductModal = ({
                 </button>
                 {!isView && (
                   <button
-                    className="px-3 py-1 rounded bg-indigo-600 text-white"
+                    className="px-3 py-1 rounded bg-primary-600 text-white hover:bg-primary-700"
                     onClick={handleSave}
                     disabled={saving}
                   >

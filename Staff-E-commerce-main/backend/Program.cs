@@ -193,7 +193,7 @@ try
 }
 catch (Exception ex)
 {
-    app.Logger.LogCritical(ex, "Authorization schema initialization failed.");
+    app.Logger.LogCritical(ex, "Database schema initialization failed.");
     throw;
 }
 

@@ -1188,7 +1188,6 @@ export default function App() {
   }, [customer, customerToken]);
 
   const navigateToTab = (nextTab) => {
-    if ((nextTab === "cart" || nextTab === "orders") && !requireAuthenticatedCustomer()) return;
     setTab(nextTab);
   };
 
@@ -1529,7 +1528,33 @@ export default function App() {
     />
   );
 
-  const renderCart = () => (
+  const renderGuestRestrictedState = () => (
+    <View style={styles.guestRestrictedState}>
+      <View style={styles.guestRestrictedIllustration}>
+        <IconCart size={70} color={BHX_GREEN} />
+      </View>
+      <Text style={styles.guestRestrictedTitle}>Bạn chưa thêm gì ở đây</Text>
+      <View style={styles.guestRestrictedActions}>
+        <AppButton
+          title="Đăng nhập / Đăng ký"
+          onPress={() => {
+            setProfilePage("");
+            setRegisterMode(false);
+            setTab("profile");
+          }}
+          style={styles.guestRestrictedButton}
+        />
+        <AppButton
+          title="Trở về trang chủ"
+          secondary
+          onPress={() => setTab("home")}
+          style={[styles.guestRestrictedButton, styles.guestRestrictedHomeButton]}
+        />
+      </View>
+    </View>
+  );
+
+  const renderCart = () => (!customer || !customerToken) ? renderGuestRestrictedState() : (
     <ScrollView contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
       <View style={styles.responsiveContainer}>
         <Text style={styles.pageTitle}>{itemCount} mặt hàng trong giỏ</Text>
@@ -1637,6 +1662,8 @@ export default function App() {
   });
 
   const renderOrders = () => {
+    if (!customer || !customerToken) return renderGuestRestrictedState();
+
     if (selectedOrder) {
       const orderItems = selectedOrder.items || [];
       const address = orderAddress(selectedOrder);
@@ -1728,13 +1755,6 @@ export default function App() {
           <View style={styles.errorCard}>
             <Text style={styles.errorText}>{ordersError}</Text>
             <AppButton title="Thử lại" onPress={() => setOrdersRefreshKey((key) => key + 1)} />
-          </View>
-        ) : !customer && customerOrders.length === 0 ? (
-          <View style={styles.emptyState}>
-            <IconReceipt size={48} color="#cbd5e1" />
-            <Text style={styles.emptyTitle}>Đăng nhập để xem đơn</Text>
-            <Text style={styles.stateText}>Đơn hàng được lưu giữ an toàn theo số điện thoại của bạn.</Text>
-            <AppButton title="Đăng nhập ngay" onPress={() => setTab("profile")} style={styles.emptyCta} />
           </View>
         ) : visibleOrders.length === 0 ? (
           <View style={styles.emptyState}>
@@ -1858,8 +1878,34 @@ export default function App() {
             {registerMode ? <TextInput value={registerEmail} onChangeText={setRegisterEmail} placeholder="Email" style={styles.formInput} keyboardType="email-address" autoCapitalize="none" maxLength={255} /> : null}
             {registerMode ? <TextInput value={registerDateOfBirth} onChangeText={setRegisterDateOfBirth} placeholder="Ngày sinh (YYYY-MM-DD)" style={styles.formInput} keyboardType="numbers-and-punctuation" maxLength={10} /> : null}
             {registerMode ? <TextInput value={registerAddress} onChangeText={setRegisterAddress} placeholder="Địa chỉ" style={styles.formInput} multiline maxLength={500} /> : null}
-            {!registerMode ? <TextInput value={loginUsername} onChangeText={setLoginUsername} placeholder="Số điện thoại" style={styles.formInput} autoCapitalize="none" autoComplete="tel" keyboardType="phone-pad" /> : null}
-            <TextInput value={loginPassword} onChangeText={setLoginPassword} placeholder="Mật khẩu" style={styles.formInput} secureTextEntry autoCapitalize="none" autoComplete="password" />
+            {!registerMode ? <TextInput
+              value={loginUsername}
+              onChangeText={setLoginUsername}
+              placeholder="Số điện thoại"
+              style={styles.formInput}
+              autoCapitalize="none"
+              autoComplete="tel"
+              keyboardType="phone-pad"
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                if (!accountBusy) loginCustomer();
+              }}
+            /> : null}
+            <TextInput
+              value={loginPassword}
+              onChangeText={setLoginPassword}
+              placeholder="Mật khẩu"
+              style={styles.formInput}
+              secureTextEntry
+              autoCapitalize="none"
+              autoComplete="password"
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                if (accountBusy) return;
+                if (registerMode) registerCustomer();
+                else loginCustomer();
+              }}
+            />
             {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
             <AppButton title={accountBusy ? (registerMode ? "Đang tạo tài khoản..." : "Đang đăng nhập...") : (registerMode ? "Tạo tài khoản" : "Đăng nhập")} onPress={registerMode ? registerCustomer : loginCustomer} disabled={accountBusy} />
             <Pressable onPress={() => { setRegisterMode((mode) => !mode); setAccountError(""); setAccountMessage(""); }}>
@@ -2641,6 +2687,12 @@ const styles = StyleSheet.create({
   emptyEmoji: { fontSize: 51, marginBottom: 9 },
   emptyTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "900", textAlign: "center" },
   emptyCta: { marginTop: 18, alignSelf: "stretch" },
+  guestRestrictedState: { flex: 1, minHeight: 400, alignItems: "center", justifyContent: "center", paddingHorizontal: 24, paddingVertical: 48, backgroundColor: "#f4f4f4" },
+  guestRestrictedIllustration: { width: 142, height: 142, borderRadius: 71, alignItems: "center", justifyContent: "center", marginBottom: 28, backgroundColor: "#e7f4ec" },
+  guestRestrictedTitle: { color: "#4b5563", fontSize: 22, lineHeight: 30, fontWeight: "600", textAlign: "center" },
+  guestRestrictedActions: { width: "100%", maxWidth: 360, marginTop: 24 },
+  guestRestrictedButton: { width: "100%", minHeight: 52, borderRadius: 4 },
+  guestRestrictedHomeButton: { borderWidth: 1, borderColor: BHX_GREEN, backgroundColor: "transparent" },
   errorCard: { backgroundColor: "#fff", borderRadius: 13, padding: 17, borderWidth: 1, borderColor: "#f0dfda" },
   errorTitle: { color: "#a3443c", fontSize: 14, fontWeight: "900" },
   errorText: { color: "#785f5b", fontSize: 11, lineHeight: 17, marginTop: 6 },

@@ -17,6 +17,9 @@ namespace backend.DTO
 
         public int? SupplierId { get; set; }
 
+        // Derived by BUS from the supplier address for in-memory regional filtering.
+        public string? Region { get; set; }
+
         // Money values use decimal
         public decimal Price { get; set; }
 

@@ -94,7 +94,7 @@ public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceSer
 
         var order = new Order
         {
-            OrderNumber = $"POS-{Guid.NewGuid():N}", OrderType = "pos", UserId = userId, CustomerId = customer?.Id, Customer = customer,
+            OrderNumber = DocumentNumber.Temporary("DH"), OrderType = "pos", UserId = userId, CustomerId = customer?.Id, Customer = customer,
             CheckoutKey = key, CheckoutHash = hash, Status = "pending", PaymentStatus = "pending", PaymentMethod = method,
             Subtotal = subtotal, Discount = discount, TotalAmount = total, PromotionId = request.PromotionId,
             PointsUsed = request.PointsUsed, CashReceived = method == "cash" ? request.CashReceived : null,
@@ -102,6 +102,7 @@ public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceSer
         };
         repository.AddOrder(order);
         await repository.SaveChangesAsync();
+        order.OrderNumber = DocumentNumber.Order(order.Id);
         foreach (var line in lines)
         {
             if (!await repository.TryReduceInventoryAsync(line.ProductId, line.Quantity, now))

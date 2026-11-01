@@ -3,7 +3,7 @@ namespace backend.DTO
     public class OrderDTO
     {
         public int Id { get; set; }
-        public string OrderNumber { get; set; } = string.Empty; // mã đơn hàng "DH+id+timestamp" => Tách cái này ra tim kiếm nha Cường
+        public string OrderNumber { get; set; } = string.Empty;
         public int? CustomerId { get; set; } = 0;
         public int? UserId { get; set; }
         public string Status { get; set; } = "pending";
@@ -14,6 +14,7 @@ namespace backend.DTO
         public decimal Subtotal { get; set; } = 0m;
         public decimal Discount { get; set; } = 0m;
         public decimal TotalAmount { get; set; } = 0m;
+        public int TotalQuantity { get; set; }
         public int? PromotionId { get; set; } = null;
         public string? Note { get; set; } = null;
         public string? RecipientName { get; set; }

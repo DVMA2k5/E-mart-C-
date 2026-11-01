@@ -25,4 +25,11 @@ public class InvoiceController : ControllerBase
         return invoice == null ? NotFound() : Ok(invoice);
     }
 
+    [HttpGet("by-id/{invoiceId:int}")]
+    public async Task<IActionResult> DetailByInvoiceId(int invoiceId)
+    {
+        var invoice = await _service.GetInvoiceByIdAsync(invoiceId);
+        return invoice == null ? NotFound() : Ok(invoice);
+    }
+
 }

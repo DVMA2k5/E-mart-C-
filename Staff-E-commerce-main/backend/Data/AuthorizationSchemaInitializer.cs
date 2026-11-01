@@ -159,6 +159,8 @@ namespace backend.Data
                 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('orders') AND name = 'ux_orders_checkout_key')
                     CREATE UNIQUE INDEX ux_orders_checkout_key ON orders(checkout_key) WHERE checkout_key IS NOT NULL;
                 """);
+            await DocumentNumberSchemaMigration.MigrateAsync(db);
+            await PurchaseOrderNumberSchemaMigration.MigrateAsync(db);
             await OrderDeliverySchemaMigration.MigrateAsync(db);
             await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
             if (!await db.Database.SqlQuery<int>($"SELECT COUNT(*) AS Value FROM authorization_migrations WITH (UPDLOCK, HOLDLOCK) WHERE name = 'permissions-v1'").AnyAsync(value => value > 0))

@@ -76,7 +76,7 @@ namespace backend.Services
          public async Task<OrderDTO> CreateTemporaryOrderAsync()
         {
             
-            string orderCode = Guid.NewGuid().ToString();
+            const string orderCode = "DH-000";
 
             // Lấy user_id thực tế
             int userId = GetCurrentUserId();
@@ -135,6 +135,7 @@ namespace backend.Services
                 Subtotal = order.Subtotal,
                 Discount = order.Discount,
                 TotalAmount = order.TotalAmount,
+                TotalQuantity = order.OrderItems.Sum(item => item.Quantity),
                 PromotionId = order.PromotionId,
                 Note = delivery.Note,
                 RecipientName = delivery.Name,

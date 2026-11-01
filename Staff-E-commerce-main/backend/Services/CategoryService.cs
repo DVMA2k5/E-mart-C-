@@ -247,13 +247,6 @@ namespace backend.Services
             return ServiceResultDTO<CategoryResponseDTO>.CreateSuccessResult(MapToCategoryResponseDto(updatedCategory), 200);
         }
 
-        public async Task<bool> DeleteCategoryAsync(int id)
-        {
-            var deleted = await _repo.DeleteAsync(id);
-            if (deleted) _cache.RemoveWhere(item => item.Id == id);
-            return deleted;
-        }
-
         // Map sang CategoryResponseDTO
         public CategoryResponseDTO MapToCategoryResponseDto(Category category)
         {

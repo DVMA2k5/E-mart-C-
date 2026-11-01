@@ -3,7 +3,7 @@ import { useAuth } from "../../hook/useAuth";
 import { formatPrice } from "../../utils/formatPrice";
 import { canProcessOrder, orderStatusLabels, paymentStatusLabels, paymentMethodLabels, saleChannelLabel } from "../../utils/orderStatus";
 
-export default function OrdersForm({ onClose, currentOrder: order }) {
+export default function OrdersForm({ currentOrder: order }) {
   const navigate = useNavigate();
   const { permissions } = useAuth();
   const date = (value) => value ? new Date(value).toLocaleString("vi-VN") : "—";
@@ -20,9 +20,8 @@ export default function OrdersForm({ onClose, currentOrder: order }) {
     ["Trạng thái thanh toán", paymentStatusLabels[order.paymentStatus] || order.paymentStatus || "Chưa xác định"],
     ["Phương thức thanh toán", paymentMethodLabels[order.paymentMethod] || order.paymentMethod || "Chưa xác định"],
   ];
-  return <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-    <section role="dialog" aria-modal="true" aria-labelledby="order-detail-title" className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-      <header className="mb-5 flex items-center justify-between border-b pb-4"><h1 id="order-detail-title" className="text-xl font-bold">CHI TIẾT ĐƠN HÀNG</h1><button onClick={onClose} aria-label="Đóng" className="px-3 py-1 text-xl">×</button></header>
+  return <section id="order-detail" aria-labelledby="order-detail-title" className="management-detail-panel rounded-xl border bg-white p-5 shadow-sm">
+      <header className="mb-5 border-b pb-4"><h1 id="order-detail-title" className="text-xl font-bold">CHI TIẾT ĐƠN HÀNG</h1></header>
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">{fields.map(([label, value]) => <div key={label}><dt className="text-sm text-gray-500">{label}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>)}</dl>
       {hasDeliveryDetails && <section className="my-5 rounded-lg border p-4">
         <h2 className="mb-3 font-semibold">Thông tin người nhận</h2>
@@ -39,6 +38,5 @@ export default function OrdersForm({ onClose, currentOrder: order }) {
         {permissions.includes("invoices.read") && (order.status === "completed" || order.status === "processing" || order.paymentStatus === "paid") && <button onClick={() => navigate(`/invoices?orderId=${order.id}`)} className="rounded-lg border px-4 py-2">Xem hóa đơn</button>}
         {canProcessOrder(order) && <button onClick={() => navigate(`/pos?orderId=${order.id}`)} className="rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white">{order.orderType === "pos" && order.paymentStatus === "pending" ? "Thanh toán tại POS" : "Xử lý tại POS"}</button>}
       </footer>
-    </section>
-  </div>;
+    </section>;
 }

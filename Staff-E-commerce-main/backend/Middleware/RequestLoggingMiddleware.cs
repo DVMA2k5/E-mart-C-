@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using backend.Services;
+using backend.Security;
 
 namespace backend.Middlewares;
 
@@ -13,7 +14,8 @@ public sealed class RequestLoggingMiddleware(RequestDelegate next, IServiceProvi
     public async Task InvokeAsync(HttpContext context)
     {
         var method = context.Request.Method.ToUpperInvariant();
-        if (method is not ("POST" or "PUT" or "PATCH" or "DELETE"))
+        if (method is not ("POST" or "PUT" or "PATCH" or "DELETE") ||
+            context.GetEndpoint()?.Metadata.GetMetadata<ReadOnlyRequestAttribute>() is not null)
         {
             await next(context);
             return;

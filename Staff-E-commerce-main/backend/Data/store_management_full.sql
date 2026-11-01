@@ -820,6 +820,8 @@ VALUES
 (CONVERT(varchar(36), NEWID()), 4, 3, 'pos', 'completed', 920000, 138000, 782000, 4, 'cash', 'paid', GETDATE()), -- Order 29: 15% discount
 (CONVERT(varchar(36), NEWID()), 1, 3, 'pos', 'completed', 1050000, 0, 1050000, NULL, 'card', 'paid', GETDATE()); -- Order 30
 
+UPDATE [orders] SET order_number = CONCAT('DH-', FORMAT(id, '000'));
+
 -- ===== ORDER_ITEMS với giá mới =====
 INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, created_at)
 VALUES
@@ -898,7 +900,7 @@ VALUES
 -- Seed invoice snapshots after the sample orders and their items have been inserted.
 INSERT INTO invoices (order_id, invoice_number, invoice_status, payment_status, payment_method,
   customer_name, customer_phone, customer_email, customer_address, subtotal, discount_amount, total_amount, issued_at, updated_at)
-SELECT o.id, CONCAT('HD-', o.order_number), 'issued', o.payment_status, o.payment_method,
+SELECT o.id, CONCAT('INV-', FORMAT(o.id, '000')), 'issued', o.payment_status, o.payment_method,
   COALESCE(c.full_name,N'Khách lẻ'), c.phone, c.email, c.address,
   o.subtotal, o.discount, o.total_amount, o.created_at, o.updated_at
 FROM [orders] o LEFT JOIN customers c ON c.id=o.customer_id
@@ -1043,7 +1045,7 @@ END;
 /* Backfill eligible orders and historical line snapshots, without duplicates. */
 INSERT dbo.invoices (order_id, invoice_number, invoice_status, payment_status, payment_method,
   customer_name, customer_phone, customer_email, customer_address, subtotal, discount_amount, total_amount, issued_at, updated_at)
-SELECT o.id, CONCAT('HD-', o.order_number), 'issued', o.payment_status, o.payment_method,
+SELECT o.id, CONCAT('INV-', FORMAT(o.id, '000')), 'issued', o.payment_status, o.payment_method,
   COALESCE(c.full_name,N'Khách lẻ'), c.phone, c.email, c.address,
   o.subtotal, o.discount, o.total_amount, o.created_at, o.updated_at
 FROM dbo.[orders] o LEFT JOIN dbo.customers c ON c.id=o.customer_id

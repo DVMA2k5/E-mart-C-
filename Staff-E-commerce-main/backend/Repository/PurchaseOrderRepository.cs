@@ -24,12 +24,24 @@ public class PurchaseOrderRepository
         return _context.Products.CountAsync(product => ids.Contains(product.Id) && product.IsActive);
     }
 
-    public Task<List<PurchaseOrder>> GetAllForCacheAsync()
+    public Task<List<PurchaseOrderListDTO>> GetAllForCacheAsync()
     {
         return _context.PurchaseOrders.AsNoTracking()
-            .Include(po => po.Supplier).Include(po => po.User).Include(po => po.Employee)
-            .Include(po => po.Details)
             .OrderByDescending(po => po.CreatedAt).ThenByDescending(po => po.Id)
+            .Select(po => new PurchaseOrderListDTO
+            {
+                Id = po.Id,
+                PoCode = po.PoCode,
+                SupplierId = po.SupplierId,
+                SupplierName = po.Supplier != null ? po.Supplier.Name : string.Empty,
+                UserName = po.User != null ? po.User.FullName : string.Empty,
+                EmployeeId = po.EmployeeId,
+                EmployeeName = po.Employee != null ? po.Employee.FullName : null,
+                TotalAmount = po.Details.Sum(detail => (decimal?)(detail.Quantity * detail.ImportPrice)) ?? 0m,
+                TotalQuantity = po.Details.Sum(detail => (int?)detail.Quantity) ?? 0,
+                Status = po.Status,
+                CreatedAt = po.CreatedAt
+            })
             .ToListAsync();
     }
 

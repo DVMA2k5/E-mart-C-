@@ -13,6 +13,7 @@ public class InvoiceDTO
     public DateTime IssuedAt { get; set; }
     public string PaymentStatus { get; set; } = string.Empty;
     public string? PaymentMethod { get; set; }
+    public string? CreatedByName { get; set; }
     public decimal Subtotal { get; set; }
     public decimal Discount { get; set; }
     public decimal TaxAmount { get; set; }

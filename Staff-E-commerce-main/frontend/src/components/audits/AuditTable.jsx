@@ -11,7 +11,7 @@ export default function AuditTable({
   return (
     <div className="bg-white rounded-xl shadow-xl overflow-hidden p-4">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="management-table w-full text-sm">
           <thead className="bg-gradient-to-r from-gray-100 to-gray-200">
             <tr>
               <th className="px-5 py-3 text-left font-bold">Thời gian</th>

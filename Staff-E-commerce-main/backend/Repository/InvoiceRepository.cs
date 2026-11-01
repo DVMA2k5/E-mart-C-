@@ -31,6 +31,7 @@ public sealed class InvoiceRepository
         .FirstOrDefaultAsync(i => i.OrderId == orderId);
 
     public Task<Order?> GetOrderStatusAsync(int orderId) => _context.Orders
+        .Include(o => o.User)
         .FirstOrDefaultAsync(o => o.Id == orderId);
 
     public Task<List<InvoiceDTO>> GetCompletedInvoiceDtosAsync() => _context.Invoices
@@ -50,6 +51,9 @@ public sealed class InvoiceRepository
             IssuedAt = i.IssuedAt,
             PaymentStatus = i.PaymentStatus,
             PaymentMethod = i.PaymentMethod,
+            CreatedByName = i.Order != null && i.Order.User != null
+                ? i.Order.User.FullName
+                : i.Employee != null ? i.Employee.FullName : "Hệ thống",
             Subtotal = i.Subtotal,
             Discount = i.DiscountAmount,
             TaxAmount = i.TaxAmount,
@@ -63,8 +67,16 @@ public sealed class InvoiceRepository
     public Task<Invoice?> GetDetailByOrderIdAsync(int orderId) => _context.Invoices
         .AsNoTracking()
         .Include(i => i.Items)
-        .Include(i => i.Order)
+        .Include(i => i.Employee)
+        .Include(i => i.Order).ThenInclude(o => o!.User)
         .FirstOrDefaultAsync(i => i.OrderId == orderId);
+
+    public Task<Invoice?> GetDetailByIdAsync(int invoiceId) => _context.Invoices
+        .AsNoTracking()
+        .Include(i => i.Items)
+        .Include(i => i.Employee)
+        .Include(i => i.Order).ThenInclude(o => o!.User)
+        .FirstOrDefaultAsync(i => i.Id == invoiceId);
 
     public Task SaveChangesAsync() => _context.SaveChangesAsync();
 }

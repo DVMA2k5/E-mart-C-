@@ -736,6 +736,8 @@ VALUES
 (CONVERT(varchar(36), NEWID()), 4, 3, 'pos', 'completed', 920000, 138000, 782000, 4, 'cash', 'paid', GETDATE()), -- Order 29: 15% discount
 (CONVERT(varchar(36), NEWID()), 1, 3, 'pos', 'completed', 1050000, 0, 1050000, NULL, 'card', 'paid', GETDATE()); -- Order 30
 
+UPDATE [orders] SET order_number = CONCAT('DH-', FORMAT(id, '000'));
+
 -- ===== ORDER_ITEMS với giá mới =====
 INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, created_at)
 VALUES

@@ -105,6 +105,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ProductService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<InvoiceService>();
+builder.Services.AddSingleton<InvoiceDetailCache>();
 builder.Services.AddScoped<PosCheckoutService>();
 builder.Services.AddScoped<StorefrontService>();
 builder.Services.AddScoped<StorefrontAccountService>();

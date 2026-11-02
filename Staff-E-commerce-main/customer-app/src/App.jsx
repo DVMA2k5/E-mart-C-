@@ -62,6 +62,7 @@ const CART_KEY = "e-mart-mobile-cart";
 const CUSTOMER_KEY = "e-mart-mobile-customer";
 const CUSTOMER_TOKEN_KEY = "e-mart-mobile-customer-token";
 const ADDRESS_KEY = "e-mart-mobile-delivery-address";
+const PRODUCT_PAGE_SIZE = 40;
 
 function deliveryAddressFromProfile(value) {
   const parts = (value || "").trim().split(",").map((part) => part.trim()).filter(Boolean);
@@ -541,6 +542,15 @@ export default function App() {
   const previousCartCount = useRef(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [productPage, setProductPage] = useState(1);
+  const [productsHasMore, setProductsHasMore] = useState(false);
+  const [productsLoadingMore, setProductsLoadingMore] = useState(false);
+  const [flashSaleProducts, setFlashSaleProducts] = useState([]);
+  const [flashSalePage, setFlashSalePage] = useState(1);
+  const [flashSaleHasMore, setFlashSaleHasMore] = useState(false);
+  const [flashSaleLoading, setFlashSaleLoading] = useState(false);
+  const [flashSaleOpen, setFlashSaleOpen] = useState(false);
+  const [countdownNow, setCountdownNow] = useState(Date.now());
   const [query, setQuery] = useState("");
   const [categoryId, setCategoryId] = useState("all");
   const homeListRef = useRef(null);
@@ -602,6 +612,11 @@ export default function App() {
   const [appliedVoucher, setAppliedVoucher] = useState(null);
   const [draftVoucher, setDraftVoucher] = useState(null);
   const [vouchersLoading, setVouchersLoading] = useState(false);
+  const [voucherContext, setVoucherContext] = useState("checkout");
+  const [voucherView, setVoucherView] = useState("available");
+  const [voucherFilter, setVoucherFilter] = useState("all");
+  const [voucherHistory, setVoucherHistory] = useState([]);
+  const [voucherHistoryTab, setVoucherHistoryTab] = useState("used");
 
   const [paymentMethod, setPaymentMethod] = useState("cod");
   const [paymentOptions, setPaymentOptions] = useState({ cod: true, momo: false, bank: false, bankDetails: null });
@@ -676,35 +691,76 @@ export default function App() {
     return () => { active = false; };
   }, [customer?.id, customer?.address, customerToken]);
 
-  const loadStore = useCallback(async (silent = false) => {
-    if (!silent) {
+  const loadStore = useCallback(async (silent = false, page = 1, append = false) => {
+    if (!silent && !append) {
       setLoading(true);
       setLoadError("");
     }
+    if (append) setProductsLoadingMore(true);
     try {
-      const [productsResponse, categoriesResponse] = await Promise.all([
-        fetch(`${API_URL}/storefront/products`, { cache: "no-store" }),
-        fetch(`${API_URL}/storefront/categories`),
-      ]);
+      const productsResponse = await fetch(`${API_URL}/storefront/products/page?page=${page}&pageSize=${PRODUCT_PAGE_SIZE}`, { cache: "no-store" });
       if (!productsResponse.ok) throw new Error(await readError(productsResponse));
-      if (!categoriesResponse.ok) throw new Error(await readError(categoriesResponse));
-      const [productData, categoryData] = await Promise.all([productsResponse.json(), categoriesResponse.json()]);
-      setProducts(Array.isArray(productData) ? productData : []);
-      setCategories(Array.isArray(categoryData) ? categoryData : []);
+      const productPageData = await productsResponse.json();
+      const incoming = Array.isArray(productPageData.items) ? productPageData.items : [];
+      setProducts((current) => {
+        if (append) {
+          const known = new Set(current.map((item) => item.id));
+          return [...current, ...incoming.filter((item) => !known.has(item.id))];
+        }
+        if (silent && current.length) {
+          const refreshed = new Map(incoming.map((item) => [item.id, item]));
+          return current.map((item) => refreshed.get(item.id) || item);
+        }
+        return incoming;
+      });
+      if (!silent) {
+        setProductPage(page);
+        setProductsHasMore(Boolean(productPageData.hasMore));
+      }
+      if (page === 1) {
+        const categoriesResponse = await fetch(`${API_URL}/storefront/categories`);
+        if (!categoriesResponse.ok) throw new Error(await readError(categoriesResponse));
+        const categoryData = await categoriesResponse.json();
+        setCategories(Array.isArray(categoryData) ? categoryData : []);
+      }
     } catch (error) {
-      if (!silent) setLoadError(error.message || "Không thể tải sản phẩm.");
+      if (!silent && !append) setLoadError(error.message || "Không thể tải sản phẩm.");
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && !append) setLoading(false);
+      if (append) setProductsLoadingMore(false);
+    }
+  }, []);
+
+  const loadFlashSale = useCallback(async (page = 1, append = false) => {
+    setFlashSaleLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/storefront/products/page?page=${page}&pageSize=${PRODUCT_PAGE_SIZE}&discountedOnly=true`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      const incoming = Array.isArray(data.items) ? data.items : [];
+      setFlashSaleProducts((current) => append ? [...current, ...incoming.filter((item) => !current.some((known) => known.id === item.id))] : incoming);
+      setFlashSalePage(page);
+      setFlashSaleHasMore(Boolean(data.hasMore));
+    } catch (error) {
+      if (!append) setFlashSaleProducts([]);
+    } finally {
+      setFlashSaleLoading(false);
     }
   }, []);
 
   useEffect(() => {
     loadStore();
+    loadFlashSale();
     const stockRefresh = setInterval(() => {
       if (AppState.currentState === "active") loadStore(true);
     }, 15000);
     return () => clearInterval(stockRefresh);
-  }, [loadStore]);
+  }, [loadStore, loadFlashSale]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setCountdownNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const productInfoRequest = useRef(null);
   const [descriptionStatus, setDescriptionStatus] = useState(null);
@@ -715,11 +771,10 @@ export default function App() {
     productInfoRequest.current = controller;
     setDescriptionStatus({ id: product.id, loading: true });
     // Refresh from the public API, including descriptions edited after app startup.
-    fetch(`${API_URL}/storefront/products`, { cache: "no-store", signal: controller.signal })
+    fetch(`${API_URL}/storefront/products/${product.id}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
-        const data = await response.json();
-        const latest = Array.isArray(data) ? data.find((item) => item.id === product.id) : null;
+        const latest = await response.json();
         if (!latest) throw new Error("Sản phẩm hiện không còn khả dụng.");
         if (controller.signal.aborted) return;
         setProducts((current) => current.map((item) => item.id === product.id && item.description !== latest.description
@@ -1013,7 +1068,7 @@ export default function App() {
 
   const clearCustomerSession = async () => {
     const customerAddressKey = customer?.id ? `${ADDRESS_KEY}:${customer.id}` : null;
-    const sessionKeys = [CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY, customerAddressKey].filter(Boolean);
+    const sessionKeys = [CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY, CART_KEY, customerAddressKey].filter(Boolean);
     let storageError = false;
     try {
       await AsyncStorage.multiRemove(sessionKeys);
@@ -1046,6 +1101,11 @@ export default function App() {
     setCheckoutOpen(false);
     setCheckoutForm({ fullName: "", phone: "", address: "", note: "" });
     setPendingCheckout(null);
+    setCart([]);
+    cartSnapshot.current = { cart: [], loaded: true };
+    setAppliedVoucher(null);
+    setDraftVoucher(null);
+    setUseRewardPoints(false);
 
     if (storageError) Alert.alert("Đăng xuất", "Đã thoát tài khoản trong ứng dụng nhưng thiết bị chưa xóa được phiên đã lưu.");
   };
@@ -1082,6 +1142,11 @@ export default function App() {
     }
     return result;
   }, [products, query, categoryId, sortOption]);
+
+  const visibleVoucherHistory = useMemo(() => voucherHistory.filter((item) => {
+    const expired = item.promotionEndDate && new Date(item.promotionEndDate).getTime() < countdownNow;
+    return voucherHistoryTab === "expired" ? expired : !expired;
+  }), [voucherHistory, voucherHistoryTab, countdownNow]);
 
   const activeDrawerCategory = useMemo(() => (
     categories.find((category) => String(category.id) === String(selectedDrawerCatId))
@@ -1131,8 +1196,11 @@ export default function App() {
   const pointsDiscount = useRewardPoints ? maxPointsUsable * 1000 : 0;
   const payable = Math.max(0, afterVoucher - pointsDiscount);
 
-  const openVouchers = async () => {
-    if (pendingCheckout) return;
+  const openVouchers = async (context = "checkout") => {
+    if (context === "checkout" && pendingCheckout) return;
+    setVoucherContext(context);
+    setVoucherView("available");
+    setVoucherFilter("all");
     setDraftVoucher(appliedVoucher);
     setVoucherOpen(true);
     setVoucherMessage("");
@@ -1141,7 +1209,7 @@ export default function App() {
       const response = await fetch(`${API_URL}/storefront/promotions`);
       if (!response.ok) throw new Error(await readError(response));
       const data = await response.json();
-      setVoucherList(Array.isArray(data) ? data.filter((promotion) => promotion.type === "event") : []);
+      setVoucherList(Array.isArray(data) ? data.filter((promotion) => context === "checkout" ? promotion.type === "event" : (promotion.type === "event" || promotion.type === "voucher")) : []);
     } catch (error) {
       setVoucherMessage(error.message || "Không tải được phiếu mua hàng.");
     } finally {
@@ -1188,7 +1256,45 @@ export default function App() {
   }, [customer, customerToken]);
 
   const navigateToTab = (nextTab) => {
+    if (nextTab === "home") setFlashSaleOpen(false);
     setTab(nextTab);
+  };
+
+  const openVoucherHistory = async () => {
+    if (!customerToken) return;
+    setVoucherView("history");
+    setVouchersLoading(true);
+    setVoucherMessage("");
+    try {
+      const response = await fetch(`${API_URL}/storefront/promotions/history`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      setVoucherHistory(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setVoucherMessage(error.message || "Không tải được lịch sử voucher.");
+    } finally {
+      setVouchersLoading(false);
+    }
+  };
+
+  const openVoucherDiscovery = async () => {
+    if (!customerToken) return;
+    setVoucherContext("account");
+    setVoucherView("discover");
+    setVoucherFilter("all");
+    setVoucherOpen(true);
+    setVoucherMessage("");
+    setVouchersLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/storefront/promotions`);
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      setVoucherList(Array.isArray(data) ? data.filter((promotion) => promotion.type === "voucher" || promotion.type === "event") : []);
+    } catch (error) {
+      setVoucherMessage(error.message || "Không tải được voucher.");
+    } finally {
+      setVouchersLoading(false);
+    }
   };
 
   const flyProductToCart = useCallback((product, event) => {
@@ -1393,6 +1499,17 @@ export default function App() {
   };
 
   const currentBanner = BANNERS[bannerIndex];
+  const flashSaleEnd = flashSaleProducts
+    .map((product) => product.promotionEndsAt ? new Date(product.promotionEndsAt).getTime() : 0)
+    .filter((value) => value > countdownNow)
+    .sort((left, right) => left - right)[0] || countdownNow;
+  const flashRemainingSeconds = Math.max(0, Math.floor((flashSaleEnd - countdownNow) / 1000));
+  const flashCountdown = [
+    { label: "ngày", value: Math.floor(flashRemainingSeconds / 86400) },
+    { label: "giờ", value: Math.floor((flashRemainingSeconds % 86400) / 3600) },
+    { label: "phút", value: Math.floor((flashRemainingSeconds % 3600) / 60) },
+    { label: "giây", value: flashRemainingSeconds % 60 },
+  ].map((part) => ({ ...part, value: String(part.value).padStart(2, "0") }));
 
   // Dynamic responsive card styles
   const cardWidthStyle = useMemo(() => {
@@ -1447,7 +1564,7 @@ export default function App() {
             <Text style={styles.bannerSubtitle} numberOfLines={2}>{currentBanner.subtitle}</Text>
 
             <Pressable
-              onPress={openVouchers}
+              onPress={() => openVouchers()}
               style={styles.bannerCtaBtn}
             >
               <Text style={styles.bannerCtaText}>Xem ưu đãi  ›</Text>
@@ -1466,6 +1583,32 @@ export default function App() {
           </View>
         </View>
 
+        {!!flashSaleProducts.length && <View style={styles.flashHomeSection}>
+          <View style={styles.flashHomeHeading}>
+            <View>
+              <Text style={styles.flashHomeTitle}>FLASH SALE</Text>
+              <View style={styles.flashCountdownRow}>
+                <Text style={styles.flashEndingText}>Kết thúc sau</Text>
+                {flashCountdown.map((part) => <View key={part.label} style={styles.flashTimeGroup}><View style={styles.flashTimeBox}><Text style={styles.flashTimeText}>{part.value}</Text></View><Text style={styles.flashTimeLabel}>{part.label}</Text></View>)}
+              </View>
+            </View>
+            <Pressable onPress={() => setFlashSaleOpen(true)} style={styles.flashShopAllButton}>
+              <Text style={styles.flashShopAllText}>XEM TẤT CẢ</Text>
+            </Pressable>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.flashProductRow}>
+            {flashSaleProducts.slice(0, 8).map((product) => <Pressable key={product.id} onPress={() => openProduct(product)} style={styles.flashProductCard}>
+              <View style={styles.flashProductImageBox}><ProductImage imagePath={product.imageUrl} productId={product.id} categoryName={product.categoryName} style={styles.productImage} /></View>
+              <Text style={styles.flashProductName} numberOfLines={2}>{product.productName}</Text>
+              <Text style={styles.flashProductPrice}>{money(product.price)}</Text>
+              <View style={styles.flashOldPriceRow}>
+                <Text style={styles.flashOriginalPrice}>{money(product.originalPrice)}</Text>
+                <Text style={styles.flashDiscountBadge}>-{Math.round(product.discountPercent || 0)}%</Text>
+              </View>
+            </Pressable>)}
+          </ScrollView>
+        </View>}
+
         {/* 2. DẢI CAM KẾT VÀNG SIÊU THỊ */}
   
 
@@ -1473,7 +1616,6 @@ export default function App() {
           <View style={styles.filterLeft}>
             <Text style={styles.filterResultCount} numberOfLines={1}>
               {categoryId === "all" ? "Tất cả sản phẩm" : (categories.find((c) => String(c.id) === String(categoryId))?.name || "Ngành hàng")}
-              <Text style={styles.filterNumber}> ({visibleProducts.length})</Text>
             </Text>
           </View>
 
@@ -1514,7 +1656,7 @@ export default function App() {
             <Text style={styles.errorTitle}>Chưa kết nối được cửa hàng</Text>
             <Text style={styles.errorText}>{loadError}</Text>
             <Text style={styles.apiHint}>API: {API_URL}</Text>
-            <AppButton title="Thử kết nối lại" onPress={loadStore} />
+            <AppButton title="Thử kết nối lại" onPress={() => loadStore()} />
           </View>
         ) : (
           <View style={styles.emptyState}>
@@ -1524,7 +1666,28 @@ export default function App() {
             <AppButton title="Xem tất cả sản phẩm" onPress={() => { setQuery(""); selectHomeCategory("all"); }} style={styles.emptyCta} />
           </View>
         )}
-      ListFooterComponent={<View style={{ height: 35 }} />}
+      ListFooterComponent={<View style={styles.loadMoreFooter}>
+        {productsHasMore && <AppButton title={productsLoadingMore ? "Đang tải thêm..." : "Load more"} disabled={productsLoadingMore} onPress={() => loadStore(false, productPage + 1, true)} style={styles.loadMoreButton} />}
+      </View>}
+    />
+  );
+
+  const renderFlashSale = () => (
+    <FlatList
+      key={`flash-${isWide ? "wide" : isDesktop ? "desktop" : "mobile"}`}
+      data={flashSaleProducts}
+      keyExtractor={(product) => `flash-${product.id}`}
+      renderItem={renderHomeProduct}
+      numColumns={isWide ? 5 : isDesktop ? 4 : 2}
+      contentContainerStyle={[styles.scrollContent, styles.responsiveContainer]}
+      columnWrapperStyle={styles.homeProductRow}
+      ListHeaderComponent={<View style={styles.flashPageHeader}>
+        <Pressable onPress={() => setFlashSaleOpen(false)} style={styles.flashBackButton}><Text style={styles.flashBackText}>‹</Text></Pressable>
+        <View style={{ flex: 1 }}><Text style={styles.flashPageTitle}>Flash Sale</Text><Text style={styles.flashPageSubtitle}>Giá sốc trong thời gian có hạn</Text></View>
+        <View style={styles.flashCountdownRow}>{flashCountdown.map((part) => <View key={`page-${part.label}`} style={styles.flashTimeGroup}><View style={styles.flashTimeBox}><Text style={styles.flashTimeText}>{part.value}</Text></View><Text style={styles.flashTimeLabel}>{part.label}</Text></View>)}</View>
+      </View>}
+      ListEmptyComponent={flashSaleLoading ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /><Text style={styles.stateText}>Đang tải Flash Sale...</Text></View> : <View style={styles.emptyState}><Text style={styles.emptyTitle}>Hiện chưa có sản phẩm Flash Sale</Text></View>}
+      ListFooterComponent={<View style={styles.loadMoreFooter}>{flashSaleHasMore && <AppButton title={flashSaleLoading ? "Đang tải thêm..." : "Load more"} disabled={flashSaleLoading} onPress={() => loadFlashSale(flashSalePage + 1, true)} style={styles.loadMoreButton} />}</View>}
     />
   );
 
@@ -1601,7 +1764,7 @@ export default function App() {
                 <Text style={styles.freeShipping}>Miễn phí (0đ)</Text>
               </View>
 
-              <Pressable disabled={Boolean(pendingCheckout)} style={styles.voucherRow} onPress={openVouchers}>
+              <Pressable disabled={Boolean(pendingCheckout)} style={styles.voucherRow} onPress={() => openVouchers()}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                   <IconStar size={16} color={BHX_ORANGE} />
                   <Text style={styles.voucherLabel}>Phiếu giảm giá (Voucher)</Text>
@@ -1866,6 +2029,7 @@ export default function App() {
           <View style={styles.infoCard}><Text style={styles.infoTitle}>Thông tin cá nhân</Text>
             <Pressable style={styles.profileMenuRow} onPress={() => { setAccountName(customer.fullName || ""); setProfilePage("personal"); }}><Text style={styles.profileMenuIcon}>♙</Text><Text style={styles.profileMenuText}>Sửa thông tin cá nhân</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
             <Pressable style={styles.profileMenuRow} onPress={() => { setAddressMessage(""); setProfilePage("address"); }}><Text style={styles.profileMenuIcon}>♧</Text><Text style={styles.profileMenuText}>Địa chỉ nhận hàng</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
+            <Pressable style={styles.profileMenuRow} onPress={() => openVouchers("account")}><Text style={styles.profileMenuIcon}>🎟</Text><Text style={styles.profileMenuText}>Voucher của tôi</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
           </View>
           <View style={styles.infoCard}>
             <AppButton title="Đăng xuất" secondary onPress={logoutCustomer} />
@@ -2007,7 +2171,7 @@ export default function App() {
           </View>
 
           {/* Lọc sản phẩm theo danh mục */}
-          {tab === "home" && <ScrollView horizontal style={styles.quickTagsScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow} keyboardShouldPersistTaps="handled">
+          {tab === "home" && !flashSaleOpen && <ScrollView horizontal style={styles.quickTagsScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow} keyboardShouldPersistTaps="handled">
             {[{ id: "all", name: "Tất cả" }, ...categories].map((category) => (
               <Pressable
                 key={category.id}
@@ -2029,7 +2193,7 @@ export default function App() {
 
       {/* NỘI DUNG MÀN HÌNH CHÍNH */}
       <View style={styles.screen}>
-        {tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
+        {tab === "home" ? (flashSaleOpen ? renderFlashSale() : renderHome()) : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
       </View>
 
 
@@ -2041,7 +2205,7 @@ export default function App() {
             { 
               key: "cart", 
               label: "Giỏ hàng", 
-              badge: itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
+              badge: customer && customerToken && itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
               icon: (active) => <IconCart size={20} color={active ? BHX_GREEN : "#64748b"} /> 
             },
             { key: "orders", label: "Đơn hàng", icon: (active) => <IconReceipt size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
@@ -2178,7 +2342,7 @@ export default function App() {
                   ) : loadError ? (
                     <View style={styles.bhxEmptySubState}>
                       <Text style={styles.errorText}>{loadError}</Text>
-                      <AppButton title="Thử lại" onPress={loadStore} />
+                      <AppButton title="Thử lại" onPress={() => loadStore()} />
                     </View>
                   ) : drawerProducts.map((product) => (
                     <Pressable
@@ -2203,6 +2367,9 @@ export default function App() {
                       <Text style={styles.stateText}>{drawerSearchText.trim() ? "Không tìm thấy sản phẩm phù hợp." : "Loại này chưa có sản phẩm."}</Text>
                     </View>
                   )}
+                  {!loading && !loadError && productsHasMore && <View style={styles.drawerLoadMore}>
+                    <AppButton title={productsLoadingMore ? "Đang tải thêm..." : "Load more"} disabled={productsLoadingMore} onPress={() => loadStore(false, productPage + 1, true)} />
+                  </View>}
                 </ScrollView>
               </View>
             </View>
@@ -2407,10 +2574,11 @@ export default function App() {
               <Pressable style={styles.voucherCloseButton} accessibilityRole="button" accessibilityLabel="Quay lại giỏ hàng" onPress={() => setVoucherOpen(false)}>
                 <View style={{ transform: [{ rotate: "180deg" }] }}><IconChevronRight size={24} color="#ee4d2d" /></View>
               </Pressable>
-              <Text style={styles.voucherTitle}>Chọn E-Mart Voucher</Text>
+              <Text style={styles.voucherTitle}>{voucherView === "discover" ? "Siêu Voucher" : (voucherView === "history" ? "Lịch sử voucher" : (voucherContext === "account" ? "Voucher của tôi" : "Chọn E-Mart Voucher"))}</Text>
+              {voucherView === "discover" ? <Pressable onPress={() => setVoucherView("available")} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>Kho voucher</Text></Pressable> : voucherContext === "account" && <Pressable onPress={voucherView === "history" ? () => setVoucherView("available") : openVoucherHistory} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>{voucherView === "history" ? "Voucher" : "Lịch sử"}</Text></Pressable>}
             </View>
 
-            <View style={styles.voucherCodeRow}>
+            {voucherView === "available" && <><View style={styles.voucherCodeRow}>
               <TextInput
                 value={voucherCode}
                 onChangeText={setVoucherCode}
@@ -2422,10 +2590,55 @@ export default function App() {
                 <Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Áp dụng"}</Text>
               </Pressable>
             </View>
+            {voucherContext === "account" && <View style={styles.voucherExploreRow}>
+              <Pressable onPress={openVoucherDiscovery} style={styles.voucherExploreButton}><Text style={styles.voucherExploreText}>⌕ Tìm thêm voucher</Text></Pressable>
+              {[['all', 'Tất cả'], ['voucher', 'Theo voucher'], ['event', 'Theo hóa đơn']].map(([key, label]) => <Pressable key={key} onPress={() => setVoucherFilter(key)} style={[styles.voucherFilterChip, voucherFilter === key && styles.voucherFilterChipActive]}><Text style={[styles.voucherFilterText, voucherFilter === key && styles.voucherFilterTextActive]}>{label}</Text></Pressable>)}
+            </View>}</>}
 
             <ScrollView style={styles.voucherList} contentContainerStyle={styles.voucherListContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {voucherView === "discover" ? <>
+                <View style={styles.voucherDiscoverHero}>
+                  <Text style={styles.voucherDiscoverHeroSmall}>E-MART</Text>
+                  <Text style={styles.voucherDiscoverHeroTitle}>SIÊU VOUCHER</Text>
+                  <Text style={styles.voucherDiscoverHeroText}>Lưu voucher để sử dụng khi mã còn hiệu lực</Text>
+                </View>
+                <View style={styles.voucherDiscoverGuide}>
+                  <Text style={styles.voucherDiscoverGuideText}>• Số lượng có hạn, ưu tiên khách hàng nhận mã sớm.</Text>
+                  <Text style={styles.voucherDiscoverGuideText}>• Voucher đã lưu sẽ xuất hiện trong Kho voucher của tôi.</Text>
+                </View>
+                {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color="#ee4d2d" /><Text style={styles.stateText}>Đang tải voucher...</Text></View> : <View style={styles.voucherDiscoverGrid}>
+                  {voucherList.map((voucher) => {
+                    const soldOut = Number(voucher.usageLimit) > 0 && Number(voucher.usedCount) >= Number(voucher.usageLimit);
+                    return <View key={voucher.id} style={styles.voucherDiscoverCard}>
+                      <View style={styles.voucherDiscoverBadge}>
+                        <Text style={styles.voucherDiscoverBadgeIcon}>★</Text>
+                        <Text style={styles.voucherDiscoverBadgeValue}>{voucher.discountType === "percent" ? `GIẢM ${voucher.value}%` : `GIẢM ${money(voucher.value)}`}</Text>
+                        <Text style={styles.voucherDiscoverBadgeBrand}>E-MART</Text>
+                      </View>
+                      <View style={styles.voucherDiscoverInfo}>
+                        <Text style={styles.voucherDiscoverName}>giảm {voucher.discountType === "percent" ? `${voucher.value}%` : money(voucher.value)}</Text>
+                        {voucher.maxDiscount ? <Text style={styles.voucherDiscoverDetail}>Giảm tối đa {money(voucher.maxDiscount)}</Text> : null}
+                        <Text style={styles.voucherDiscoverDetail}>Đơn tối thiểu {money(voucher.minOrderAmount || 0)}</Text>
+                        <Pressable disabled={soldOut} onPress={() => setVoucherMessage("Tính năng lưu voucher sẽ được áp dụng khi hoàn tất luồng nhận mã.")} style={[styles.voucherDiscoverSave, soldOut && styles.voucherDiscoverSaveDisabled]}><Text style={[styles.voucherDiscoverSaveText, soldOut && styles.voucherDiscoverSaveTextDisabled]}>{soldOut ? "Đã hết mã" : "Lưu"}</Text></Pressable>
+                        <Text style={styles.voucherDiscoverConditions}>Điều kiện</Text>
+                      </View>
+                    </View>;
+                  })}
+                </View>}
+                {!vouchersLoading && !voucherList.length && <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có voucher để nhận.</Text></View>}
+                {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
+              </> : voucherView === "history" ? <>
+                <View style={styles.voucherHistoryTabs}>
+                  {[['used', 'Đã sử dụng'], ['expired', 'Hết hiệu lực']].map(([key, label]) => <Pressable key={key} onPress={() => setVoucherHistoryTab(key)} style={[styles.voucherHistoryTab, voucherHistoryTab === key && styles.voucherHistoryTabActive]}><Text style={[styles.voucherHistoryTabText, voucherHistoryTab === key && styles.voucherHistoryTabTextActive]}>{label}</Text></Pressable>)}
+                </View>
+                {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /></View> : visibleVoucherHistory.map((item) => <View key={item.id} style={styles.voucherHistoryCard}>
+                  <View style={styles.voucherHistoryIcon}><Text style={styles.voucherHistoryIconText}>%</Text></View>
+                  <View style={{ flex: 1 }}><Text style={styles.voucherName}>{item.promotionName}</Text><Text style={styles.voucherMinimum}>Đơn hàng {item.orderNumber || `#${item.orderId}`}</Text><Text style={styles.voucherExpiry}>Sử dụng ngày {new Date(item.redeemedAt).toLocaleDateString("vi-VN")}</Text>{item.promotionCode && <Text style={styles.voucherUse}>Mã: {item.promotionCode}</Text>}</View>
+                </View>)}
+                {!vouchersLoading && !visibleVoucherHistory.length && <View style={styles.centerState}><Text style={styles.stateText}>Chưa có voucher trong mục này.</Text></View>}
+              </> : <>
               {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color="#ee4d2d" /><Text style={styles.stateText}>Đang tải voucher...</Text></View> : [false, true].map((unavailable) => {
-                const vouchers = voucherList.filter((voucher) => !!eventPromotionIssue(voucher, subtotal) === unavailable);
+                const vouchers = voucherList.filter((voucher) => (voucherContext !== "account" || voucherFilter === "all" || voucher.type === voucherFilter) && !!eventPromotionIssue(voucher, subtotal) === unavailable);
                 if (unavailable && !vouchers.length) return null;
                 return <View key={String(unavailable)} style={styles.voucherSection}>
                 <Text style={styles.voucherSubheading}>{unavailable ? "Voucher không khả dụng" : "Mã giảm giá"}</Text>
@@ -2453,11 +2666,11 @@ export default function App() {
                       {voucher.endDate && <Text style={styles.voucherExpiry}>Hạn {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>}
                       <Text style={styles.voucherUsage}>{usagePercent !== null ? `Đã dùng ${usagePercent}%` : `Đã dùng ${voucher.usedCount || 0} lượt · Không giới hạn`}</Text>
                     </View>
-                    <Pressable disabled={disabled} accessibilityRole="radio" accessibilityLabel={`Chọn ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled, checked: selected }} onPress={() => { if (selected) { setDraftVoucher(null); setVoucherMessage(""); } else { applyVoucher("", voucher.id); } }} style={styles.voucherSelectTarget}>
+                    {voucherContext === "account" ? <View style={styles.voucherSaveLater}><Text style={styles.voucherSaveLaterText}>Dùng sau</Text></View> : <Pressable disabled={disabled} accessibilityRole="radio" accessibilityLabel={`Chọn ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled, checked: selected }} onPress={() => { if (selected) { setDraftVoucher(null); setVoucherMessage(""); } else { applyVoucher("", voucher.id); } }} style={styles.voucherSelectTarget}>
                       <View style={[styles.voucherRadio, selected && styles.voucherRadioSelected, !!issue && styles.voucherRadioUnavailable]}>
                         {selected && <Text style={styles.voucherRadioCheck}>✓</Text>}
                       </View>
-                    </Pressable>
+                    </Pressable>}
                   </View>
                   {!!issue && <Text style={styles.voucherUnavailableText}>{issue}</Text>}
                 </View>
@@ -2468,13 +2681,14 @@ export default function App() {
                 <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có ưu đãi sự kiện. Nếu có voucher, bạn có thể nhập mã ở trên.</Text></View>
               )}
               {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
+              </>}
             </ScrollView>
 
-            <View style={styles.voucherFooter}>
+            {voucherContext === "checkout" && voucherView === "available" && <View style={styles.voucherFooter}>
               <Text style={styles.voucherFooterHint}>{draftVoucher ? "1 voucher đã được chọn." : "Chưa chọn voucher."}</Text>
               {draftVoucher && <Text style={styles.voucherFooterSaving}>Giảm <Text style={styles.voucherSavingAmount}>-{money(draftVoucher.discountAmount)}</Text></Text>}
               <AppButton title={voucherBusy ? "Đang kiểm tra..." : "Đồng ý"} disabled={voucherBusy} style={styles.voucherConfirm} onPress={() => { setAppliedVoucher(draftVoucher); setVoucherOpen(false); }} />
-            </View>
+            </View>}
           </View>
         </View>
       </Modal>
@@ -2502,6 +2716,7 @@ const styles = StyleSheet.create({
   bhxModalSearchBox: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8, minHeight: 42, backgroundColor: "#fff", borderRadius: 8, paddingHorizontal: 10 },
   bhxModalSearchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 12, paddingVertical: 8, outlineStyle: "none" },
   drawerBody: { flex: 1, minHeight: 0, flexDirection: "row" },
+  drawerLoadMore: { width: "100%", paddingHorizontal: 12, paddingVertical: 16 },
   drawerSidebarWrapper: { backgroundColor: "#f1f5f9", flexShrink: 0 },
   drawerSidebar: { flex: 1 },
   bhxSidebarItem: { alignItems: "center", justifyContent: "center", minHeight: 88, paddingHorizontal: 6, paddingVertical: 10, gap: 5, borderBottomWidth: 1, borderBottomColor: BORDER_COLOR },
@@ -2567,7 +2782,7 @@ const styles = StyleSheet.create({
   voucherUseText: { color: "#fff", fontSize: 11, fontWeight: "800" },
   header: { backgroundColor: BHX_GREEN, paddingHorizontal: 14, paddingTop: 7, paddingBottom: 10, flexShrink: 0 },
   headerResponsiveInner: { width: "100%", maxWidth: 1200, alignSelf: "center" },
-  locationBar: { backgroundColor: "#fff", borderRadius: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingHorizontal: 12, paddingVertical: 10 },
+  locationBar: { width: "100%", maxWidth: 760, alignSelf: "center", backgroundColor: "#fff", borderRadius: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingHorizontal: 12, paddingVertical: 7 },
   locationLeft: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 4 },
   locationLabel: { color: TEXT_DARK, fontSize: 11 },
   locationAddress: { flex: 1, color: TEXT_DARK, fontSize: 11, fontWeight: "700" },
@@ -2620,6 +2835,32 @@ const styles = StyleSheet.create({
   bannerDots: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 12 },
   bannerDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#ffffff66" },
   bannerDotActive: { width: 20, backgroundColor: BHX_YELLOW },
+  flashHomeSection: { marginTop: 16, backgroundColor: "#fff", borderRadius: 12, paddingVertical: 14 },
+  flashHomeHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginBottom: 12 },
+  flashHomeTitle: { color: "#d32f2f", fontSize: 19, fontWeight: "900" },
+  flashCountdownRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 7 },
+  flashEndingText: { color: TEXT_MUTED, fontSize: 10, marginRight: 3 },
+  flashTimeGroup: { alignItems: "center", gap: 2 },
+  flashTimeBox: { minWidth: 27, height: 27, borderRadius: 4, backgroundColor: "#c83232", alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
+  flashTimeText: { color: "#fff", fontSize: 11, fontWeight: "900" },
+  flashTimeLabel: { color: TEXT_MUTED, fontSize: 8, fontWeight: "600" },
+  flashShopAllButton: { borderWidth: 1, borderColor: BHX_ORANGE, borderRadius: 5, paddingHorizontal: 10, paddingVertical: 9 },
+  flashShopAllText: { color: BHX_ORANGE, fontSize: 10, fontWeight: "800" },
+  flashProductRow: { paddingHorizontal: 12, gap: 10 },
+  flashProductCard: { width: 145, backgroundColor: "#fff" },
+  flashProductImageBox: { height: 130, backgroundColor: "#f7f8f7", borderRadius: 7, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  flashProductName: { color: TEXT_DARK, fontSize: 11, lineHeight: 16, minHeight: 32, marginTop: 7 },
+  flashProductPrice: { color: BHX_ORANGE, fontSize: 14, fontWeight: "900", marginTop: 4 },
+  flashOldPriceRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 3 },
+  flashOriginalPrice: { color: "#9aa1a8", fontSize: 10, textDecorationLine: "line-through" },
+  flashDiscountBadge: { color: "#fff", backgroundColor: "#d33b35", borderRadius: 3, overflow: "hidden", paddingHorizontal: 4, fontSize: 9, fontWeight: "800" },
+  flashPageHeader: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#fff", borderRadius: 12, padding: 12, marginBottom: 14 },
+  flashBackButton: { width: 38, height: 42, alignItems: "center", justifyContent: "center" },
+  flashBackText: { color: BHX_ORANGE, fontSize: 36, lineHeight: 39 },
+  flashPageTitle: { color: TEXT_DARK, fontSize: 19, fontWeight: "900" },
+  flashPageSubtitle: { color: TEXT_MUTED, fontSize: 10, marginTop: 3 },
+  loadMoreFooter: { paddingVertical: 18, alignItems: "center" },
+  loadMoreButton: { width: "100%", maxWidth: 360 },
   trustBar: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 10, paddingVertical: 12, marginTop: 10 },
   trustItem: { flex: 1, minWidth: 0, alignItems: "center", gap: 5, paddingHorizontal: 3 },
   trustLabel: { color: TEXT_MUTED, fontSize: 9, textAlign: "center" },
@@ -2808,6 +3049,45 @@ const styles = StyleSheet.create({
   voucherInput: { flex: 1, minHeight: 48, backgroundColor: "#fff", borderColor: "#dce3e9", borderWidth: 1, borderRadius: 10, paddingHorizontal: 13, color: TEXT_DARK, fontSize: 14 },
   voucherAdd: { width: 86, borderRadius: 6, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center" },
   voucherAddText: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  voucherHistoryButton: { paddingHorizontal: 8, paddingVertical: 10 },
+  voucherHistoryButtonText: { color: "#ee4d2d", fontSize: 13, fontWeight: "700" },
+  voucherExploreRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, backgroundColor: "#fff", paddingHorizontal: 12, paddingBottom: 12 },
+  voucherExploreButton: { width: "100%", minHeight: 42, borderWidth: 1, borderColor: "#f1c2b7", borderRadius: 7, alignItems: "center", justifyContent: "center" },
+  voucherExploreText: { color: "#ee4d2d", fontSize: 13, fontWeight: "700" },
+  voucherDiscoverHero: { margin: 12, minHeight: 118, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 18, justifyContent: "center", backgroundColor: "#f4512a", overflow: "hidden" },
+  voucherDiscoverHeroSmall: { color: "#fff2d8", fontSize: 11, fontWeight: "800", letterSpacing: 2 },
+  voucherDiscoverHeroTitle: { color: "#fff", fontSize: 27, lineHeight: 33, fontWeight: "900", letterSpacing: 0.5 },
+  voucherDiscoverHeroText: { color: "#fff7ed", fontSize: 12, marginTop: 4 },
+  voucherDiscoverGuide: { paddingHorizontal: 20, paddingTop: 7, paddingBottom: 17, gap: 8 },
+  voucherDiscoverGuideText: { color: "#344054", fontSize: 13, lineHeight: 20 },
+  voucherDiscoverGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, paddingHorizontal: 12, paddingBottom: 18 },
+  voucherDiscoverCard: { width: "48.5%", minHeight: 214, flexDirection: "row", backgroundColor: "#fff", borderWidth: 1, borderColor: "#e7e7e7", borderRadius: 10, overflow: "hidden", elevation: 1, shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 3 },
+  voucherDiscoverBadge: { width: 72, paddingHorizontal: 5, paddingVertical: 14, backgroundColor: "#f4512a", alignItems: "center", justifyContent: "center", gap: 7 },
+  voucherDiscoverBadgeIcon: { color: "#ffe084", fontSize: 24, fontWeight: "900" },
+  voucherDiscoverBadgeValue: { color: "#fff", fontSize: 11, textAlign: "center", fontWeight: "900", lineHeight: 15 },
+  voucherDiscoverBadgeBrand: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.7 },
+  voucherDiscoverInfo: { flex: 1, minWidth: 0, paddingHorizontal: 9, paddingVertical: 12, justifyContent: "center" },
+  voucherDiscoverName: { color: "#1d2939", fontSize: 16, lineHeight: 20, fontWeight: "800" },
+  voucherDiscoverDetail: { color: "#475467", fontSize: 10, lineHeight: 15, marginTop: 2 },
+  voucherDiscoverSave: { marginTop: 10, minHeight: 31, borderRadius: 5, alignItems: "center", justifyContent: "center", backgroundColor: "#f4512a" },
+  voucherDiscoverSaveDisabled: { backgroundColor: "#d0d5dd" },
+  voucherDiscoverSaveText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  voucherDiscoverSaveTextDisabled: { color: "#667085" },
+  voucherDiscoverConditions: { color: "#447bc3", fontSize: 10, textAlign: "center", marginTop: 5, fontWeight: "700" },
+  voucherFilterChip: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 16, backgroundColor: "#f2f3f5" },
+  voucherFilterChipActive: { backgroundColor: "#ee4d2d" },
+  voucherFilterText: { color: TEXT_MUTED, fontSize: 11 },
+  voucherFilterTextActive: { color: "#fff", fontWeight: "700" },
+  voucherHistoryTabs: { flexDirection: "row", backgroundColor: "#fff", marginBottom: 10 },
+  voucherHistoryTab: { flex: 1, alignItems: "center", paddingVertical: 14, borderBottomWidth: 2, borderBottomColor: "transparent" },
+  voucherHistoryTabActive: { borderBottomColor: "#ee4d2d" },
+  voucherHistoryTabText: { color: TEXT_MUTED, fontSize: 13 },
+  voucherHistoryTabTextActive: { color: "#ee4d2d", fontWeight: "800" },
+  voucherHistoryCard: { flexDirection: "row", gap: 12, marginHorizontal: 12, marginBottom: 10, padding: 14, backgroundColor: "#fff", borderRadius: 8 },
+  voucherHistoryIcon: { width: 70, minHeight: 86, backgroundColor: "#f6a89b", alignItems: "center", justifyContent: "center" },
+  voucherHistoryIconText: { color: "#fff", fontSize: 29, fontWeight: "900" },
+  voucherSaveLater: { width: 66, alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
+  voucherSaveLaterText: { color: "#ee4d2d", borderWidth: 1, borderColor: "#ee4d2d", borderRadius: 4, paddingHorizontal: 7, paddingVertical: 7, fontSize: 11, textAlign: "center" },
   voucherSubheading: { color: "#222", fontSize: 17, fontWeight: "700", marginBottom: 18 },
   voucherList: { flex: 1 },
   voucherListContent: { paddingBottom: 12 },

@@ -427,6 +427,25 @@ namespace backend.Services
             }).ToList();
         }
 
+        public async Task<List<PromotionRedemptionDTO>> GetCustomerRedemptionHistoryAsync(int customerId)
+        {
+            var redemptions = await _promotionRepository.GetCustomerRedemptionsAsync(customerId);
+            return redemptions.Select(r => new PromotionRedemptionDTO
+            {
+                Id = r.Id,
+                PromotionId = r.PromotionId,
+                CustomerId = r.CustomerId,
+                OrderId = r.OrderId,
+                OrderNumber = r.Order?.OrderNumber,
+                OrderAmount = r.Order?.TotalAmount ?? 0,
+                RedeemedAt = r.RedeemedAt,
+                PromotionName = r.Promotion?.Name ?? "Mã giảm giá",
+                PromotionType = r.Promotion?.Type ?? string.Empty,
+                PromotionCode = r.Promotion?.VoucherDetails?.VoucherCode,
+                PromotionEndDate = r.Promotion?.EndDate
+            }).ToList();
+        }
+
         // Get overview stats
         public async Task<object> GetOverviewStatsAsync()
         {

@@ -36,4 +36,8 @@
     <PackageReference Include="CsvHelper" Version="30.0.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Data\store_management_full.sql" />
+  </ItemGroup>
+
 </Project>

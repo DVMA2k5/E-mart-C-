@@ -9,6 +9,7 @@ public sealed class ReadCacheInvalidationService(
     BusMemoryCache<InventoryAdjustmentDTO> inventoryAdjustments,
     BusMemoryCache<Product> inventory,
     BusMemoryCache<InvoiceDTO> invoices,
+    InvoiceDetailCache invoiceDetails,
     BusMemoryCache<ProductDTO> products,
     BusMemoryCache<PromotionDTO> promotions,
     BusMemoryCache<PurchaseOrderListDTO> purchaseOrders,
@@ -26,6 +27,7 @@ public sealed class ReadCacheInvalidationService(
         inventoryAdjustments.Clear();
         inventory.Clear();
         invoices.Clear();
+        invoiceDetails.Clear();
         products.Clear();
         promotions.Clear();
         purchaseOrders.Clear();

@@ -5,6 +5,7 @@ export const useOrders = () => {
   const [currentOrder, setCurrentOrder] = useState(null);
   const [listOrders, setListOrders] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [totalPages, setTotalPages] = useState(1);
   const [selectedStatus, setSelectedStatus] = useState("");
   const [selectedOrderType, setSelectedOrderType] = useState("");
@@ -20,7 +21,7 @@ export const useOrders = () => {
   const loadOrdersAdvanced = useCallback(async ({ silent = false } = {}) => {
     const sequence = ++latestRequest.current;
     if (invalidDates) { if (!silent) setLoading(false); return; }
-    const params = new URLSearchParams({ pageNumber: currentPage, pageSize: 10 });
+    const params = new URLSearchParams({ pageNumber: currentPage, pageSize });
     if (selectedStatus) params.set("status", selectedStatus);
     if (selectedOrderType) params.set("orderType", selectedOrderType);
     if (searchKeyword.trim()) params.set("search", searchKeyword.trim());
@@ -36,7 +37,7 @@ export const useOrders = () => {
       if (currentPage > pages) setCurrentPage(pages);
     } catch (e) { if (sequence === latestRequest.current) setError(e.message || "Không thể tải đơn hàng."); }
     finally { if (sequence === latestRequest.current) setLoading(false); }
-  }, [currentPage, selectedStatus, selectedOrderType, searchKeyword, selectedStartDate, selectedEndDate, invalidDates]);
+  }, [currentPage, pageSize, selectedStatus, selectedOrderType, searchKeyword, selectedStartDate, selectedEndDate, invalidDates]);
   useEffect(() => { const requests = latestRequest; loadOrdersAdvanced(); return () => { requests.current++; }; }, [loadOrdersAdvanced]);
   const showOrderById = useCallback(async (id) => {
     const sequence = ++detailRequest.current;
@@ -48,7 +49,7 @@ export const useOrders = () => {
     finally { if (sequence === detailRequest.current) setOpening(false); }
   }, []);
   return {
-    currentOrder, listOrders, currentPage, totalPages, setCurrentPage,
+    currentOrder, listOrders, currentPage, totalPages, setCurrentPage, pageSize, setPageSize,
     selectedStatus, setSelectedStatus, selectedStartDate, setSelectedStartDate,
     selectedOrderType, setSelectedOrderType,
     selectedEndDate, setSelectedEndDate, searchKeyword, setSearchKeyword,

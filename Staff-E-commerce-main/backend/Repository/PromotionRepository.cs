@@ -229,5 +229,13 @@ namespace backend.Repository
                 .ToListAsync();
         }
 
+        public Task<List<PromotionRedemption>> GetCustomerRedemptionsAsync(int customerId) =>
+            _context.PromotionRedemptions.AsNoTracking()
+                .Where(redemption => redemption.CustomerId == customerId)
+                .Include(redemption => redemption.Promotion).ThenInclude(promotion => promotion!.VoucherDetails)
+                .Include(redemption => redemption.Order)
+                .OrderByDescending(redemption => redemption.RedeemedAt)
+                .ToListAsync();
+
     }
 }

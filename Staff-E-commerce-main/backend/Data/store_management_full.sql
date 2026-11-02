@@ -1241,6 +1241,8 @@ VALUES
 (CONVERT(varchar(36), NEWID()), 4, 3, 'pos', 'completed', 920000, 138000, 782000, 4, 'cash', 'paid', GETDATE()), -- Order 29: 15% discount
 (CONVERT(varchar(36), NEWID()), 1, 3, 'pos', 'completed', 1050000, 0, 1050000, NULL, 'card', 'paid', GETDATE()); -- Order 30
 
+UPDATE [orders] SET order_number = CONCAT('DH-', FORMAT(id, '000'));
+
 -- ===== ORDER_ITEMS với giá mới =====
 INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, created_at)
 VALUES
@@ -1319,7 +1321,7 @@ VALUES
 -- Seed invoice snapshots after the sample orders and their items have been inserted.
 INSERT INTO invoices (order_id, invoice_number, invoice_status, payment_status, payment_method,
   customer_name, customer_phone, customer_email, customer_address, subtotal, discount_amount, total_amount, issued_at, updated_at)
-SELECT o.id, CONCAT('HD-', o.order_number), 'issued', o.payment_status, o.payment_method,
+SELECT o.id, CONCAT('INV-', FORMAT(o.id, '000')), 'issued', o.payment_status, o.payment_method,
   COALESCE(c.full_name,N'Khách lẻ'), c.phone, c.email, c.address,
   o.subtotal, o.discount, o.total_amount, o.created_at, o.updated_at
 FROM [orders] o LEFT JOIN customers c ON c.id=o.customer_id
@@ -1374,6 +1376,56 @@ VALUES
 
     INSERT INTO dbo.authorization_migrations(name) VALUES ('demo-data-v1');
 END;
+IF OBJECT_ID(N'dbo.invoice_items', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.invoice_items (
+    id INT IDENTITY(1,1) NOT NULL,
+    invoice_id INT NOT NULL,
+    product_id INT NOT NULL,
+    product_name NVARCHAR(255) NOT NULL,
+    sku VARCHAR(100) NULL,
+    quantity INT NOT NULL,
+    unit_price DECIMAL(12,2) NOT NULL,
+    total_price DECIMAL(12,2) NOT NULL,
+    CONSTRAINT pk_invoice_items PRIMARY KEY (invoice_id, product_id),
+    CONSTRAINT fk_invoice_items_invoice FOREIGN KEY (invoice_id) REFERENCES dbo.invoices(id) ON DELETE NO ACTION,
+    CONSTRAINT fk_invoice_items_product FOREIGN KEY (product_id) REFERENCES dbo.products(id) ON DELETE NO ACTION,
+    CONSTRAINT ck_invoice_items_quantity CHECK (quantity > 0),
+    CONSTRAINT ck_invoice_items_amounts CHECK (unit_price >= 0 AND total_price >= 0)
+  );
+END;
+
+/* Backfill eligible orders and historical line snapshots, without duplicates. */
+INSERT dbo.invoices (order_id, invoice_number, invoice_status, payment_status, payment_method,
+  customer_name, customer_phone, customer_email, customer_address, subtotal, discount_amount, total_amount, issued_at, updated_at)
+SELECT o.id, CONCAT('INV-', FORMAT(o.id, '000')), 'issued', o.payment_status, o.payment_method,
+  COALESCE(c.full_name,N'Khách lẻ'), c.phone, c.email, c.address,
+  o.subtotal, o.discount, o.total_amount, o.created_at, o.updated_at
+FROM dbo.[orders] o LEFT JOIN dbo.customers c ON c.id=o.customer_id
+WHERE o.status <> 'cancelled' AND (o.status IN ('processing','completed') OR o.payment_status='paid')
+  AND NOT EXISTS (SELECT 1 FROM dbo.invoices i WHERE i.order_id=o.id);
+
+INSERT dbo.invoice_items (invoice_id, product_id, product_name, sku, quantity, unit_price, total_price)
+SELECT i.id, oi.product_id, COALESCE(p.product_name,N'Sản phẩm'), p.sku, oi.quantity, oi.unit_price, oi.total_price
+FROM dbo.invoices i JOIN dbo.order_items oi ON oi.order_id=i.order_id
+LEFT JOIN dbo.products p ON p.id=oi.product_id
+WHERE NOT EXISTS (SELECT 1 FROM dbo.invoice_items ii WHERE ii.invoice_id=i.id);
+
+UPDATE i SET invoice_status=CASE WHEN o.status='cancelled' THEN 'voided'
+                                 WHEN o.payment_status='refunded' OR o.status='refunded' THEN 'refunded'
+                                 WHEN o.payment_status='paid' THEN 'paid' ELSE 'issued' END,
+             payment_status=CASE WHEN o.payment_status='refunded' OR o.status='refunded' THEN 'refunded' ELSE o.payment_status END
+FROM dbo.invoices i JOIN dbo.[orders] o ON o.id=i.order_id;
+
+IF OBJECT_ID(N'dbo.ck_orders_status', N'C') IS NOT NULL
+  ALTER TABLE dbo.[orders] DROP CONSTRAINT ck_orders_status;
+ALTER TABLE dbo.[orders] ADD CONSTRAINT ck_orders_status CHECK (status IN ('pending','processing','completed','cancelled','refunded'));
+
+IF OBJECT_ID(N'dbo.ck_orders_payment_status', N'C') IS NOT NULL
+  ALTER TABLE dbo.[orders] DROP CONSTRAINT ck_orders_payment_status;
+ALTER TABLE dbo.[orders] ADD CONSTRAINT ck_orders_payment_status CHECK (payment_status IN ('pending','paid','failed','refunded'));
+
+COMMIT TRANSACTION;
 GO
 CREATE OR ALTER TRIGGER dbo.trg_invoices_lock_paid_amounts ON dbo.invoices
 AFTER UPDATE AS

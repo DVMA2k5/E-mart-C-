@@ -115,6 +115,41 @@ public sealed class StorefrontRepository
             .ToListAsync();
     }
 
+    public async Task<(List<Product> Items, int TotalItems)> GetAvailableProductPageAsync(
+        int page, int pageSize, bool discountedOnly, DateTime today)
+    {
+        var query = _context.Products.AsNoTracking()
+            .Where(product => product.IsActive && product.StockQuantity > 0);
+
+        if (discountedOnly)
+        {
+            query = query.Where(product => _context.ProductPromotions.Any(link =>
+                link.ProductId == product.Id && link.Promotion != null &&
+                !link.Promotion.IsDeleted && link.Promotion.Status == "active" &&
+                link.Promotion.Type == "product" &&
+                (!link.Promotion.StartDate.HasValue || link.Promotion.StartDate.Value.Date <= today) &&
+                (!link.Promotion.EndDate.HasValue || link.Promotion.EndDate.Value.Date >= today) &&
+                (!link.Promotion.UsageLimit.HasValue || link.Promotion.UsedCount < link.Promotion.UsageLimit)));
+        }
+
+        var totalItems = await query.CountAsync();
+        var items = await query
+            .Include(product => product.Category)
+            .Include(product => product.Unit)
+            .OrderBy(product => product.ProductName)
+            .ThenBy(product => product.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+        return (items, totalItems);
+    }
+
+    public Task<Product?> GetAvailableProductByIdAsync(int productId) =>
+        _context.Products.AsNoTracking()
+            .Include(product => product.Category)
+            .Include(product => product.Unit)
+            .FirstOrDefaultAsync(product => product.Id == productId && product.IsActive && product.StockQuantity > 0);
+
     public Task<List<ProductPromotion>> GetActiveProductPromotionsAsync(List<int> productIds, DateTime today)
     {
         return _context.ProductPromotions.AsNoTracking()

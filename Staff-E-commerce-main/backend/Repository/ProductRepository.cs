@@ -23,6 +23,7 @@ namespace backend.Repository
         {
             return await _context.Products
                 .AsNoTracking()
+                .AsSplitQuery()
                 .Include(p => p.Category)
                 .Include(p => p.Supplier)
                 .Include(p => p.Unit)

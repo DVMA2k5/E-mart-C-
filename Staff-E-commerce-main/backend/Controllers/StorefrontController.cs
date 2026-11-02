@@ -19,7 +19,15 @@ public sealed class StorefrontController(
     public async Task<IActionResult> GetStorefrontPromotions()
     {
         var items = await promotions.GetActivePromotionsAsync();
-        return Ok(items.Where(item => item.Type == "event"));
+        return Ok(items.Where(item => item.Type is "event" or "voucher"));
+    }
+
+    [HttpGet("promotions/history")]
+    [Authorize(Roles = "customer")]
+    public async Task<IActionResult> GetPromotionHistory()
+    {
+        if (!TryGetCustomerId(out var customerId)) return InvalidSession();
+        return Ok(await promotions.GetCustomerRedemptionHistoryAsync(customerId));
     }
 
     [HttpPost("promotions/validate")]
@@ -111,6 +119,22 @@ public sealed class StorefrontController(
     [AllowAnonymous]
     public async Task<ActionResult<List<StorefrontProductDTO>>> GetProducts() =>
         Ok(await storefront.GetAvailableProductsAsync());
+
+    [HttpGet("products/page")]
+    [AllowAnonymous]
+    public async Task<ActionResult<StorefrontProductPageDTO>> GetProductPage(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 40,
+        [FromQuery] bool discountedOnly = false) =>
+        Ok(await storefront.GetAvailableProductsPageAsync(page, pageSize, discountedOnly));
+
+    [HttpGet("products/{id:int}")]
+    [AllowAnonymous]
+    public async Task<ActionResult<StorefrontProductDTO>> GetProduct(int id)
+    {
+        var product = await storefront.GetAvailableProductAsync(id);
+        return product == null ? NotFound(new { message = "Sản phẩm hiện không còn khả dụng." }) : Ok(product);
+    }
 
     [HttpGet("categories")]
     [AllowAnonymous]

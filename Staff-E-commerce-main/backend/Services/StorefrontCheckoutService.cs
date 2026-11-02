@@ -139,7 +139,7 @@ public sealed class StorefrontCheckoutService(
 
                 order = new Order
                 {
-                    OrderNumber = $"WEB-{Guid.NewGuid():N}",
+                    OrderNumber = DocumentNumber.Temporary("DH"),
                     OrderType = "mobile",
                     CustomerId = customerId,
                     CheckoutKey = requestId.ToString(),
@@ -163,6 +163,7 @@ public sealed class StorefrontCheckoutService(
 
                 repository.AddOrder(order);
                 await repository.SaveChangesAsync();
+                order.OrderNumber = DocumentNumber.Order(order.Id);
                 foreach (var line in lines)
                 {
                     if (!await repository.TryReduceStockAsync(line.ProductId, line.Quantity, now))

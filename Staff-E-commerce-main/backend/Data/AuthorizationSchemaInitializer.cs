@@ -7,6 +7,8 @@ public static class AuthorizationSchemaInitializer
         await using var scope = services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await DatabaseSchemaInitializer.InitializeAsync(db);
+        await DocumentNumberSchemaMigration.MigrateAsync(db);
+        await PurchaseOrderNumberSchemaMigration.MigrateAsync(db);
         // Structured delivery data requires the existing C# parser for legacy notes.
         await OrderDeliverySchemaMigration.MigrateAsync(db);
     }

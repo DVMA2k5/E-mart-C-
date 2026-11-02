@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { getCategoryById, updateCategory } from "../../api/categoryApi";
 
-export default function CategoryEditModal({ onClose, categoryId, onSave }) {
+export default function CategoryEditModal({ onClose, categoryId, onSave, embedded = false }) {
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -109,19 +109,19 @@ export default function CategoryEditModal({ onClose, categoryId, onSave }) {
   if (!categoryId) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4">
+    <div className={embedded ? "management-detail-panel w-full" : "fixed inset-0 z-40 flex items-center justify-center bg-black/50"}>
+      <div className={embedded ? "w-full rounded-xl border bg-white shadow-sm" : "bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4"}>
         {/* Header */}
         <div className="flex justify-between items-center p-6 border-b border-gray-200">
           <h2 className="text-2xl font-bold text-gray-800">
             Chỉnh Sửa Thông Tin Danh Mục
           </h2>
-          <button
+          {!embedded && <button
             onClick={onClose}
             className="p-1 hover:bg-gray-100 rounded-lg transition"
           >
             <X size={24} className="text-gray-600" />
-          </button>
+          </button>}
         </div>
 
         {/* Body */}

@@ -1,16 +1,18 @@
 // Updated ProductList.jsx with role-based access control
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { BASE_URL, getProductsPaginated, request } from "../../api/apiClient";
+import { advancedSearchProducts, BASE_URL, getProductsPaginated, request } from "../../api/apiClient";
 import { ImageOff } from "lucide-react";
 import { formatPrice } from "../../utils/formatPrice";
 import ProductModal from "../../components/products/ProductModal";
+import AdvancedProductSearch from "../../components/products/AdvancedProductSearch";
 import ImportModal from "../../components/import/ImportModal";
 import { getAllCategories } from "../../api/categoryApi";
 import { useAuth } from "../../hook/useAuth";
 import { getInventoryStats } from "../../api/inventoryApi";
 import InventoryHistory from "../inventory/InventoryHistory";
 import { useRealtimeNotifications } from "../../hooks/useRealtimeNotifications";
+import TableDisplayControls from "../../components/ui/TableDisplayControls";
 
 function ProductThumbnail({ imagePath, name }) {
   const [failedSource, setFailedSource] = useState(null);
@@ -20,7 +22,7 @@ function ProductThumbnail({ imagePath, name }) {
     catch { source = ""; }
   }
   return (
-    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+    <div className="product-thumbnail flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
       {source && failedSource !== source ? (
         <img src={source} alt={name} loading="lazy" className="h-full w-full object-contain" onError={() => setFailedSource(source)} />
       ) : <span title="Chưa có ảnh sản phẩm" role="img" aria-label="Chưa có ảnh sản phẩm"><ImageOff size={22} className="text-gray-400" /></span>}
@@ -43,13 +45,14 @@ export default function ProductList() {
   const [meta, setMeta] = useState({
     totalItems: 0,
     currentPage: 1,
-    pageSize: 12,
+    pageSize: 25,
     totalPages: 1,
     hasNext: false,
     hasPrevious: false,
   });
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(25);
+  const [compact, setCompact] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSupplier, setSelectedSupplier] = useState("");
   const [minPrice, setMinPrice] = useState("");
@@ -62,9 +65,11 @@ export default function ProductList() {
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [advancedConditions, setAdvancedConditions] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const latestProductRequest = useRef(0);
 
   // modal state
   const [modalState, setModalState] = useState({
@@ -79,34 +84,34 @@ export default function ProductList() {
   const [importModalOpen, setImportModalOpen] = useState(false);
 
   // Hàm fetch categories
-  const fetchCategories = async () => {
+  const fetchCategories = useCallback(async () => {
     try {
       const data = await getAllCategories();
       setCategories(Array.isArray(data) ? data : (data?.items || data?.value || []));
     } catch (error) {
       console.error("Lỗi khi tải danh mục:", error);
     }
-  };
+  }, []);
 
   // Hàm fetch suppliers
-  const fetchSuppliers = async () => {
+  const fetchSuppliers = useCallback(async () => {
     try {
       const data = await request("/suppliers");
       setSuppliers(Array.isArray(data) ? data : (data?.items || []));
     } catch (error) {
       console.error("Lỗi khi tải nhà cung cấp:", error);
     }
-  };
+  }, []);
 
   // Hàm fetch units
-  const fetchUnits = async () => {
+  const fetchUnits = useCallback(async () => {
     try {
       const data = await request("/units");
       setUnits(Array.isArray(data) ? data : (data?.items || []));
     } catch (error) {
       console.error("Lỗi khi tải đơn vị:", error);
     }
-  };
+  }, []);
 
   // --- debounce search: chỉ cập nhật debouncedSearch (reset page về 1)
   useEffect(() => {
@@ -122,27 +127,43 @@ export default function ProductList() {
   // --- fetchProducts: stable function, nhận params (p, ps, q)
   const fetchProducts = useCallback(
     async (p = 1, ps = pageSize, q = "") => {
+      const requestId = ++latestProductRequest.current;
       // small UX: show loader only if request > 150ms to avoid flicker
       let showLoader = true;
       const loaderTimer = setTimeout(() => {
-        if (showLoader) setLoading(true);
+        if (showLoader && requestId === latestProductRequest.current) setLoading(true);
       }, 150);
 
       setError(null);
       try {
-        const data = await getProductsPaginated(
-          p,
-          ps,
-          q,
-          selectedCategory || null,
-          selectedSupplier || null,
-          minPrice || null,
-          maxPrice || null,
-          sortBy,
-          status || null,
-          stockStatus
-        );
+        const data = advancedConditions.length > 0
+          ? await advancedSearchProducts({
+              page: p,
+              pageSize: ps,
+              search: q,
+              categoryId: selectedCategory ? Number(selectedCategory) : null,
+              supplierId: selectedSupplier ? Number(selectedSupplier) : null,
+              minPrice: minPrice === "" ? null : Number(minPrice),
+              maxPrice: maxPrice === "" ? null : Number(maxPrice),
+              sortBy,
+              status: status === "" ? null : Number(status),
+              stockStatus,
+              conditions: advancedConditions,
+            })
+          : await getProductsPaginated(
+              p,
+              ps,
+              q,
+              selectedCategory || null,
+              selectedSupplier || null,
+              minPrice || null,
+              maxPrice || null,
+              sortBy,
+              status || null,
+              stockStatus
+            );
         const itemsArr = data.items ?? data.Items ?? [];
+        if (requestId !== latestProductRequest.current) return;
         setItems(itemsArr);
         setMeta({
           totalItems: data.totalItems ?? data.TotalItems ?? itemsArr.length,
@@ -154,11 +175,13 @@ export default function ProductList() {
         });
       } catch (err) {
         console.error(err);
-        setError(err.message || "Lỗi khi tải sản phẩm");
+        if (requestId === latestProductRequest.current) {
+          setError(err.message || "Lỗi khi tải sản phẩm");
+        }
       } finally {
         showLoader = false;
         clearTimeout(loaderTimer);
-        setLoading(false);
+        if (requestId === latestProductRequest.current) setLoading(false);
       }
     },
     [
@@ -170,15 +193,19 @@ export default function ProductList() {
       sortBy,
       status,
       stockStatus,
+      advancedConditions,
     ]
   );
 
   // --- gọi fetch chỉ 1 chỗ: khi page / pageSize / debouncedSearch thay đổi
   useEffect(() => {
+    fetchCategories();
+    fetchSuppliers();
+    fetchUnits();
+  }, [fetchCategories, fetchSuppliers, fetchUnits]);
+
+  useEffect(() => {
     fetchProducts(page, pageSize, debouncedSearch);
-    fetchCategories(); // Load categories khi component mount
-    fetchSuppliers(); // Load suppliers khi component mount
-    fetchUnits(); // Load units khi component mount
   }, [page, pageSize, debouncedSearch, fetchProducts]);
 
   const fetchStats = useCallback(async () => {
@@ -212,15 +239,37 @@ export default function ProductList() {
     setSortBy("newest");
     setStatus("");
     setStockStatus("");
+    setAdvancedConditions([]);
+    setPage(1);
+  };
+
+  const applyAdvancedSearch = (conditions) => {
+    setAdvancedConditions(conditions);
+    setPage(1);
+  };
+
+  const clearAdvancedSearch = () => {
+    setAdvancedConditions([]);
     setPage(1);
   };
 
   // --- Mở modal
   const openModal = useCallback((mode, product = null) => {
-    setModalState({
-      open: true,
-      mode,
-      product: product || {},
+    setModalState((current) => {
+      if (
+        mode === "view" &&
+        current.open &&
+        current.mode === "view" &&
+        current.product?.id === product?.id
+      ) {
+        return { open: false, mode: null, product: null };
+      }
+
+      return {
+        open: true,
+        mode,
+        product: product || {},
+      };
     });
   }, []);
 
@@ -345,14 +394,14 @@ export default function ProductList() {
     return <span className="px-2 py-1 text-xs rounded-full bg-emerald-100 text-emerald-800">Còn hàng</span>;
   };
   return (
-    <div className="p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-4">
+    <div className="p-1 sm:p-2">
+      <div className="w-full">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-2xl font-semibold text-gray-800">
             Danh sách sản phẩm
           </h1>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               type="text"
               placeholder="Tìm kiếm sản phẩm..."
@@ -380,18 +429,18 @@ export default function ProductList() {
           </div>
         </div>
 
-        <div className="flex gap-1 mb-5 bg-gray-100 rounded-xl p-1 w-fit">
+        <div className="flex gap-1 mb-3 bg-gray-100 rounded-xl p-1 w-fit">
           <button onClick={() => setActiveTab("products")} className={`px-5 py-2 rounded-lg text-sm font-semibold ${activeTab === "products" ? "bg-white text-primary-700 shadow-sm" : "text-gray-600"}`}>📦 Danh sách sản phẩm</button>
           <button onClick={() => setActiveTab("history")} className={`px-5 py-2 rounded-lg text-sm font-semibold ${activeTab === "history" ? "bg-white text-primary-700 shadow-sm" : "text-gray-600"}`}>📋 Lịch sử biến động</button>
         </div>
 
         {activeTab === "history" ? <InventoryHistory /> : <>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-primary-500"><div className="text-sm text-gray-600">Tổng sản phẩm</div><div className="text-2xl font-bold text-gray-800">{stats.total}</div></div>
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-red-500"><div className="text-sm text-gray-600">Hết hàng</div><div className="text-2xl font-bold text-red-600">{stats.outOfStock}</div></div>
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-amber-500"><div className="text-sm text-gray-600">Sắp hết hàng</div><div className="text-2xl font-bold text-amber-600">{stats.lowStock}</div></div>
-          <div className="bg-white p-4 rounded-md shadow-sm border-l-4 border-emerald-500"><div className="text-sm text-gray-600">Còn hàng</div><div className="text-2xl font-bold text-emerald-600">{stats.inStock}</div></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+          <div className="bg-white px-3 py-2 rounded-md shadow-sm border-l-4 border-primary-500"><div className="text-sm text-gray-600">Tổng sản phẩm</div><div className="text-xl font-bold text-gray-800">{stats.total}</div></div>
+          <div className="bg-white px-3 py-2 rounded-md shadow-sm border-l-4 border-red-500"><div className="text-sm text-gray-600">Hết hàng</div><div className="text-xl font-bold text-red-600">{stats.outOfStock}</div></div>
+          <div className="bg-white px-3 py-2 rounded-md shadow-sm border-l-4 border-amber-500"><div className="text-sm text-gray-600">Sắp hết hàng</div><div className="text-xl font-bold text-amber-600">{stats.lowStock}</div></div>
+          <div className="bg-white px-3 py-2 rounded-md shadow-sm border-l-4 border-emerald-500"><div className="text-sm text-gray-600">Còn hàng</div><div className="text-xl font-bold text-emerald-600">{stats.inStock}</div></div>
         </div>
 
         {/* BỘ LỌC */}
@@ -540,6 +589,12 @@ export default function ProductList() {
           </div>
         </div>
 
+        <AdvancedProductSearch
+          appliedConditions={advancedConditions}
+          onApply={applyAdvancedSearch}
+          onClear={clearAdvancedSearch}
+        />
+
         {notification && (
           <div
             className={`mb-3 p-2 rounded ${
@@ -552,8 +607,15 @@ export default function ProductList() {
           </div>
         )}
 
-        <div className="overflow-x-auto bg-white rounded-md shadow-sm">
-          <table className="min-w-full divide-y divide-gray-200">
+        <div className={`grid items-start gap-3 ${modalState.open && modalState.mode !== "create" ? "xl:grid-cols-[minmax(0,1.75fr)_minmax(320px,0.8fr)]" : "grid-cols-1"}`}>
+        <section className="min-w-0">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <TableDisplayControls pageSize={pageSize} compact={compact} onCompactChange={setCompact} disabled={loading}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
+          <span className="text-sm text-gray-500">{meta.totalItems} sản phẩm</span>
+        </div>
+        <div className="management-table-scroll bg-white rounded-md shadow-sm" key={`${page}-${pageSize}`}>
+          <table className="management-table min-w-full divide-y divide-gray-200" data-compact={compact}>
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">
@@ -610,12 +672,12 @@ export default function ProductList() {
                 </tr>
               ) : (
                 items.map((p, idx) => (
-                  <tr key={p.id ?? idx} onClick={() => openModal("view", p)} title="Bấm để xem chi tiết" className="cursor-pointer hover:bg-primary-50/60">
+                  <tr key={p.id ?? idx} onClick={() => openModal("view", p)} title="Bấm để xem hoặc ẩn chi tiết" className={`cursor-pointer hover:bg-primary-50/60 ${modalState.open && modalState.mode === "view" && modalState.product?.id === p.id ? "bg-primary-50" : ""}`}>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {(meta.currentPage - 1) * meta.pageSize + idx + 1}
                     </td>
                     <td className="px-4 py-3">
-                      <button type="button" onClick={() => openModal("view", p)} aria-label={`Xem chi tiết ${getName(p)}`} className="block rounded-lg focus-visible:outline-2 focus-visible:outline-primary-600">
+                      <button type="button" onClick={(event) => { event.stopPropagation(); openModal("view", p); }} aria-label={`Xem chi tiết ${getName(p)}`} className="block rounded-lg focus-visible:outline-2 focus-visible:outline-primary-600">
                         <ProductThumbnail imagePath={p.imageUrl || p.image_url || (p.id ? `/assets/images/products/product-${p.id}.jpg` : "")} name={getName(p)} />
                       </button>
                     </td>
@@ -637,7 +699,12 @@ export default function ProductList() {
                       <div className="flex flex-col items-center gap-1"><span className={getQty(p) === 0 ? "text-red-600 font-semibold" : getQty(p) < 10 ? "text-amber-600 font-semibold" : "text-emerald-600 font-semibold"}>{getQty(p)}</span>{getQuantityBadge(getQty(p))}</div>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
-                      {p.supplier?.name}
+                      <div>{p.supplier?.name || "—"}</div>
+                      {p.region && (
+                        <span className="mt-1 inline-flex rounded bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">
+                          Miền {p.region}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {p.category?.name}
@@ -650,13 +717,7 @@ export default function ProductList() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-center" onClick={(event) => event.stopPropagation()}>
-                      <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => openModal("view", p)}
-                          className="px-2 py-1 bg-primary-100 rounded text-primary-800 hover:bg-primary-200"
-                        >
-                          Chi tiết
-                        </button>
+                      <div className="table-actions flex items-center justify-center gap-2">
                         {!isStaff && (
                           <>
                             <button
@@ -687,11 +748,11 @@ export default function ProductList() {
         </div>
 
         {/* Pagination */}
-        <div className="mt-4 flex items-center justify-between">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-gray-600">
             Hiển thị{" "}
             <strong>
-              {(meta.currentPage - 1) * meta.pageSize + 1} -{" "}
+              {meta.totalItems ? (meta.currentPage - 1) * meta.pageSize + 1 : 0} -{" "}
               {Math.min(meta.currentPage * meta.pageSize, meta.totalItems)}
             </strong>{" "}
             / {meta.totalItems} sản phẩm
@@ -701,20 +762,20 @@ export default function ProductList() {
             <button
               className="px-3 py-1 rounded-md bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
               onClick={() => setPage(1)}
-              disabled={meta.currentPage === 1}
+              disabled={loading || meta.currentPage === 1}
             >
-              First
+              Đầu
             </button>
             <button
               className="px-3 py-1 rounded-md bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
               onClick={() => setPage(Math.max(1, meta.currentPage - 1))}
-              disabled={!meta.hasPrevious}
+              disabled={loading || !meta.hasPrevious}
             >
-              Prev
+              Trước
             </button>
 
             <span className="px-3 py-1 rounded-md bg-white border">
-              {meta.currentPage} / {meta.totalPages}
+              {meta.currentPage} / {Math.max(1, meta.totalPages)}
             </span>
 
             <button
@@ -722,24 +783,49 @@ export default function ProductList() {
               onClick={() =>
                 setPage(Math.min(meta.totalPages, meta.currentPage + 1))
               }
-              disabled={!meta.hasNext}
+              disabled={loading || !meta.hasNext}
             >
-              Next
+              Sau
             </button>
             <button
               className="px-3 py-1 rounded-md bg-gray-100 hover:bg-gray-200 disabled:opacity-50"
               onClick={() => setPage(meta.totalPages)}
-              disabled={meta.currentPage === meta.totalPages}
+              disabled={loading || !meta.hasNext}
             >
-              Last
+              Cuối
             </button>
           </div>
+        </div>
+        </section>
+
+        {modalState.open && modalState.mode !== "create" && (
+          <div className="management-detail-panel min-w-0">
+            <ProductModal
+              embedded
+              mode={isStaff ? "view" : modalState.mode}
+              product={modalState.product}
+              onSave={handleSave}
+              onCreatePurchaseOrder={!isStaff ? (product) => navigate("/purchase-orders", { state: { prefillProduct: product } }) : undefined}
+              onCancel={closeModal}
+              onDelete={() => {
+                if (modalState.product?.id && !isStaff) {
+                  handleDelete(modalState.product.id);
+                  closeModal();
+                }
+              }}
+              saving={saving}
+              categories={categories}
+              suppliers={suppliers}
+              units={units}
+            />
+          </div>
+        )}
         </div>
         </>}
       </div>
 
       {/* Universal Modal */}
-      {modalState.open && (
+      {modalState.open && modalState.mode === "create" && (
         <ProductModal
           mode={isStaff ? "view" : modalState.mode}
           product={modalState.product}

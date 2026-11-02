@@ -42,16 +42,6 @@ namespace backend.Repository
             return category;
         }
 
-        public async Task<bool> DeleteAsync(int id)
-        {
-            var entity = await _context.Categories.FindAsync(id);
-            if (entity == null) return false;
-
-            _context.Categories.Remove(entity);
-            await _context.SaveChangesAsync();
-            return true;
-        }
-
         public async Task<bool> ExistsByNameAsync(string name, int? excludeId = null)
         {
             var q = _context.Categories.AsQueryable().Where(c => c.Name == name);

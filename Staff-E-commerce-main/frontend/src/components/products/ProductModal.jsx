@@ -16,6 +16,7 @@ const ProductModal = ({
   categories = [],
   suppliers = [],
   units = [],
+  embedded = false,
 }) => {
   const [formData, setFormData] = useState({});
   const [errors, setErrors] = useState({});
@@ -319,8 +320,8 @@ const ProductModal = ({
   const isView = mode === "view";
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-md w-full max-w-4xl p-4 shadow-lg">
+    <div className={embedded ? "w-full" : "fixed inset-0 z-40 flex items-center justify-center bg-black/50"}>
+      <div className={embedded ? "w-full rounded-xl border bg-white p-4 shadow-sm" : "bg-white rounded-md w-full max-w-4xl p-4 shadow-lg"}>
         <div className="flex justify-between items-center mb-3">
           <h3 className="text-lg font-semibold">{modalTitle}</h3>
           {onDelete && mode !== "create" && (
@@ -333,9 +334,9 @@ const ProductModal = ({
           )}
         </div>
 
-        <div className="flex gap-4">
+        <div className={embedded ? "space-y-4" : "flex gap-4"}>
           {/* --- CỘT TRÁI: ẢNH SẢN PHẨM --- */}
-          <div className="w-1/3">
+          <div className={embedded ? "w-full" : "w-1/3"}>
             <label className="text-xs text-gray-600 mb-2 block">
               Hình ảnh sản phẩm
             </label>
@@ -468,7 +469,7 @@ const ProductModal = ({
               </div>
             )}
           </div>
-          <div className="w-2/3">
+          <div className={embedded ? "w-full" : "w-2/3"}>
             <div className="grid grid-cols-2 gap-3">
               {/* --- TÊN SẢN PHẨM --- */}
               <div>
@@ -762,9 +763,11 @@ const ProductModal = ({
                     Nhập hàng từ nhà cung cấp
                   </button>
                 )}
-                <button className="px-3 py-1 rounded border" onClick={onCancel}>
-                  Hủy
-                </button>
+                {(!embedded || !isView) && (
+                  <button className="px-3 py-1 rounded border" onClick={onCancel}>
+                    {isView ? "Đóng" : "Hủy"}
+                  </button>
+                )}
                 {!isView && (
                   <button
                     className="px-3 py-1 rounded bg-primary-600 text-white hover:bg-primary-700"

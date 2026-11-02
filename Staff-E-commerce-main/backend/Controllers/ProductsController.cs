@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using backend.Models;
 using backend.Services;
 using backend.DTO;
+using backend.Security;
 
 namespace backend.Controllers
 {
@@ -44,6 +45,21 @@ namespace backend.Controllers
             var result = await _productService.GetPaginatedProductsAsync(
                 page, pageSize, search, categoryId, supplierId, minPrice, maxPrice, sortBy, status, stockStatus);
             return Ok(result);
+        }
+
+        [HttpPost("advanced-search")]
+        [ReadOnlyRequest]
+        public async Task<ActionResult<PaginationResult<ProductDTO>>> AdvancedSearch(
+            [FromBody] ProductAdvancedSearchRequestDTO request)
+        {
+            try
+            {
+                return Ok(await _productService.AdvancedSearchProductsAsync(request));
+            }
+            catch (ValidationException exception)
+            {
+                return BadRequest(new { errors = exception.Errors });
+            }
         }
 
 

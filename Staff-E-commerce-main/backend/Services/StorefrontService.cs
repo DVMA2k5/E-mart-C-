@@ -47,6 +47,33 @@ public sealed class StorefrontService(
     public async Task<List<StorefrontProductDTO>> GetAvailableProductsAsync()
     {
         var entities = await repository.GetAvailableProductsAsync();
+        return await MapProductsAsync(entities);
+    }
+
+    public async Task<StorefrontProductPageDTO> GetAvailableProductsPageAsync(int page, int pageSize, bool discountedOnly)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 40);
+        var (entities, totalItems) = await repository.GetAvailableProductPageAsync(
+            page, pageSize, discountedOnly, DateTimeHelper.VietnamToday);
+        return new StorefrontProductPageDTO
+        {
+            Items = await MapProductsAsync(entities),
+            Page = page,
+            PageSize = pageSize,
+            TotalItems = totalItems
+        };
+    }
+
+    public async Task<StorefrontProductDTO?> GetAvailableProductAsync(int productId)
+    {
+        var entity = await repository.GetAvailableProductByIdAsync(productId);
+        if (entity == null) return null;
+        return (await MapProductsAsync(new List<backend.Models.Product> { entity })).Single();
+    }
+
+    private async Task<List<StorefrontProductDTO>> MapProductsAsync(List<backend.Models.Product> entities)
+    {
         var products = entities.Select(product => new StorefrontProductDTO
         {
             Id = product.Id,

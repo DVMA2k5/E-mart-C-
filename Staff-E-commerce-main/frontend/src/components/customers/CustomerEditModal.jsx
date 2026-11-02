@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { getCustomerById, updateCustomer } from "../../api/customerApi";
 
-export default function CustomerEditModal({ onClose, customerId, onSave }) {
+export default function CustomerEditModal({ onClose, customerId, onSave, embedded = false }) {
   const [formData, setFormData] = useState({
     fullName: "",
     email: "",
@@ -142,19 +142,19 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
   if (!customerId) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4">
+    <div className={embedded ? "management-detail-panel w-full" : "fixed inset-0 z-40 flex items-center justify-center bg-black/50"}>
+      <div className={embedded ? "w-full rounded-xl border bg-white shadow-sm" : "bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4"}>
         {/* Header */}
         <div className="flex justify-between items-center p-6 border-b border-gray-200">
           <h2 className="text-2xl font-bold text-gray-800">
             Chỉnh Sửa Thông Tin Khách Hàng
           </h2>
-          <button
+          {!embedded && <button
             onClick={onClose}
             className="p-1 hover:bg-gray-100 rounded-lg transition"
           >
             <X size={24} className="text-gray-600" />
-          </button>
+          </button>}
         </div>
 
         {/* Body */}

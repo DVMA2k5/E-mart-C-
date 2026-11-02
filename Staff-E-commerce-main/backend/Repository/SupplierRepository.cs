@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using backend.Data;
 using backend.Models;
+using backend.DTO;
 using Microsoft.EntityFrameworkCore;
 
 namespace backend.Repository
@@ -21,6 +22,32 @@ namespace backend.Repository
             return await _context.Suppliers
                 .OrderBy(s => s.Id)
                 .ToListAsync();
+        }
+
+        public Task<List<SupplierDTO>> GetAllWithStatisticsAsync()
+        {
+            return _context.Suppliers.AsNoTracking()
+                .OrderBy(s => s.Id)
+                .Select(s => new SupplierDTO
+                {
+                    Id = s.Id,
+                    Name = s.Name,
+                    ContactName = s.ContactName,
+                    Phone = s.Phone,
+                    Email = s.Email,
+                    Address = s.Address,
+                    IsActive = s.IsActive,
+                    CreatedAt = s.CreatedAt,
+                    UpdatedAt = s.UpdatedAt,
+                    // Đếm toàn bộ SKU gắn với nhà cung cấp, kể cả sản phẩm đang ngừng bán.
+                    ProductCount = _context.Products.Count(p => p.SupplierId == s.Id),
+                    // Chi tiết phiếu nhập là nguồn chuẩn; dữ liệu cũ có thể lệch total_amount ở phần đầu phiếu.
+                    TotalImportedValue = _context.PurchaseOrderDetails
+                        .Where(item => item.PurchaseOrder != null &&
+                                       item.PurchaseOrder.SupplierId == s.Id &&
+                                       item.PurchaseOrder.Status == "completed")
+                        .Sum(item => (decimal?)(item.Quantity * item.ImportPrice)) ?? 0m
+                }).ToListAsync();
         }
 
         public async Task<Supplier?> GetByIdAsync(int id)

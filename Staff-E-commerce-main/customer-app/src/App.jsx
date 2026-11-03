@@ -102,6 +102,9 @@ function ProductStock({ product, reservedQuantity = 0, style = styles.stockLabel
 
 const productDiscountAmount = (product) => Math.max(0, product.discountAmount ?? ((product.originalPrice ?? product.price) - product.price));
 const eventPromotionIssue = (promotion, orderAmount) => {
+  const walletIssues = { reserved: "Đang giữ cho đơn hàng chờ hoàn tất.", disabled: "Voucher đã bị vô hiệu.", scheduled: "Chưa đến ngày sử dụng.", used: "Voucher đã được sử dụng.", expired: "Voucher đã hết hạn." };
+  if (walletIssues[promotion.walletStatus]) return walletIssues[promotion.walletStatus];
+  if (orderAmount == null) return "";
   if (orderAmount <= 0) return "Thêm sản phẩm vào giỏ để sử dụng ưu đãi.";
   const minimum = Number(promotion.minOrderAmount) || 0;
   return orderAmount < minimum ? `Mua thêm ${money(minimum - orderAmount)} để sử dụng ưu đãi.` : "";
@@ -614,7 +617,6 @@ export default function App() {
   const [vouchersLoading, setVouchersLoading] = useState(false);
   const [voucherContext, setVoucherContext] = useState("checkout");
   const [voucherView, setVoucherView] = useState("available");
-  const [voucherFilter, setVoucherFilter] = useState("all");
   const [voucherHistory, setVoucherHistory] = useState([]);
   const [voucherHistoryTab, setVoucherHistoryTab] = useState("used");
 
@@ -1144,9 +1146,8 @@ export default function App() {
   }, [products, query, categoryId, sortOption]);
 
   const visibleVoucherHistory = useMemo(() => voucherHistory.filter((item) => {
-    const expired = item.promotionEndDate && new Date(item.promotionEndDate).getTime() < countdownNow;
-    return voucherHistoryTab === "expired" ? expired : !expired;
-  }), [voucherHistory, voucherHistoryTab, countdownNow]);
+    return item.walletStatus === voucherHistoryTab;
+  }), [voucherHistory, voucherHistoryTab]);
 
   const activeDrawerCategory = useMemo(() => (
     categories.find((category) => String(category.id) === String(selectedDrawerCatId))
@@ -1198,18 +1199,24 @@ export default function App() {
 
   const openVouchers = async (context = "checkout") => {
     if (context === "checkout" && pendingCheckout) return;
+    if (!requireAuthenticatedCustomer()) return;
     setVoucherContext(context);
     setVoucherView("available");
-    setVoucherFilter("all");
     setDraftVoucher(appliedVoucher);
     setVoucherOpen(true);
     setVoucherMessage("");
     setVouchersLoading(true);
     try {
-      const response = await fetch(`${API_URL}/storefront/promotions`);
-      if (!response.ok) throw new Error(await readError(response));
-      const data = await response.json();
-      setVoucherList(Array.isArray(data) ? data.filter((promotion) => context === "checkout" ? promotion.type === "event" : (promotion.type === "event" || promotion.type === "voucher")) : []);
+      const walletResponse = await fetch(`${API_URL}/storefront/vouchers`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!walletResponse.ok) throw new Error(await readError(walletResponse));
+      const wallet = await walletResponse.json();
+      let events = [];
+      if (context === "checkout") {
+        const response = await fetch(`${API_URL}/storefront/promotions`);
+        if (!response.ok) throw new Error(await readError(response));
+        events = (await response.json()).filter((promotion) => promotion.type === "event");
+      }
+      setVoucherList([...events, ...wallet.filter((promotion) => !["used", "expired"].includes(promotion.walletStatus))]);
     } catch (error) {
       setVoucherMessage(error.message || "Không tải được phiếu mua hàng.");
     } finally {
@@ -1230,7 +1237,7 @@ export default function App() {
     try {
       const response = await fetch(`${API_URL}/storefront/promotions/validate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
         body: JSON.stringify({ code: eventPromotionId ? "" : normalizedCode, eventPromotionId, orderAmount: subtotal }),
       });
       const result = await response.json().catch(() => ({}));
@@ -1278,23 +1285,44 @@ export default function App() {
   };
 
   const openVoucherDiscovery = async () => {
-    if (!customerToken) return;
+    if (!requireAuthenticatedCustomer()) return;
     setVoucherContext("account");
     setVoucherView("discover");
-    setVoucherFilter("all");
     setVoucherOpen(true);
     setVoucherMessage("");
     setVouchersLoading(true);
     try {
-      const response = await fetch(`${API_URL}/storefront/promotions`);
+      const response = await fetch(`${API_URL}/storefront/vouchers/discover`, { headers: { Authorization: `Bearer ${customerToken}` } });
       if (!response.ok) throw new Error(await readError(response));
       const data = await response.json();
-      setVoucherList(Array.isArray(data) ? data.filter((promotion) => promotion.type === "voucher" || promotion.type === "event") : []);
+      setVoucherList(Array.isArray(data) ? data : []);
     } catch (error) {
       setVoucherMessage(error.message || "Không tải được voucher.");
     } finally {
       setVouchersLoading(false);
     }
+  };
+
+  const claimVoucher = async (promotionId = null) => {
+    if (voucherBusy || !requireAuthenticatedCustomer()) return;
+    const code = voucherCode.trim().toUpperCase();
+    if (!promotionId && !code) { setVoucherMessage("Nhập mã voucher để nhận."); return; }
+    setVoucherBusy(true);
+    setVoucherMessage("");
+    try {
+      const response = await fetch(`${API_URL}/storefront/vouchers/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
+        body: JSON.stringify(promotionId ? { promotionId } : { code }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      const received = await response.json();
+      if (promotionId) setVoucherList((current) => current.map((item) => item.id === promotionId ? { ...item, isClaimed: true, claimedCount: received.claimedCount } : item));
+      else { await openVouchers("account"); setVoucherCode(""); }
+      setVoucherMessage("Đã lưu voucher vào kho của bạn.");
+    } catch (error) {
+      setVoucherMessage(error.message || "Không thể nhận voucher.");
+    } finally { setVoucherBusy(false); }
   };
 
   const flyProductToCart = useCallback((product, event) => {
@@ -2575,24 +2603,23 @@ export default function App() {
                 <View style={{ transform: [{ rotate: "180deg" }] }}><IconChevronRight size={24} color="#ee4d2d" /></View>
               </Pressable>
               <Text style={styles.voucherTitle}>{voucherView === "discover" ? "Siêu Voucher" : (voucherView === "history" ? "Lịch sử voucher" : (voucherContext === "account" ? "Voucher của tôi" : "Chọn E-Mart Voucher"))}</Text>
-              {voucherView === "discover" ? <Pressable onPress={() => setVoucherView("available")} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>Kho voucher</Text></Pressable> : voucherContext === "account" && <Pressable onPress={voucherView === "history" ? () => setVoucherView("available") : openVoucherHistory} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>{voucherView === "history" ? "Voucher" : "Lịch sử"}</Text></Pressable>}
+              {voucherView === "discover" ? <Pressable onPress={() => openVouchers("account")} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>Kho voucher</Text></Pressable> : voucherContext === "account" && <Pressable onPress={voucherView === "history" ? () => openVouchers("account") : openVoucherHistory} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>{voucherView === "history" ? "Voucher" : "Lịch sử"}</Text></Pressable>}
             </View>
 
-            {voucherView === "available" && <><View style={styles.voucherCodeRow}>
+            {voucherView === "available" && voucherContext === "account" && <><View style={styles.voucherCodeRow}>
               <TextInput
                 value={voucherCode}
                 onChangeText={setVoucherCode}
-                placeholder="Nhập mã voucher..."
+                placeholder="Nhập mã để nhận vào kho..."
                 autoCapitalize="characters"
                 style={styles.voucherInput}
               />
-              <Pressable disabled={voucherBusy} onPress={() => applyVoucher()} style={[styles.voucherAdd, voucherBusy && styles.buttonDisabled]}>
-                <Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Áp dụng"}</Text>
+              <Pressable disabled={voucherBusy} onPress={() => claimVoucher()} style={[styles.voucherAdd, voucherBusy && styles.buttonDisabled]}>
+                <Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Nhận mã"}</Text>
               </Pressable>
             </View>
             {voucherContext === "account" && <View style={styles.voucherExploreRow}>
               <Pressable onPress={openVoucherDiscovery} style={styles.voucherExploreButton}><Text style={styles.voucherExploreText}>⌕ Tìm thêm voucher</Text></Pressable>
-              {[['all', 'Tất cả'], ['voucher', 'Theo voucher'], ['event', 'Theo hóa đơn']].map(([key, label]) => <Pressable key={key} onPress={() => setVoucherFilter(key)} style={[styles.voucherFilterChip, voucherFilter === key && styles.voucherFilterChipActive]}><Text style={[styles.voucherFilterText, voucherFilter === key && styles.voucherFilterTextActive]}>{label}</Text></Pressable>)}
             </View>}</>}
 
             <ScrollView style={styles.voucherList} contentContainerStyle={styles.voucherListContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
@@ -2608,7 +2635,8 @@ export default function App() {
                 </View>
                 {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color="#ee4d2d" /><Text style={styles.stateText}>Đang tải voucher...</Text></View> : <View style={styles.voucherDiscoverGrid}>
                   {voucherList.map((voucher) => {
-                    const soldOut = Number(voucher.usageLimit) > 0 && Number(voucher.usedCount) >= Number(voucher.usageLimit);
+                    const soldOut = voucher.claimLimit != null && Number(voucher.claimedCount) >= Number(voucher.claimLimit);
+                    const cannotClaim = voucherBusy || voucher.isClaimed || soldOut;
                     return <View key={voucher.id} style={styles.voucherDiscoverCard}>
                       <View style={styles.voucherDiscoverBadge}>
                         <Text style={styles.voucherDiscoverBadgeIcon}>★</Text>
@@ -2619,8 +2647,9 @@ export default function App() {
                         <Text style={styles.voucherDiscoverName}>giảm {voucher.discountType === "percent" ? `${voucher.value}%` : money(voucher.value)}</Text>
                         {voucher.maxDiscount ? <Text style={styles.voucherDiscoverDetail}>Giảm tối đa {money(voucher.maxDiscount)}</Text> : null}
                         <Text style={styles.voucherDiscoverDetail}>Đơn tối thiểu {money(voucher.minOrderAmount || 0)}</Text>
-                        <Pressable disabled={soldOut} onPress={() => setVoucherMessage("Tính năng lưu voucher sẽ được áp dụng khi hoàn tất luồng nhận mã.")} style={[styles.voucherDiscoverSave, soldOut && styles.voucherDiscoverSaveDisabled]}><Text style={[styles.voucherDiscoverSaveText, soldOut && styles.voucherDiscoverSaveTextDisabled]}>{soldOut ? "Đã hết mã" : "Lưu"}</Text></Pressable>
-                        <Text style={styles.voucherDiscoverConditions}>Điều kiện</Text>
+                        <Pressable accessibilityRole="button" disabled={cannotClaim} onPress={() => claimVoucher(voucher.id)} style={[styles.voucherDiscoverSave, cannotClaim && styles.voucherDiscoverSaveDisabled]}><Text style={[styles.voucherDiscoverSaveText, cannotClaim && styles.voucherDiscoverSaveTextDisabled]}>{voucher.isClaimed ? "Đã lưu" : soldOut ? "Mã đã hết lượt" : voucherBusy ? "Đang lưu..." : "Lưu mã"}</Text></Pressable>
+                        <Text style={styles.voucherDiscoverConditions}>Mỗi khách 1 lần · Đã nhận {voucher.claimedCount || 0}/{voucher.claimLimit ?? "∞"}</Text>
+                        <Text style={styles.voucherDiscoverConditions}>Nhận đến {new Date(voucher.claimEndDate).toLocaleDateString("vi-VN")} · Dùng đến {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>
                       </View>
                     </View>;
                   })}
@@ -2629,24 +2658,24 @@ export default function App() {
                 {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
               </> : voucherView === "history" ? <>
                 <View style={styles.voucherHistoryTabs}>
-                  {[['used', 'Đã sử dụng'], ['expired', 'Hết hiệu lực']].map(([key, label]) => <Pressable key={key} onPress={() => setVoucherHistoryTab(key)} style={[styles.voucherHistoryTab, voucherHistoryTab === key && styles.voucherHistoryTabActive]}><Text style={[styles.voucherHistoryTabText, voucherHistoryTab === key && styles.voucherHistoryTabTextActive]}>{label}</Text></Pressable>)}
+                  {[['used', 'Voucher đã dùng'], ['expired', 'Voucher hết hạn']].map(([key, label]) => <Pressable key={key} onPress={() => setVoucherHistoryTab(key)} style={[styles.voucherHistoryTab, voucherHistoryTab === key && styles.voucherHistoryTabActive]}><Text style={[styles.voucherHistoryTabText, voucherHistoryTab === key && styles.voucherHistoryTabTextActive]}>{label}</Text></Pressable>)}
                 </View>
                 {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /></View> : visibleVoucherHistory.map((item) => <View key={item.id} style={styles.voucherHistoryCard}>
                   <View style={styles.voucherHistoryIcon}><Text style={styles.voucherHistoryIconText}>%</Text></View>
-                  <View style={{ flex: 1 }}><Text style={styles.voucherName}>{item.promotionName}</Text><Text style={styles.voucherMinimum}>Đơn hàng {item.orderNumber || `#${item.orderId}`}</Text><Text style={styles.voucherExpiry}>Sử dụng ngày {new Date(item.redeemedAt).toLocaleDateString("vi-VN")}</Text>{item.promotionCode && <Text style={styles.voucherUse}>Mã: {item.promotionCode}</Text>}</View>
+                  <View style={{ flex: 1 }}><Text style={styles.voucherName}>{item.name}</Text>{item.walletStatus === "used" ? <><Text style={styles.voucherMinimum}>Đơn hàng {item.orderNumber}</Text><Text style={styles.voucherExpiry}>Đã dùng ngày {new Date(item.usedAt).toLocaleDateString("vi-VN")}</Text></> : <Text style={styles.voucherExpiry}>Hết hạn ngày {new Date(item.endDate).toLocaleDateString("vi-VN")}</Text>}<Text style={styles.voucherUse}>Mã: {item.voucherCode}</Text></View>
                 </View>)}
                 {!vouchersLoading && !visibleVoucherHistory.length && <View style={styles.centerState}><Text style={styles.stateText}>Chưa có voucher trong mục này.</Text></View>}
               </> : <>
               {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color="#ee4d2d" /><Text style={styles.stateText}>Đang tải voucher...</Text></View> : [false, true].map((unavailable) => {
-                const vouchers = voucherList.filter((voucher) => (voucherContext !== "account" || voucherFilter === "all" || voucher.type === voucherFilter) && !!eventPromotionIssue(voucher, subtotal) === unavailable);
+                const vouchers = voucherList.filter((voucher) => !!eventPromotionIssue(voucher, voucherContext === "account" ? null : subtotal) === unavailable);
                 if (unavailable && !vouchers.length) return null;
                 return <View key={String(unavailable)} style={styles.voucherSection}>
                 <Text style={styles.voucherSubheading}>{unavailable ? "Voucher không khả dụng" : "Mã giảm giá"}</Text>
                 {!unavailable && !vouchers.length && voucherList.length > 0 && <Text style={styles.voucherEmptyText}>Chưa có mã phù hợp với đơn hàng này.</Text>}
                 {vouchers.map((voucher) => {
-                const issue = eventPromotionIssue(voucher, subtotal);
+                const issue = eventPromotionIssue(voucher, voucherContext === "account" ? null : subtotal);
                 const disabled = voucherBusy || !!issue;
-                const selected = draftVoucher?.eventPromotionId === voucher.id;
+                const selected = voucher.type === "voucher" ? draftVoucher?.promotion?.id === voucher.id : draftVoucher?.eventPromotionId === voucher.id;
                 const usagePercent = Number(voucher.usageLimit) > 0
                   ? Math.min(100, Math.max(0, Math.round((Number(voucher.usedCount) || 0) / Number(voucher.usageLimit) * 100)))
                   : null;
@@ -2664,9 +2693,9 @@ export default function App() {
                       <Text style={styles.voucherMinimum}>Đơn tối thiểu {money(voucher.minOrderAmount || 0)}</Text>
                       <Text style={styles.voucherPromotionName} numberOfLines={2}>{voucher.name || "Ưu đãi sự kiện"}</Text>
                       {voucher.endDate && <Text style={styles.voucherExpiry}>Hạn {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>}
-                      <Text style={styles.voucherUsage}>{usagePercent !== null ? `Đã dùng ${usagePercent}%` : `Đã dùng ${voucher.usedCount || 0} lượt · Không giới hạn`}</Text>
+                      <Text style={styles.voucherUsage}>{voucher.type === "voucher" ? `Mã: ${voucher.voucherCode} · Dùng 1 lần` : usagePercent !== null ? `Đã dùng ${usagePercent}%` : `Đã dùng ${voucher.usedCount || 0} lượt · Không giới hạn`}</Text>
                     </View>
-                    {voucherContext === "account" ? <View style={styles.voucherSaveLater}><Text style={styles.voucherSaveLaterText}>Dùng sau</Text></View> : <Pressable disabled={disabled} accessibilityRole="radio" accessibilityLabel={`Chọn ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled, checked: selected }} onPress={() => { if (selected) { setDraftVoucher(null); setVoucherMessage(""); } else { applyVoucher("", voucher.id); } }} style={styles.voucherSelectTarget}>
+                    {voucherContext === "account" ? <View style={styles.voucherSaveLater}><Text style={styles.voucherSaveLaterText}>Dùng sau</Text></View> : <Pressable disabled={disabled} accessibilityRole="radio" accessibilityLabel={`Chọn ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled, checked: selected }} onPress={() => { if (selected) { setDraftVoucher(null); setVoucherMessage(""); } else { applyVoucher(voucher.type === "voucher" ? voucher.voucherCode : "", voucher.type === "event" ? voucher.id : null); } }} style={styles.voucherSelectTarget}>
                       <View style={[styles.voucherRadio, selected && styles.voucherRadioSelected, !!issue && styles.voucherRadioUnavailable]}>
                         {selected && <Text style={styles.voucherRadioCheck}>✓</Text>}
                       </View>
@@ -2678,7 +2707,7 @@ export default function App() {
                 })}</View>;
               })}
               {!vouchersLoading && !voucherList.length && !voucherMessage && (
-                <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có ưu đãi sự kiện. Nếu có voucher, bạn có thể nhập mã ở trên.</Text></View>
+                <View style={styles.centerState}><Text style={styles.stateText}>Kho chưa có voucher. Vào trang Nhận voucher hoặc nhập mã để nhận.</Text></View>
               )}
               {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
               </>}

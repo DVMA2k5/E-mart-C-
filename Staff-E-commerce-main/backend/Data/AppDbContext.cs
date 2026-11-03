@@ -30,6 +30,7 @@ namespace backend.Data
         public DbSet<PurchaseOrderDetail> PurchaseOrderDetails { get; set; }
         public DbSet<EventPromotion> EventPromotions { get; set; }
         public DbSet<VoucherPromotion> VoucherPromotions { get; set; }
+        public DbSet<CustomerVoucher> CustomerVouchers { get; set; }
         public DbSet<ProductPromotion> ProductPromotions { get; set; }
 
 
@@ -38,6 +39,12 @@ namespace backend.Data
             modelBuilder.Entity<Order>().HasIndex(o => o.CheckoutKey).IsUnique()
                 .HasFilter("[checkout_key] IS NOT NULL").HasDatabaseName("ux_orders_checkout_key");
             base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<CustomerVoucher>().HasOne(v => v.Promotion).WithMany()
+                .HasForeignKey(v => v.PromotionId).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<CustomerVoucher>().HasOne(v => v.Customer).WithMany()
+                .HasForeignKey(v => v.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<CustomerVoucher>().HasOne(v => v.Order).WithMany()
+                .HasForeignKey(v => v.OrderId).OnDelete(DeleteBehavior.Restrict);
 
             modelBuilder.Entity<Role>()
                 .HasIndex(r => r.Name)

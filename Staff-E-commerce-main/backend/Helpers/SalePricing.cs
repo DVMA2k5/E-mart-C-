@@ -20,5 +20,5 @@ public static class SalePricing
     public static bool Active(Promotion promotion) =>
         !promotion.IsDeleted && promotion.Status == "active" &&
         DateTimeHelper.IsWithinRange(promotion.StartDate, promotion.EndDate) &&
-        (!promotion.UsageLimit.HasValue || promotion.UsedCount < promotion.UsageLimit);
+        (promotion.Type == "voucher" || !promotion.UsageLimit.HasValue || promotion.UsedCount < promotion.UsageLimit);
 }

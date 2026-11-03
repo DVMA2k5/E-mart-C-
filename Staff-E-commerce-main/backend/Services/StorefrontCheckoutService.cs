@@ -14,7 +14,8 @@ public sealed class StorefrontCheckoutService(
     PaymentService payments,
     BankTransferService bank,
     RealtimeNotificationService realtime,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    VoucherWalletService vouchers)
 {
     public object GetPaymentOptions() => new
     {
@@ -56,6 +57,7 @@ public sealed class StorefrontCheckoutService(
         var replay = false;
         await using (var transaction = await repository.BeginSerializableTransactionAsync())
         {
+            await vouchers.LockAsync();
             await repository.LockCheckoutAsync();
             var existing = await repository.GetByCheckoutKeyAsync(requestId.ToString());
             if (existing != null)
@@ -162,6 +164,8 @@ public sealed class StorefrontCheckoutService(
                 };
 
                 repository.AddOrder(order);
+                if (orderPromotionId.HasValue && usedPromotions[orderPromotionId.Value].Type == "voucher")
+                    await vouchers.ReserveAsync(orderPromotionId.Value, customerId, order);
                 await repository.SaveChangesAsync();
                 order.OrderNumber = DocumentNumber.Order(order.Id);
                 foreach (var line in lines)
@@ -181,6 +185,7 @@ public sealed class StorefrontCheckoutService(
                 customer.UpdatedAt = now;
                 foreach (var promotion in usedPromotions.Values)
                 {
+                    if (promotion.Type == "voucher") continue; // Reserved now; consumed only after completion.
                     promotion.UsedCount++;
                     repository.AddPromotionRedemption(new PromotionRedemption
                     {

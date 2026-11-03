@@ -189,6 +189,12 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
               </div>
 
               {/* Thông tin giảm giá */}
+              {promotion.type === "voucher" && <div className="rounded-lg border border-primary-200 bg-primary-50 p-4 text-sm space-y-2">
+                <p><strong>Hình thức:</strong> {promotion.visibility === "only-code" ? "Only-code — Nhận bằng mã" : "Public — Hiển thị ở trang Nhận voucher"}</p>
+                <p><strong>Thời gian nhận:</strong> {formatDate(promotion.claimStartDate)} — {formatDate(promotion.claimEndDate)}</p>
+                <p><strong>Đã nhận:</strong> {promotion.claimedCount || 0} / {promotion.claimLimit ?? "∞"} · <strong>Đã dùng:</strong> {promotion.usedCount || 0}</p>
+                <p>{promotion.sendToCustomers ? "Cấp sẵn cho khách hàng hiện có khi tạo." : "Khách tự nhận vào kho."} Mỗi khách nhận và dùng tối đa 1 lần.</p>
+              </div>}
               <div>
                 <h3 className="text-sm font-semibold text-gray-900 mb-3">Thông tin giảm giá</h3>
                 <div className="grid grid-cols-2 gap-6">
@@ -226,8 +232,8 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
                   <label className="text-sm font-medium text-gray-500">Lượt sử dụng</label>
                   <p className="mt-1 text-gray-900">
                     <span className="font-semibold text-lg">{promotion.usedCount}</span>
-                    <span className="text-gray-400 mx-2">/</span>
-                    <span>{promotion.usageLimit ?? "∞"}</span>
+                    <span className="text-gray-400 mx-2">{promotion.type === "voucher" ? "lượt" : "/"}</span>
+                    <span>{promotion.type === "voucher" ? "Mỗi khách tối đa 1 lần" : promotion.usageLimit ?? "∞"}</span>
                   </p>
                   {promotion.usageLimit && (
                     <div className="w-full bg-gray-200 rounded-full h-2 mt-2">

@@ -16,6 +16,7 @@ namespace backend.Services
         private readonly InvoiceService _invoiceService;
         private readonly PosCheckoutService _checkout;
         private readonly RealtimeNotificationService _realtime;
+        private readonly VoucherWalletService _vouchers;
 
         // Hàm lưu một payment nếu là thanh toán trực tiếp 
         // Lưu Payment (Cash, Card, ECard,...)
@@ -33,7 +34,7 @@ namespace backend.Services
 
         public PaymentService(PaymentRepository paymentRepo, OrderRepository orderRepo, ActivityLogService logService,
             IConfiguration config, InvoiceService invoiceService, PosCheckoutService checkout,
-            RealtimeNotificationService realtime)
+            RealtimeNotificationService realtime, VoucherWalletService vouchers)
         {
             _paymentRepo = paymentRepo;
             _orderRepo = orderRepo;
@@ -42,6 +43,7 @@ namespace backend.Services
             _invoiceService = invoiceService;
             _checkout = checkout;
             _realtime = realtime;
+            _vouchers = vouchers;
         }
 
         private string SignSHA256(string message, string key)
@@ -187,6 +189,7 @@ namespace backend.Services
             }
 
             await using var transaction = await _paymentRepo.BeginSerializableTransactionAsync();
+            await _vouchers.LockAsync();
             await _paymentRepo.LockTransactionAsync(callback.OrderId);
             var payment = await _paymentRepo.GetForCallbackAsync(callback.OrderId);
             if (payment?.Order == null || payment.Amount != receivedAmount || payment.Order.TotalAmount != receivedAmount)

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { updatePromotion } from "../../api/promotionApi";
 import ProductPickerModal from "../../components/promotions/ProductPickerModal";
+import VoucherDistributionFields from "../../components/promotions/VoucherDistributionFields";
 
 export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
   const [formData, setFormData] = useState({
@@ -12,6 +13,10 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
     value: "",
     minOrderAmount: "",
     voucherCode: "",
+    visibility: "public",
+    sendToCustomers: false,
+    claimEndDate: "",
+    claimLimit: "",
     productIdsText: "",
     maxDiscount: "",
     usageLimit: "",
@@ -38,6 +43,10 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
         value: promotion.value,
         minOrderAmount: promotion.minOrderAmount,
         voucherCode: promotion.voucherCode || "",
+        visibility: promotion.visibility || "public",
+        sendToCustomers: promotion.sendToCustomers || false,
+        claimEndDate: (promotion.claimEndDate || promotion.endDate || "").split("T")[0],
+        claimLimit: promotion.claimLimit ?? "",
         productIdsText: (promotion.productIds || []).join(", "),
         maxDiscount: promotion.maxDiscount || "",
         usageLimit: promotion.usageLimit || "",
@@ -85,7 +94,12 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
         voucherCode: formData.type === "voucher" ? formData.voucherCode.trim().toUpperCase() : null,
         productIds: formData.type === "product" ? formData.productIdsText.split(",").map((id) => Number(id.trim())).filter(Number.isInteger) : [],
         maxDiscount: formData.maxDiscount ? parseFloat(formData.maxDiscount) : null,
-        usageLimit: formData.usageLimit ? parseInt(formData.usageLimit) : null,
+        usageLimit: formData.type !== "voucher" && formData.usageLimit ? parseInt(formData.usageLimit) : null,
+        visibility: formData.visibility,
+        sendToCustomers: formData.sendToCustomers,
+        claimStartDate: formData.type === "voucher" ? formData.startDate : null,
+        claimEndDate: formData.type === "voucher" ? formData.claimEndDate : null,
+        claimLimit: formData.type === "voucher" ? Number(formData.claimLimit) : null,
         startDate: formData.startDate || null,
         endDate: formData.endDate || null,
         active: formData.active,
@@ -195,7 +209,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
           {/* Thời gian */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Ngày bắt đầu</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{formData.type === "voucher" ? "Ngày bắt đầu nhận / sử dụng" : "Ngày bắt đầu"}</label>
               <input
                 type="date"
                 name="startDate"
@@ -206,7 +220,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Ngày kết thúc</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{formData.type === "voucher" ? "Ngày hết hạn sử dụng" : "Ngày kết thúc"}</label>
               <input
                 type="date"
                 name="endDate"
@@ -220,7 +234,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
           </div>
 
           {/* Giới hạn sử dụng */}
-          <div>
+          {formData.type === "voucher" ? <VoucherDistributionFields formData={formData} onChange={handleChange} editing claimedCount={promotion.claimedCount || 0} /> : <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Giới hạn lượt sử dụng <span className="text-gray-500 text-xs">(để trống = không giới hạn)</span>
             </label>
@@ -235,7 +249,7 @@ export default function PromotionEdit({ promotion, onCancel, onSuccess }) {
             <p className="text-xs text-gray-500 mt-1">
               Đã sử dụng: {formData.usedCount} lượt
             </p>
-          </div>
+          </div>}
 
           {/* Mô tả */}
           <div>

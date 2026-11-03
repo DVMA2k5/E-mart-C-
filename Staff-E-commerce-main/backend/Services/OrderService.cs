@@ -18,6 +18,7 @@ namespace backend.Services
         private readonly InvoiceService _invoiceService;
         private readonly PosCheckoutService _checkout;
         private readonly RealtimeNotificationService _realtime;
+        private readonly VoucherWalletService _vouchers;
 
         public OrderService(
             OrderRepository orderRepo,
@@ -26,7 +27,7 @@ namespace backend.Services
             CustomerRepository customerRepo,
             IHttpContextAccessor httpContextAccessor,
             InvoiceService invoiceService, PosCheckoutService checkout,
-            RealtimeNotificationService realtime)
+            RealtimeNotificationService realtime, VoucherWalletService vouchers)
         {
             _orderRepo = orderRepo;
             _logService = logService;
@@ -36,6 +37,7 @@ namespace backend.Services
             _invoiceService = invoiceService;
             _checkout = checkout;
             _realtime = realtime;
+            _vouchers = vouchers;
         }
 
         // Tự động lấy user_id
@@ -184,6 +186,7 @@ namespace backend.Services
         public async Task<bool> CompletePendingOrderAsync(int orderId)
         {
             await using var transaction = await _orderRepo.BeginSerializableTransactionAsync();
+            await _vouchers.LockAsync();
             await _orderRepo.LockOrderAsync(orderId);
             var order = await _orderRepo.GetOrderForLifecycleAsync(orderId);
             if (order?.OrderType != "pos")
@@ -264,6 +267,7 @@ namespace backend.Services
         public async Task<bool> ConfirmOnlineOrderAsync(int orderId)
         {
             await using var transaction = await _orderRepo.BeginSerializableTransactionAsync();
+            await _vouchers.LockAsync();
             await _orderRepo.LockOrderAsync(orderId);
             var order = await _orderRepo.GetOnlineOrderForLifecycleAsync(orderId);
             if (order == null || order.Status is not ("pending" or "processing")) return false;
@@ -288,6 +292,7 @@ namespace backend.Services
         public async Task<bool> RejectOnlineOrderAsync(int orderId, string? reason)
         {
             await using var transaction = await _orderRepo.BeginSerializableTransactionAsync();
+            await _vouchers.LockAsync();
             await _orderRepo.LockOrderAsync(orderId);
             var order = await _orderRepo.GetOnlineOrderForLifecycleAsync(orderId);
             if (order == null) return false;
@@ -348,6 +353,7 @@ namespace backend.Services
         public async Task<bool> DeliverOnlineOrderAsync(int orderId)
         {
             await using var transaction = await _orderRepo.BeginSerializableTransactionAsync();
+            await _vouchers.LockAsync();
             await _orderRepo.LockOrderAsync(orderId);
             var order = await _orderRepo.GetOnlineOrderForLifecycleAsync(orderId);
             if (order == null) return false;
@@ -394,6 +400,7 @@ namespace backend.Services
                 throw new ArgumentException("Nhập mã giao dịch hoàn tiền.");
             var normalizedReference = $"REFUND-{reference.Trim()}";
             await using var transaction = await _orderRepo.BeginSerializableTransactionAsync();
+            await _vouchers.LockAsync();
             await _orderRepo.LockOrderAsync(orderId);
             var order = await _orderRepo.GetOnlineOrderForLifecycleAsync(orderId);
             if (order == null || amount != order.TotalAmount) return false;

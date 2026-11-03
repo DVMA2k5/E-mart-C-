@@ -11,13 +11,15 @@ public sealed class InvoiceService
     private readonly InvoiceRepository _repository;
     private readonly BusMemoryCache<InvoiceDTO> _cache;
     private readonly InvoiceDetailCache _detailCache;
+    private readonly VoucherWalletService _vouchers;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
-    public InvoiceService(InvoiceRepository repository, BusMemoryCache<InvoiceDTO> cache, InvoiceDetailCache detailCache)
+    public InvoiceService(InvoiceRepository repository, BusMemoryCache<InvoiceDTO> cache, InvoiceDetailCache detailCache, VoucherWalletService vouchers)
     {
         _repository = repository;
         _cache = cache;
         _detailCache = detailCache;
+        _vouchers = vouchers;
     }
 
     public async Task<Invoice?> EnsureInvoiceForOrderAsync(int orderId)
@@ -84,6 +86,7 @@ public sealed class InvoiceService
 
     public async Task SyncOrderLifecycleAsync(int orderId)
     {
+        await _vouchers.SyncOrderAsync(orderId);
         var order = await _repository.GetOrderStatusAsync(orderId);
         if (order is null) return;
         var invoice = await _repository.GetByOrderIdAsync(orderId);

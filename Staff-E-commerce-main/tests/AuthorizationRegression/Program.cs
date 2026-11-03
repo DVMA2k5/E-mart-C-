@@ -47,6 +47,7 @@ builder.Services.AddScoped<PaymentRepository>();
 builder.Services.AddScoped<ActivityLogRepository>();
 builder.Services.AddScoped<ActivityLogService>();
 builder.Services.AddScoped<InvoiceService>();
+builder.Services.AddSingleton<InvoiceDetailCache>();
 builder.Services.AddScoped<InvoiceRepository>();
 builder.Services.AddScoped<PosCheckoutRepository>();
 builder.Services.AddScoped<StorefrontRepository>();
@@ -62,6 +63,7 @@ builder.Services.AddScoped<OrderItemRepository>();
 builder.Services.AddScoped<OrderItemService>();
 builder.Services.AddScoped<PromotionRepository>();
 builder.Services.AddScoped<PromotionService>();
+builder.Services.AddScoped<VoucherWalletService>();
 builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Momo:AccessKey"] = "test-access", ["Momo:SecretKey"] = "test-secret" });
 builder.Services.AddScoped<PermissionFilter>();
 builder.Services.AddScoped<AccountMutationFilter>();
@@ -92,11 +94,17 @@ var assertions = 0;
 try
 {
     await WithDb(async db => { await db.Database.EnsureCreatedAsync(); databaseCreated = true; });
+    if (args.Contains("--voucher-only")) await VoucherWalletRegression.SeedLegacyAsync(app.Services);
     // Exercise upgrading the previous order schema, not only a freshly generated model.
     await WithDb(async db => await db.Database.ExecuteSqlRawAsync("""
         DROP INDEX ux_orders_checkout_key ON orders;
         ALTER TABLE orders DROP COLUMN checkout_key, checkout_hash, points_used, points_earned, cash_received, recipient_name, recipient_phone, shipping_address;
         """));
+    if (args.Contains("--voucher-only"))
+        await WithDb(async db => await db.Database.ExecuteSqlRawAsync("""
+            DROP TABLE customer_vouchers;
+            ALTER TABLE voucher_promotions DROP COLUMN visibility, send_to_customers, claim_start_date, claim_end_date, claim_limit, claimed_count;
+            """));
     await AuthorizationSchemaInitializer.InitializeAsync(app.Services);
     int adminId = 0, staffId = 0, employeeId = 0, customerId = 0, adminEmployeeId = 0;
     await WithDb(async db =>
@@ -121,6 +129,12 @@ try
     var adminToken = await Token(adminId);
     var staffToken = await Token(staffId);
     var customerToken = await Token(customerId);
+
+    if (args.Contains("--voucher-only"))
+    {
+        await VoucherWalletRegression.RunAsync(app.Services, client, adminToken);
+        return;
+    }
 
     await CheckUserFilter("role=staff&isActive=true&search=staff_test", 1, staffId);
     await CheckUserFilter("search=Staff%20Original", 1, staffId);
@@ -281,6 +295,7 @@ try
     Console.WriteLine($"PASS: {assertions} authorization and account lifecycle assertions.");
     await PosCheckoutRegression.RunAsync(app.Services, client, adminToken);
     await OrderDeliveryRegression.RunAsync(app.Services, client, adminToken);
+    await VoucherWalletRegression.RunAsync(app.Services, client, adminToken);
 
     async Task CheckUserFilter(string query, int expectedTotal, int? expectedId = null, int? expectedPage = null)
     {

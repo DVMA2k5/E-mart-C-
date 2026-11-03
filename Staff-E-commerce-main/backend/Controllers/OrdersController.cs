@@ -94,6 +94,7 @@ namespace backend.Controllers
 
                 return Ok(savedOrder);
             }
+            catch (BusinessRuleException ex) { return StatusCode(ex.StatusCode, new { message = ex.Message }); }
             catch (ArgumentException ex)
             {
                 return BadRequest(new { message = ex.Message });

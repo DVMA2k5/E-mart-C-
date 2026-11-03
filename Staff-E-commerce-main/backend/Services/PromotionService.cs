@@ -9,12 +9,14 @@ namespace backend.Services
     {
         private readonly PromotionRepository _promotionRepository;
         private readonly BusMemoryCache<PromotionDTO> _cache;
+        private readonly VoucherWalletService _wallet;
         private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
-        public PromotionService(PromotionRepository promotionRepository, BusMemoryCache<PromotionDTO> cache)
+        public PromotionService(PromotionRepository promotionRepository, BusMemoryCache<PromotionDTO> cache, VoucherWalletService wallet)
         {
             _promotionRepository = promotionRepository;
             _cache = cache;
+            _wallet = wallet;
         }
 
         // Get all promotions
@@ -56,7 +58,7 @@ namespace backend.Services
                     "active" => filtered.Where(item => item.Status == "active" &&
                         (!item.StartDate.HasValue || item.StartDate.Value.Date <= today) &&
                         (!item.EndDate.HasValue || item.EndDate.Value.Date >= today) &&
-                        (!item.UsageLimit.HasValue || item.UsedCount < item.UsageLimit)),
+                        (item.Type == "voucher" || !item.UsageLimit.HasValue || item.UsedCount < item.UsageLimit)),
                     "inactive" => filtered.Where(item => item.Status != "active"),
                     "expired" => filtered.Where(item => item.EndDate.HasValue && item.EndDate.Value.Date < today),
                     "scheduled" => filtered.Where(item => item.Status == "active" && item.StartDate.HasValue && item.StartDate.Value.Date > today),
@@ -205,7 +207,7 @@ namespace backend.Services
                 MaxDiscount = request.MaxDiscount,
                 StartDate = request.StartDate,
                 EndDate = request.EndDate,
-                UsageLimit = request.UsageLimit,
+                UsageLimit = request.Type == "voucher" ? null : request.UsageLimit,
                 Active = request.Active,
                 Status = request.Status ?? (request.Active ? "active" : "disabled"),
                 Description = request.Description
@@ -214,7 +216,12 @@ namespace backend.Services
                 ? new VoucherPromotion
                 {
                     VoucherCode = request.VoucherCode.Trim().ToUpperInvariant(),
-                    DiscountPercent = promotion.DiscountType == "percent" ? promotion.Value : null
+                    DiscountPercent = promotion.DiscountType == "percent" ? promotion.Value : null,
+                    Visibility = request.Visibility,
+                    SendToCustomers = request.SendToCustomers,
+                    ClaimStartDate = request.ClaimStartDate ?? request.StartDate,
+                    ClaimEndDate = request.ClaimEndDate ?? request.EndDate,
+                    ClaimLimit = request.ClaimLimit
                 }
                 : null;
             promotion.EventDetails = promotion.Type == "event"
@@ -333,7 +340,7 @@ namespace backend.Services
                 };
             }
 
-            if (promotion.UsageLimit.HasValue && promotion.UsedCount >= promotion.UsageLimit)
+            if (promotion.Type != "voucher" && promotion.UsageLimit.HasValue && promotion.UsedCount >= promotion.UsageLimit)
             {
                 return new ValidatePromotionResult
                 {
@@ -456,7 +463,7 @@ namespace backend.Services
             var active = allPromotions.Count(p => p.Active && 
                 (!p.StartDate.HasValue || p.StartDate.Value.Date <= vnToday) &&
                 (!p.EndDate.HasValue || p.EndDate.Value.Date >= vnToday) &&
-                (!p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit));
+                (p.Type == "voucher" || !p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit));
             var scheduled = allPromotions.Count(p => p.Active && 
                 p.StartDate.HasValue && p.StartDate.Value.Date > vnToday);
             var expired = allPromotions.Count(p => p.EndDate.HasValue && p.EndDate.Value.Date < vnToday);
@@ -498,7 +505,7 @@ namespace backend.Services
         }
 
         // Map Promotion to PromotionDTO
-        private PromotionDTO MapToDTO(Promotion p)
+        public static PromotionDTO MapToDTO(Promotion p)
         {
             return new PromotionDTO
             {
@@ -510,11 +517,17 @@ namespace backend.Services
                 Value = p.Value,
                 MinOrderAmount = p.EventDetails?.MinOrderAmount ?? 0,
                 VoucherCode = p.VoucherDetails?.VoucherCode,
+                Visibility = p.VoucherDetails?.Visibility ?? "public",
+                SendToCustomers = p.VoucherDetails?.SendToCustomers ?? false,
+                ClaimStartDate = p.VoucherDetails?.ClaimStartDate,
+                ClaimEndDate = p.VoucherDetails?.ClaimEndDate,
+                ClaimLimit = p.VoucherDetails?.ClaimLimit,
+                ClaimedCount = p.VoucherDetails?.ClaimedCount ?? 0,
                 ProductIds = p.ProductDetails?.Select(d => d.ProductId).ToList() ?? new List<int>(),
                 MaxDiscount = p.MaxDiscount,
                 StartDate = p.StartDate,
                 EndDate = p.EndDate,
-                UsageLimit = p.UsageLimit,
+                UsageLimit = p.Type == "voucher" ? null : p.UsageLimit,
                 UsedCount = p.UsedCount,
                 Active = p.Active,
                 Status = p.Status,
@@ -539,6 +552,7 @@ namespace backend.Services
         private async Task<bool> ApplyPromotionRedemptionAsync(int promotionId, int orderId, int? requestedCustomerId)
         {
             await using var transaction = await _promotionRepository.BeginSerializableTransactionAsync();
+            await _wallet.LockAsync();
             var order = await _promotionRepository.GetOrderForUpdateAsync(orderId);
             if (order == null) return false;
 
@@ -546,6 +560,16 @@ namespace backend.Services
                 throw new InvalidOperationException("Khuyến mãi không khớp với khuyến mãi của đơn hàng.");
             if (requestedCustomerId.HasValue && requestedCustomerId != order.CustomerId)
                 throw new InvalidOperationException("Khách hàng không khớp với khách hàng của đơn hàng.");
+
+            var details = await _promotionRepository.GetByIdAsync(promotionId);
+            if (details?.Type == "voucher")
+            {
+                await _wallet.ReserveAsync(promotionId, order.CustomerId, order);
+                await _promotionRepository.SaveChangesAsync();
+                await _wallet.SyncOrderAsync(order.Id);
+                await transaction.CommitAsync();
+                return true;
+            }
             if (await _promotionRepository.HasRedemptionAsync(promotionId, orderId))
             {
                 await transaction.CommitAsync();

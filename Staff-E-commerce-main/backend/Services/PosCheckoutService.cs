@@ -9,7 +9,7 @@ using backend.Repository;
 
 namespace backend.Services;
 
-public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceService invoices, PosCheckoutRepository repository)
+public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceService invoices, PosCheckoutRepository repository, VoucherWalletService vouchers)
 {
     private int UserId => int.TryParse(accessor.HttpContext?.User.FindFirst("uid")?.Value, out var id)
         ? id : throw new UnauthorizedAccessException("Không xác định được nhân viên.");
@@ -23,7 +23,7 @@ public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceSer
     }
 
     private static bool Active(Promotion p) => !p.IsDeleted && p.Status == "active" &&
-        DateTimeHelper.IsWithinRange(p.StartDate, p.EndDate) && (!p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit);
+        DateTimeHelper.IsWithinRange(p.StartDate, p.EndDate) && (p.Type == "voucher" || !p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit);
 
     public async Task<PosCheckoutResponse> CheckoutAsync(PosCheckoutRequest request)
     {
@@ -38,6 +38,7 @@ public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceSer
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         { request.CustomerId, request.PointsUsed, request.PromotionId, method, request.CashReceived, request.ExpectedTotal, request.Note, lines }))));
         await using var transaction = await repository.BeginSerializableTransactionAsync();
+        await vouchers.LockAsync();
         await repository.LockAsync();
         var key = requestKey.ToString();
         var existing = await repository.GetByCheckoutKeyAsync(key);
@@ -101,6 +102,8 @@ public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceSer
             Note = request.Note?.Trim(), CreatedAt = now, UpdatedAt = now, OrderItems = items
         };
         repository.AddOrder(order);
+        if (request.PromotionId.HasValue && usedPromotions[request.PromotionId.Value].Type == "voucher")
+            await vouchers.ReserveAsync(request.PromotionId.Value, customer?.Id, order);
         await repository.SaveChangesAsync();
         order.OrderNumber = DocumentNumber.Order(order.Id);
         foreach (var line in lines)
@@ -112,6 +115,7 @@ public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceSer
         if (customer != null) { customer.RewardPoints -= request.PointsUsed; customer.UpdatedAt = now; }
         foreach (var promotion in usedPromotions.Values)
         {
+            if (promotion.Type == "voucher") continue;
             promotion.UsedCount++;
             repository.AddPromotionRedemption(new PromotionRedemption { PromotionId = promotion.Id, OrderId = order.Id, CustomerId = customer?.Id, RedeemedAt = now });
         }
@@ -143,6 +147,7 @@ public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceSer
         if (string.IsNullOrWhiteSpace(reference) || reference.Length > 200) throw new ArgumentException("Nhập mã giao dịch xác nhận thu tiền.");
         reference = reference.Trim();
         await using var transaction = await repository.BeginSerializableTransactionAsync();
+        await vouchers.LockAsync();
         await repository.LockAsync();
         var order = await repository.GetOrderForConfirmationAsync(orderId)
             ?? throw new ArgumentException("Không tìm thấy đơn POS.");
@@ -174,6 +179,7 @@ public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceSer
     {
         var userId = UserId;
         await using var transaction = await repository.BeginSerializableTransactionAsync();
+        await vouchers.LockAsync();
         await repository.LockAsync();
         var order = await repository.GetLegacyCashOrderAsync(orderId)
             ?? throw new ArgumentException("Không tìm thấy đơn tại quầy.");
@@ -210,6 +216,7 @@ public sealed class PosCheckoutService(IHttpContextAccessor accessor, InvoiceSer
     {
         var userId = UserId;
         await using var transaction = await repository.BeginSerializableTransactionAsync();
+        await vouchers.LockAsync();
         await repository.LockAsync();
         var order = await repository.GetOrderForCancelAsync(orderId);
         if (order.Status == "cancelled") return true;

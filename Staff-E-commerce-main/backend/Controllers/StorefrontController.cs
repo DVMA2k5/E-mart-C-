@@ -12,14 +12,40 @@ public sealed class StorefrontController(
     InvoiceService invoices,
     StorefrontService storefront,
     StorefrontAccountService accounts,
-    StorefrontCheckoutService checkout) : ControllerBase
+    StorefrontCheckoutService checkout,
+    VoucherWalletService vouchers) : ControllerBase
 {
     [HttpGet("promotions")]
     [AllowAnonymous]
     public async Task<IActionResult> GetStorefrontPromotions()
     {
         var items = await promotions.GetActivePromotionsAsync();
-        return Ok(items.Where(item => item.Type is "event" or "voucher"));
+        return Ok(items.Where(item => item.Type == "event" || item.Type == "voucher" && item.Visibility == "public"));
+    }
+
+    [HttpGet("vouchers/discover")]
+    [Authorize(Roles = "customer")]
+    public async Task<IActionResult> DiscoverVouchers()
+    {
+        if (!TryGetCustomerId(out var customerId)) return InvalidSession();
+        return Ok(await vouchers.DiscoverAsync(customerId));
+    }
+
+    [HttpGet("vouchers")]
+    [Authorize(Roles = "customer")]
+    public async Task<IActionResult> GetVoucherWallet()
+    {
+        if (!TryGetCustomerId(out var customerId)) return InvalidSession();
+        return Ok(await vouchers.WalletAsync(customerId));
+    }
+
+    [HttpPost("vouchers/claim")]
+    [Authorize(Roles = "customer")]
+    public async Task<IActionResult> ClaimVoucher([FromBody] VoucherClaimRequest request)
+    {
+        if (!TryGetCustomerId(out var customerId)) return InvalidSession();
+        try { return Ok(await vouchers.ClaimAsync(customerId, request.PromotionId, request.Code)); }
+        catch (BusinessRuleException exception) { return BusinessError(exception); }
     }
 
     [HttpGet("promotions/history")]
@@ -27,7 +53,7 @@ public sealed class StorefrontController(
     public async Task<IActionResult> GetPromotionHistory()
     {
         if (!TryGetCustomerId(out var customerId)) return InvalidSession();
-        return Ok(await promotions.GetCustomerRedemptionHistoryAsync(customerId));
+        return Ok((await vouchers.WalletAsync(customerId)).Where(v => v.WalletStatus is "used" or "expired"));
     }
 
     [HttpPost("promotions/validate")]
@@ -41,6 +67,12 @@ public sealed class StorefrontController(
         var result = request.EventPromotionId.HasValue
             ? await promotions.ValidateEventPromotionAsync(request.EventPromotionId.Value, request.OrderAmount)
             : await promotions.ValidatePromotionAsync(request.Code, request.OrderAmount);
+        if (!request.EventPromotionId.HasValue && result.IsValid && result.Promotion != null)
+        {
+            if (!TryGetCustomerId(out var customerId)) return Unauthorized(new { message = "Đăng nhập để sử dụng voucher trong kho." });
+            var issue = await vouchers.UsageIssueAsync(result.Promotion.Id, customerId);
+            if (issue != null) { result.IsValid = false; result.Message = issue; result.DiscountAmount = 0; }
+        }
         return Ok(result);
     }
 
@@ -185,4 +217,10 @@ public sealed class StorefrontController(
             message = exception.Message,
             checkoutNotCreated = exception.CheckoutNotCreated ? true : (bool?)null
         });
+}
+
+public sealed class VoucherClaimRequest
+{
+    public int? PromotionId { get; set; }
+    public string? Code { get; set; }
 }

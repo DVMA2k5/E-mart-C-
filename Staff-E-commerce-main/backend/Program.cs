@@ -119,6 +119,7 @@ builder.Services.AddSingleton(typeof(BusMemoryCache<>));
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<PromotionService>();
+builder.Services.AddScoped<VoucherWalletService>();
 builder.Services.AddScoped<StatisticsService>();
 builder.Services.AddScoped<OrderItemService>();
 builder.Services.AddScoped<InventoryService>();

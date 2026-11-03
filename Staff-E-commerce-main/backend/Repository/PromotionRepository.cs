@@ -5,6 +5,7 @@ using backend.Helpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using System.Data;
+using backend.Services;
 
 namespace backend.Repository
 {
@@ -106,11 +107,29 @@ namespace backend.Repository
             promotion.CreatedAt = DateTimeHelper.UtcNow;
             promotion.UpdatedAt = DateTimeHelper.UtcNow;
 
-            await using var transaction = await _context.Database.BeginTransactionAsync();
+            await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
             try
             {
+                await VoucherWalletService.LockAsync(_context);
+                VoucherWalletService.ValidateConfiguration(promotion);
+                if (promotion.Type == "voucher" && !promotion.VoucherDetails!.ClaimLimit.HasValue)
+                    throw new ArgumentException("Vui lòng nhập tổng số voucher cho phép nhận.");
+                if (promotion.Type == "voucher" && await _context.VoucherPromotions.AnyAsync(v => v.VoucherCode == promotion.VoucherDetails!.VoucherCode))
+                    throw new ArgumentException("Mã voucher đã tồn tại. Vui lòng chọn mã khác.");
                 _context.Promotions.Add(promotion);
                 await _context.SaveChangesAsync();
+                if (promotion.VoucherDetails is { SendToCustomers: true } voucher)
+                {
+                    if (promotion.Status != "active" || promotion.EndDate?.Date < DateTimeHelper.VietnamToday || voucher.ClaimEndDate?.Date < DateTimeHelper.VietnamToday)
+                        throw new ArgumentException("Chỉ cấp sẵn voucher đang hoạt động và chưa hết hạn nhận.");
+                    var customerIds = await _context.Customers.Where(c => c.IsActive).Select(c => c.Id).ToListAsync();
+                    if (voucher.ClaimLimit.HasValue && voucher.ClaimLimit < customerIds.Count)
+                        throw new ArgumentException($"Giới hạn nhận phải từ {customerIds.Count} để cấp cho tất cả khách hàng hiện có.");
+                    _context.CustomerVouchers.AddRange(customerIds.Select(id => new CustomerVoucher
+                    { PromotionId = promotion.Id, CustomerId = id, ClaimedAt = DateTime.UtcNow, Source = "admin" }));
+                    voucher.ClaimedCount = customerIds.Count;
+                    await _context.SaveChangesAsync();
+                }
                 await transaction.CommitAsync();
                 return promotion;
             }
@@ -124,10 +143,34 @@ namespace backend.Repository
         // Update promotion
         public async Task<Promotion> UpdateAsync(Promotion promotion)
         {
+            await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+            await VoucherWalletService.LockAsync(_context);
             var existing = await _context.Promotions
                 .Include(p => p.EventDetails).Include(p => p.VoucherDetails).Include(p => p.ProductDetails)
                 .FirstOrDefaultAsync(p => p.Id == promotion.Id);
             if (existing == null) throw new InvalidOperationException("Promotion not found");
+            var previousVoucher = existing.VoucherDetails;
+            if (previousVoucher is { ClaimedCount: > 0 })
+            {
+                if (promotion.Type != "voucher" || promotion.VoucherDetails == null ||
+                    previousVoucher.VoucherCode != promotion.VoucherDetails.VoucherCode ||
+                    previousVoucher.Visibility != promotion.VoucherDetails.Visibility ||
+                    existing.Value != promotion.Value || existing.DiscountType != promotion.DiscountType || existing.MaxDiscount != promotion.MaxDiscount)
+                    throw new ArgumentException("Voucher đã có người nhận: không thể đổi loại, mã, hình thức công khai hoặc giá trị giảm.");
+                if (promotion.EndDate < existing.EndDate)
+                    throw new ArgumentException("Không thể rút ngắn hạn sử dụng của voucher đã có người nhận.");
+            }
+            if (promotion.VoucherDetails != null)
+            {
+                promotion.VoucherDetails.ClaimedCount = previousVoucher?.ClaimedCount ?? 0;
+                promotion.VoucherDetails.SendToCustomers = previousVoucher?.SendToCustomers ?? false;
+                if (promotion.VoucherDetails.ClaimLimit < promotion.VoucherDetails.ClaimedCount)
+                    throw new ArgumentException("Giới hạn nhận không được nhỏ hơn số voucher đã nhận.");
+                if (await _context.VoucherPromotions.AnyAsync(v => v.PromotionId != promotion.Id && v.VoucherCode == promotion.VoucherDetails.VoucherCode))
+                    throw new ArgumentException("Mã voucher đã tồn tại. Vui lòng chọn mã khác.");
+            }
+            VoucherWalletService.ValidateConfiguration(promotion);
+            promotion.UsedCount = existing.UsedCount;
 
             var requestedProductDetails = (promotion.ProductDetails ?? Array.Empty<ProductPromotion>())
                 .GroupBy(detail => detail.ProductId)
@@ -163,6 +206,7 @@ namespace backend.Repository
             promotion.UpdatedAt = DateTimeHelper.UtcNow;
             existing.UpdatedAt = promotion.UpdatedAt;
             await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
             return existing;
         }
 
@@ -190,7 +234,7 @@ namespace backend.Repository
                            p.Status == "active" && p.Type != "product" &&
                            (!p.StartDate.HasValue || p.StartDate.Value.Date <= vnToday) &&
                            (!p.EndDate.HasValue || p.EndDate.Value.Date >= vnToday) &&
-                           (!p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit))
+                           (p.Type == "voucher" || !p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit))
                 .ToListAsync();
 
             return PopulateDiscountFields(promotions);

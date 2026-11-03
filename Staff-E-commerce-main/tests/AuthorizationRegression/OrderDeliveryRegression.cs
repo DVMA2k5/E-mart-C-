@@ -70,7 +70,7 @@ public static class OrderDeliveryRegression
         }
         await Call(HttpMethod.Get, "/api/orders/search?orderType=invalid", adminToken, expected: HttpStatusCode.BadRequest);
 
-        var body = new { fullName = "Người nhận khác", phone = "0912345678", address = "99 Đường Giao Hàng\nPhường Mới", note = plainNote,
+        var body = new { requestId = Guid.NewGuid().ToString(), fullName = "Người nhận khác", phone = "0912345678", address = "99 Đường Giao Hàng\nPhường Mới", note = plainNote,
             paymentMethod = "cod", pointsUsed = 0, items = new[] { new { productId, quantity = 1 } } };
         var placed = await Call(HttpMethod.Post, "/api/storefront/orders", buyerToken, body);
         var orderId = placed.GetProperty("id").GetInt32();
@@ -107,7 +107,7 @@ public static class OrderDeliveryRegression
             using var response = await client.SendAsync(request);
             var text = await response.Content.ReadAsStringAsync();
             Check(response.StatusCode == expected, $"{path}: {response.StatusCode} {text}");
-            using var json = JsonDocument.Parse(text);
+            using var json = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "null" : text);
             return json.RootElement.Clone();
         }
     }

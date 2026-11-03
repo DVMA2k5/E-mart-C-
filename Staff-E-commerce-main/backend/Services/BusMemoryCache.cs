@@ -11,6 +11,7 @@ public sealed class BusMemoryCache<T>
     private readonly SemaphoreSlim _loadGate = new(1, 1);
     private List<T>? _items;
     private DateTimeOffset _lastFetchTime;
+    private long _generation;
     private readonly ILogger<BusMemoryCache<T>> _logger;
 
     public BusMemoryCache(ILogger<BusMemoryCache<T>> logger)
@@ -39,13 +40,30 @@ public sealed class BusMemoryCache<T>
                 return (cached, false);
             }
 
-            var loaded = await factory();
-            lock (_sync)
+            while (true)
             {
-                _items = loaded;
-                _lastFetchTime = DateTimeOffset.UtcNow;
-                LogMeasurement("Database", stopwatch, beforeMemory);
-                return (_items, true);
+                long generation;
+                lock (_sync) generation = _generation;
+
+                var loaded = await factory();
+                lock (_sync)
+                {
+                    // A write may invalidate the cache while the database read is in flight.
+                    if (generation != _generation)
+                    {
+                        if (TryGetFresh(ttl, out cached))
+                        {
+                            LogMeasurement("RAM Cache", stopwatch, beforeMemory);
+                            return (cached, false);
+                        }
+                        continue;
+                    }
+
+                    _items = loaded;
+                    _lastFetchTime = DateTimeOffset.UtcNow;
+                    LogMeasurement("Database", stopwatch, beforeMemory);
+                    return (_items, true);
+                }
             }
         }
         finally
@@ -87,6 +105,7 @@ public sealed class BusMemoryCache<T>
         {
             _items = items.ToList();
             _lastFetchTime = DateTimeOffset.UtcNow;
+            _generation++;
         }
     }
 
@@ -96,6 +115,7 @@ public sealed class BusMemoryCache<T>
         {
             _items = null;
             _lastFetchTime = default;
+            _generation++;
         }
     }
 
@@ -116,6 +136,7 @@ public sealed class BusMemoryCache<T>
 
             _items = items;
             _lastFetchTime = DateTimeOffset.UtcNow;
+            _generation++;
         }
     }
 
@@ -126,7 +147,10 @@ public sealed class BusMemoryCache<T>
             if (_items is null) return false;
             var removed = _items.RemoveAll(item => predicate(item)) > 0;
             if (removed)
+            {
                 _lastFetchTime = DateTimeOffset.UtcNow;
+                _generation++;
+            }
             return removed;
         }
     }
@@ -146,7 +170,10 @@ public sealed class BusMemoryCache<T>
             }
 
             if (changed)
+            {
                 _lastFetchTime = DateTimeOffset.UtcNow;
+                _generation++;
+            }
         }
     }
 }

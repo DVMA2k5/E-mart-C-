@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using backend.DTO;
+using backend.Helpers;
 using backend.Models;
 using backend.Repository;
 
@@ -10,21 +11,32 @@ public class PurchaseOrderService
     private readonly PurchaseOrderRepository _repository;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly BusMemoryCache<PurchaseOrderListDTO> _cache;
+    private readonly BusMemoryCache<SupplierDTO> _supplierCache;
     private readonly RealtimeNotificationService _realtime;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
-    public PurchaseOrderService(PurchaseOrderRepository repository, IHttpContextAccessor httpContextAccessor, BusMemoryCache<PurchaseOrderListDTO> cache, RealtimeNotificationService realtime)
+    public PurchaseOrderService(PurchaseOrderRepository repository, IHttpContextAccessor httpContextAccessor, BusMemoryCache<PurchaseOrderListDTO> cache, BusMemoryCache<SupplierDTO> supplierCache, RealtimeNotificationService realtime)
     {
         _repository = repository;
         _httpContextAccessor = httpContextAccessor;
         _cache = cache;
+        _supplierCache = supplierCache;
         _realtime = realtime;
     }
 
     public async Task<PaginationResult<PurchaseOrderListDTO>> GetPagedAsync(int page, int pageSize, string? search, string? status, int? supplierId)
     {
-        var (cachedItems, _) = await _cache.GetOrCreateAsync(
+        var (itemsFromCache, _) = await _cache.GetOrCreateAsync(
             () => _repository.GetAllForCacheAsync(), CacheTtl);
+        IReadOnlyList<PurchaseOrderListDTO> cachedItems = itemsFromCache;
+        // Phiếu nhập hợp lệ luôn có ít nhất một dòng với quantity > 0.
+        // Giá trị 0 cho biết cache được tạo bởi DTO cũ hoặc đã không còn đồng bộ.
+        if (cachedItems.Any(item => item.TotalQuantity <= 0))
+        {
+            var refreshedItems = await _repository.GetAllForCacheAsync();
+            _cache.Replace(refreshedItems);
+            cachedItems = refreshedItems;
+        }
         IEnumerable<PurchaseOrderListDTO> filtered = cachedItems;
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -69,20 +81,61 @@ public class PurchaseOrderService
         var now = DateTime.UtcNow;
         var purchaseOrder = new PurchaseOrder
         {
-            PoCode = $"PN{now:yyMMdd}{Guid.NewGuid():N}"[..20], SupplierId = supplier.Id, UserId = userId,
+            PoCode = DocumentNumber.Temporary("PN")[..20], SupplierId = supplier.Id, UserId = userId,
+            EmployeeId = await _repository.GetEmployeeIdForUserAsync(userId),
             Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim(), Status = "pending",
             TotalAmount = request.Items.Sum(item => item.Quantity * item.ImportPrice), CreatedAt = now, UpdatedAt = now,
             Details = request.Items.Select(item => new PurchaseOrderDetail { ProductId = item.ProductId, Quantity = item.Quantity, ImportPrice = item.ImportPrice }).ToList()
         };
         await _repository.CreateAsync(purchaseOrder);
+        purchaseOrder.PoCode = DocumentNumber.PurchaseOrder(purchaseOrder.Id);
+        await _repository.SaveChangesAsync();
         _cache.Clear();
         return (await GetByIdAsync(purchaseOrder.Id))!;
     }
 
     public async Task<PurchaseOrderDetailDTO> CompleteAsync(int id)
     {
-        await _repository.CompleteAsync(id, GetCurrentUserId());
+        var userId = GetCurrentUserId();
+        await using var transaction = await _repository.BeginSerializableTransactionAsync();
+        await _repository.LockAsync(id);
+        var purchaseOrder = await _repository.GetForUpdateAsync(id)
+            ?? throw new KeyNotFoundException("Không tìm thấy phiếu nhập.");
+        if (!string.Equals(purchaseOrder.Status, "pending", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Chỉ có thể hoàn tất phiếu nhập đang chờ xử lý.");
+
+        var products = await _repository.GetProductsForUpdateAsync(purchaseOrder.Details.Select(detail => detail.ProductId));
+        var now = DateTime.UtcNow;
+        foreach (var detail in purchaseOrder.Details)
+        {
+            if (!products.TryGetValue(detail.ProductId, out var product))
+                throw new InvalidOperationException($"Không tìm thấy sản phẩm ID {detail.ProductId}.");
+            product.StockQuantity += detail.Quantity;
+            product.UpdatedAt = now;
+            _repository.AddInventoryAdjustment(new InventoryAdjustment
+            {
+                ProductId = detail.ProductId,
+                ChangeAmount = detail.Quantity,
+                Reason = $"Nhập hàng {purchaseOrder.PoCode}",
+                UserId = userId,
+                CreatedAt = now
+            });
+        }
+        purchaseOrder.Status = "completed";
+        purchaseOrder.UpdatedAt = now;
+        _repository.AddActivityLog(new ActivityLog
+        {
+            UserId = userId,
+            Action = "complete_purchase_order",
+            EntityType = "purchase_orders",
+            EntityId = purchaseOrder.Id.ToString(),
+            Payload = purchaseOrder.PoCode,
+            CreatedAt = now
+        });
+        await _repository.SaveChangesAsync();
+        await transaction.CommitAsync();
         _cache.Clear();
+        _supplierCache.Clear();
         var completed = (await GetByIdAsync(id))!;
         await _realtime.BroadcastStock("StockUpdated", new
         {
@@ -96,7 +149,27 @@ public class PurchaseOrderService
 
     public async Task<PurchaseOrderDetailDTO> CancelAsync(int id)
     {
-        await _repository.CancelAsync(id, GetCurrentUserId());
+        var userId = GetCurrentUserId();
+        await using var transaction = await _repository.BeginSerializableTransactionAsync();
+        await _repository.LockAsync(id);
+        var purchaseOrder = await _repository.GetForUpdateAsync(id)
+            ?? throw new KeyNotFoundException("Không tìm thấy phiếu nhập.");
+        if (!string.Equals(purchaseOrder.Status, "pending", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Chỉ có thể hủy phiếu nhập đang chờ xử lý.");
+        var now = DateTime.UtcNow;
+        purchaseOrder.Status = "cancelled";
+        purchaseOrder.UpdatedAt = now;
+        _repository.AddActivityLog(new ActivityLog
+        {
+            UserId = userId,
+            Action = "cancel_purchase_order",
+            EntityType = "purchase_orders",
+            EntityId = purchaseOrder.Id.ToString(),
+            Payload = purchaseOrder.PoCode,
+            CreatedAt = now
+        });
+        await _repository.SaveChangesAsync();
+        await transaction.CommitAsync();
         _cache.Clear();
         return (await GetByIdAsync(id))!;
     }
@@ -108,16 +181,12 @@ public class PurchaseOrderService
         return claim != null && int.TryParse(claim.Value, out var userId) ? userId : throw new UnauthorizedAccessException("Không xác định được người dùng hiện tại.");
     }
 
-    private static PurchaseOrderListDTO MapList(PurchaseOrder purchaseOrder) => new()
-    {
-        Id = purchaseOrder.Id, PoCode = purchaseOrder.PoCode, SupplierId = purchaseOrder.SupplierId, SupplierName = purchaseOrder.Supplier?.Name ?? string.Empty,
-        UserName = purchaseOrder.User?.FullName ?? string.Empty, TotalAmount = purchaseOrder.TotalAmount, ItemCount = purchaseOrder.Details.Count, Status = purchaseOrder.Status, CreatedAt = purchaseOrder.CreatedAt
-    };
-
     private static PurchaseOrderDetailDTO MapDetail(PurchaseOrder purchaseOrder) => new()
     {
         Id = purchaseOrder.Id, PoCode = purchaseOrder.PoCode, SupplierId = purchaseOrder.SupplierId, SupplierName = purchaseOrder.Supplier?.Name ?? string.Empty,
-        UserName = purchaseOrder.User?.FullName ?? string.Empty, TotalAmount = purchaseOrder.TotalAmount, ItemCount = purchaseOrder.Details.Count, Status = purchaseOrder.Status,
+        UserName = purchaseOrder.User?.FullName ?? string.Empty, EmployeeId = purchaseOrder.EmployeeId, EmployeeName = purchaseOrder.Employee?.FullName,
+        TotalAmount = purchaseOrder.Details.Sum(detail => detail.Quantity * detail.ImportPrice),
+        TotalQuantity = purchaseOrder.Details.Sum(detail => detail.Quantity), Status = purchaseOrder.Status,
         CreatedAt = purchaseOrder.CreatedAt, UpdatedAt = purchaseOrder.UpdatedAt, Note = purchaseOrder.Note,
         Items = purchaseOrder.Details.Select(detail => new PurchaseOrderItemDTO { ProductId = detail.ProductId, ProductName = detail.Product?.ProductName ?? string.Empty, Sku = detail.Product?.Sku, Quantity = detail.Quantity, ImportPrice = detail.ImportPrice, Subtotal = detail.Quantity * detail.ImportPrice }).ToList()
     };

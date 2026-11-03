@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using backend.Models;
 using backend.Services;
 using backend.DTO;
+using backend.Security;
 
 namespace backend.Controllers
 {
@@ -44,6 +45,21 @@ namespace backend.Controllers
             var result = await _productService.GetPaginatedProductsAsync(
                 page, pageSize, search, categoryId, supplierId, minPrice, maxPrice, sortBy, status, stockStatus);
             return Ok(result);
+        }
+
+        [HttpPost("advanced-search")]
+        [ReadOnlyRequest]
+        public async Task<ActionResult<PaginationResult<ProductDTO>>> AdvancedSearch(
+            [FromBody] ProductAdvancedSearchRequestDTO request)
+        {
+            try
+            {
+                return Ok(await _productService.AdvancedSearchProductsAsync(request));
+            }
+            catch (ValidationException exception)
+            {
+                return BadRequest(new { errors = exception.Errors });
+            }
         }
 
 
@@ -111,6 +127,7 @@ namespace backend.Controllers
                     SupplierId = productDto.SupplierId,
                     Price = productDto.Price,
                     Cost = productDto.Cost,
+                    StockQuantity = productDto.StockQuantity,
                     UnitId = productDto.UnitId,
                     Description = productDto.Description,
                     ImageUrl = productDto.ImageUrl,
@@ -133,14 +150,29 @@ namespace backend.Controllers
         }
 
         [HttpPut("{id}")]
-        public async Task<ActionResult<ProductDTO>> UpdateProduct(int id, [FromBody] Product product)
+        public async Task<ActionResult<ProductDTO>> UpdateProduct(int id, [FromBody] ProductUpdateDTO productDto)
         {
             try
             {
-                product.Id = id;
-                product.UpdatedAt = DateTime.UtcNow;
+                var product = new Product
+                {
+                    Id = id,
+                    ProductName = productDto.ProductName,
+                    Sku = productDto.Sku,
+                    Barcode = productDto.Barcode,
+                    CategoryId = productDto.CategoryId,
+                    SupplierId = productDto.SupplierId,
+                    Price = productDto.Price,
+                    Cost = productDto.Cost,
+                    StockQuantity = productDto.StockQuantity ?? 0,
+                    UnitId = productDto.UnitId,
+                    Description = productDto.Description,
+                    ImageUrl = productDto.ImageUrl,
+                    IsActive = productDto.IsActive,
+                    UpdatedAt = DateTime.UtcNow
+                };
 
-                var updatedProduct = await _productService.UpdateProductAsync(product);
+                var updatedProduct = await _productService.UpdateProductAsync(product, requestedStockQuantity: productDto.StockQuantity);
                 return updatedProduct;
             }
             catch (ArgumentException ex)

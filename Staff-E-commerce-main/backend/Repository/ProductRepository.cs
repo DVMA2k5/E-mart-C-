@@ -23,10 +23,10 @@ namespace backend.Repository
         {
             return await _context.Products
                 .AsNoTracking()
+                .AsSplitQuery()
                 .Include(p => p.Category)
                 .Include(p => p.Supplier)
                 .Include(p => p.Unit)
-                .Include(p => p.Inventory)
                 .Include(p => p.OrderItems)
                 .OrderBy(p => p.Id)
                 .ToListAsync();
@@ -41,7 +41,6 @@ namespace backend.Repository
                 .Include(p => p.Category)
                 .Include(p => p.Supplier)
                 .Include(p => p.Unit)
-                .Include(p => p.Inventory)
                 .Include(p => p.OrderItems) // nếu cần thống kê
                 .FirstOrDefaultAsync(p => p.Id == id);
         }
@@ -53,7 +52,8 @@ namespace backend.Repository
                 .Select(p => new Product
                 {
                     Id = p.Id,
-                    CreatedAt = p.CreatedAt
+                    CreatedAt = p.CreatedAt,
+                    StockQuantity = p.StockQuantity
                 })
                 .FirstOrDefaultAsync(p => p.Id == id);
         }
@@ -178,7 +178,6 @@ namespace backend.Repository
                 .Include(p => p.Category)
                 .Include(p => p.Supplier)
                 .Include(p => p.Unit)
-                .Include(p => p.Inventory)
                 .Where(p => ids.Contains(p.Id))
                 .AsNoTracking()
                 .ToListAsync();
@@ -212,7 +211,6 @@ namespace backend.Repository
                 .Include(p => p.Category)
                 .Include(p => p.Supplier)
                 .Include(p => p.Unit)
-                .Include(p => p.Inventory)
                 .FirstOrDefaultAsync(p => p.Barcode == clean || p.Sku == clean);
         }
     }

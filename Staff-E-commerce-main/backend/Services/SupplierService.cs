@@ -25,6 +25,7 @@ namespace backend.Services
             return new SupplierDTO
             {
                 Id = s.Id,
+                SupplierCode = $"NCC-{s.Id:D3}",
                 Name = s.Name,
                 ContactName = s.ContactName,
                 Phone = s.Phone,
@@ -39,8 +40,14 @@ namespace backend.Services
         public async Task<List<SupplierDTO>> GetAllAsync()
         {
             var (items, _) = await _cache.GetOrCreateAsync(
-                async () => (await _repo.GetAllAsync()).Select(MapToDto).ToList(), CacheTtl);
+                async () => (await _repo.GetAllWithStatisticsAsync()).Select(PrepareDto).ToList(), CacheTtl);
             return items.ToList();
+        }
+
+        private static SupplierDTO PrepareDto(SupplierDTO supplier)
+        {
+            supplier.SupplierCode = $"NCC-{supplier.Id:D3}";
+            return supplier;
         }
 
         public async Task<SupplierDTO?> GetByIdAsync(int id)
@@ -90,7 +97,7 @@ namespace backend.Services
 
             var created = await _repo.CreateAsync(supplier);
             var result = MapToDto(created);
-            _cache.AddOrUpdate(result, item => item.Id);
+            _cache.Clear();
             return result;
         }
 
@@ -117,14 +124,14 @@ namespace backend.Services
 
             var updated = await _repo.UpdateAsync(existing);
             var result = MapToDto(updated);
-            _cache.AddOrUpdate(result, item => item.Id);
+            _cache.Clear();
             return result;
         }
 
         public async Task<bool> DeleteSupplierAsync(int id)
         {
             var deleted = await _repo.DeleteAsync(id);
-            if (deleted) _cache.RemoveWhere(item => item.Id == id);
+            if (deleted) _cache.Clear();
             return deleted;
         }
     }

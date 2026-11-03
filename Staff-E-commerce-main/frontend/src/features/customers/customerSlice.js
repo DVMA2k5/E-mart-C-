@@ -12,7 +12,7 @@ import {
 export const fetchCustomers = createAsyncThunk(
   "customers/fetchCustomers",
   async (
-    { page = 1, pageSize = 5, search = "", status = "all" },
+    { page = 1, pageSize = 25, search = "", status = "all" },
     { rejectWithValue }
   ) => {
     try {
@@ -92,7 +92,7 @@ const initialState = {
   successMessage: null,
   pagination: {
     currentPage: 1,
-    pageSize: 5,
+    pageSize: 25,
     totalItems: 0,
     totalPages: 0,
   },
@@ -108,6 +108,13 @@ const customerSlice = createSlice({
   reducers: {
     setCurrentPage: (state, action) => {
       state.pagination.currentPage = action.payload;
+    },
+    setPageSize: (state, action) => {
+      if (![10, 25, 50, 100].includes(action.payload)) return;
+      state.pagination.pageSize = action.payload;
+      state.pagination.currentPage = 1;
+      // Ignore a response for the previously selected page size.
+      state.listRequestId = null;
     },
     setSearchTerm: (state, action) => {
       state.filters.search = action.payload;
@@ -153,7 +160,7 @@ const customerSlice = createSlice({
         state.items = action.payload.items || [];
         state.pagination = {
           currentPage: action.payload.currentPage || 1,
-          pageSize: state.pagination.pageSize || 5,
+          pageSize: action.payload.pageSize || action.meta.arg.pageSize || state.pagination.pageSize,
           totalItems: action.payload.totalItems || 0,
           totalPages: action.payload.totalPages || 0,
         };
@@ -262,6 +269,7 @@ const customerSlice = createSlice({
 
 export const {
   setCurrentPage,
+  setPageSize,
   setSearchTerm,
   setStatusFilter,
   resetFilters,

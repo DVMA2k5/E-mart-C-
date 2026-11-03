@@ -34,30 +34,51 @@ builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
     ["Jwt:Issuer"] = "test", ["Jwt:Audience"] = "test"
 });
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlServer(connection.ConnectionString));
+builder.Services.AddSingleton(typeof(BusMemoryCache<>));
+builder.Services.AddSignalR();
 builder.Services.AddScoped<UserRepository>();
 builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<RoleRepository>();
+builder.Services.AddScoped<RoleService>();
+builder.Services.AddScoped<EmployeeRepository>();
+builder.Services.AddScoped<EmployeeService>();
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<OrderRepository>();
 builder.Services.AddScoped<CustomerRepository>();
+builder.Services.AddScoped<CustomerService>();
 builder.Services.AddScoped<PaymentRepository>();
 builder.Services.AddScoped<ActivityLogRepository>();
 builder.Services.AddScoped<ActivityLogService>();
 builder.Services.AddScoped<InvoiceService>();
+builder.Services.AddSingleton<InvoiceDetailCache>();
+builder.Services.AddScoped<InvoiceRepository>();
+builder.Services.AddScoped<PosCheckoutRepository>();
+builder.Services.AddScoped<StorefrontRepository>();
 builder.Services.AddScoped<PosCheckoutService>();
+builder.Services.AddScoped<StorefrontService>();
+builder.Services.AddScoped<StorefrontAccountService>();
+builder.Services.AddScoped<StorefrontCheckoutService>();
+builder.Services.AddScoped<BankTransferService>();
+builder.Services.AddScoped<RealtimeNotificationService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<PaymentService>();
 builder.Services.AddScoped<OrderItemRepository>();
 builder.Services.AddScoped<OrderItemService>();
 builder.Services.AddScoped<PromotionRepository>();
 builder.Services.AddScoped<PromotionService>();
+builder.Services.AddScoped<VoucherWalletService>();
 builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Momo:AccessKey"] = "test-access", ["Momo:SecretKey"] = "test-secret" });
 builder.Services.AddScoped<PermissionFilter>();
 builder.Services.AddScoped<AccountMutationFilter>();
+builder.Services.AddScoped<ReadCacheInvalidationService>();
+builder.Services.AddScoped<ReadCacheInvalidationFilter>();
 builder.Services.AddControllers(o =>
 {
     o.Filters.AddService<PermissionFilter>();
     o.Filters.AddService<AccountMutationFilter>();
+    o.Filters.AddService<ReadCacheInvalidationFilter>();
 }).AddApplicationPart(typeof(UsersController).Assembly);
 builder.Services.AddAuthorization(o => o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
@@ -78,11 +99,17 @@ var assertions = 0;
 try
 {
     await WithDb(async db => { await db.Database.EnsureCreatedAsync(); databaseCreated = true; });
+    if (args.Contains("--voucher-only")) await VoucherWalletRegression.SeedLegacyAsync(app.Services);
     // Exercise upgrading the previous order schema, not only a freshly generated model.
     await WithDb(async db => await db.Database.ExecuteSqlRawAsync("""
         DROP INDEX ux_orders_checkout_key ON orders;
         ALTER TABLE orders DROP COLUMN checkout_key, checkout_hash, points_used, points_earned, cash_received, recipient_name, recipient_phone, shipping_address;
         """));
+    if (args.Contains("--voucher-only"))
+        await WithDb(async db => await db.Database.ExecuteSqlRawAsync("""
+            DROP TABLE customer_vouchers;
+            ALTER TABLE voucher_promotions DROP COLUMN visibility, send_to_customers, claim_start_date, claim_end_date, claim_limit, claimed_count;
+            """));
     await AuthorizationSchemaInitializer.InitializeAsync(app.Services);
     int adminId = 0, staffId = 0, employeeId = 0, customerId = 0, adminEmployeeId = 0;
     await WithDb(async db =>
@@ -108,6 +135,12 @@ try
     var staffToken = await Token(staffId);
     var customerToken = await Token(customerId);
 
+    if (args.Contains("--voucher-only"))
+    {
+        await VoucherWalletRegression.RunAsync(app.Services, client, adminToken);
+        return;
+    }
+
     await CheckUserFilter("role=staff&isActive=true&search=staff_test", 1, staffId);
     await CheckUserFilter("search=Staff%20Original", 1, staffId);
     await CheckUserFilter("search=staff%40test.local", 1, staffId);
@@ -121,6 +154,7 @@ try
         user!.IsLocked = true;
         await db.SaveChangesAsync();
     });
+    app.Services.GetRequiredService<BusMemoryCache<UserDTO>>().Clear();
     await CheckUserFilter("role=staff&isActive=false", 1, staffId);
     await CheckUserFilter("role=staff&isActive=true", 0);
     await WithDb(async db =>
@@ -129,6 +163,7 @@ try
         user!.IsLocked = false;
         await db.SaveChangesAsync();
     });
+    app.Services.GetRequiredService<BusMemoryCache<UserDTO>>().Clear();
 
     await Expect(HttpMethod.Get, "/api/users/getalluser", staffToken, null, HttpStatusCode.Forbidden);
     await Expect(HttpMethod.Get, "/api/users/getalluser", customerToken, null, HttpStatusCode.Forbidden);
@@ -265,14 +300,16 @@ try
     Console.WriteLine($"PASS: {assertions} authorization and account lifecycle assertions.");
     await PosCheckoutRegression.RunAsync(app.Services, client, adminToken);
     await OrderDeliveryRegression.RunAsync(app.Services, client, adminToken);
+    await VoucherWalletRegression.RunAsync(app.Services, client, adminToken);
 
     async Task CheckUserFilter(string query, int expectedTotal, int? expectedId = null, int? expectedPage = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/users/paginated?" + query);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
         using var response = await client.SendAsync(request);
-        Check(response.IsSuccessStatusCode, "Filtered users endpoint succeeds");
-        using var data = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var responseText = await response.Content.ReadAsStringAsync();
+        Check(response.IsSuccessStatusCode, $"Filtered users endpoint succeeds: {(int)response.StatusCode} {responseText}");
+        using var data = JsonDocument.Parse(responseText);
         var root = data.RootElement;
         Check(root.GetProperty("totalItems").GetInt32() == expectedTotal, "Filtered count: " + query);
         if (expectedId.HasValue)

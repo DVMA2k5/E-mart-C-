@@ -328,6 +328,13 @@ export async function getProductsPaginated(
   return request(`/products/paginated?${params}`);
 }
 
+export async function advancedSearchProducts(payload) {
+  return request("/products/advanced-search", {
+    method: "POST",
+    body: payload,
+  });
+}
+
 export async function getProductByBarcode(barcode) {
   return request(`/products/barcode/${encodeURIComponent(barcode)}`);
 }

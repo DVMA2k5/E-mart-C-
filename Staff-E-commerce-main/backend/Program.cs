@@ -33,10 +33,13 @@ builder.Services.AddDataProtection()
 // -------------------------
 builder.Services.AddScoped<PermissionFilter>();
 builder.Services.AddScoped<AccountMutationFilter>();
+builder.Services.AddScoped<ReadCacheInvalidationFilter>();
+builder.Services.AddScoped<ReadCacheInvalidationService>();
 builder.Services.AddControllers(options =>
     {
         options.Filters.AddService<PermissionFilter>();
         options.Filters.AddService<AccountMutationFilter>();
+        options.Filters.AddService<ReadCacheInvalidationFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -103,8 +106,12 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ProductService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<InvoiceService>();
+builder.Services.AddSingleton<InvoiceDetailCache>();
 builder.Services.AddScoped<PosCheckoutService>();
 builder.Services.AddScoped<StorefrontService>();
+builder.Services.AddScoped<StorefrontAccountService>();
+builder.Services.AddScoped<StorefrontCheckoutService>();
+builder.Services.AddScoped<BankTransferService>();
 builder.Services.AddScoped<RealtimeNotificationService>();
 builder.Services.AddScoped<ActivityLogService>();
 builder.Services.AddScoped<CustomerService>();
@@ -113,6 +120,7 @@ builder.Services.AddSingleton(typeof(BusMemoryCache<>));
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<PromotionService>();
+builder.Services.AddScoped<VoucherWalletService>();
 builder.Services.AddScoped<StatisticsService>();
 builder.Services.AddScoped<OrderItemService>();
 builder.Services.AddScoped<InventoryService>();
@@ -189,7 +197,7 @@ try
 }
 catch (Exception ex)
 {
-    app.Logger.LogCritical(ex, "Authorization schema initialization failed.");
+    app.Logger.LogCritical(ex, "Database schema initialization failed.");
     throw;
 }
 

@@ -469,7 +469,7 @@ export default function UserManagement() {
       </div>
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
-        <table className="w-full text-left">
+        <table className="management-table w-full text-left">
           <thead className="bg-gray-50 text-xs font-semibold uppercase text-gray-500">
             <tr>
               <th className="px-4 py-3">Email</th>

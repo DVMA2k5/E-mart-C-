@@ -10,12 +10,16 @@ public sealed class InvoiceService
 {
     private readonly InvoiceRepository _repository;
     private readonly BusMemoryCache<InvoiceDTO> _cache;
+    private readonly InvoiceDetailCache _detailCache;
+    private readonly VoucherWalletService _vouchers;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
-    public InvoiceService(InvoiceRepository repository, BusMemoryCache<InvoiceDTO> cache)
+    public InvoiceService(InvoiceRepository repository, BusMemoryCache<InvoiceDTO> cache, InvoiceDetailCache detailCache, VoucherWalletService vouchers)
     {
         _repository = repository;
         _cache = cache;
+        _detailCache = detailCache;
+        _vouchers = vouchers;
     }
 
     public async Task<Invoice?> EnsureInvoiceForOrderAsync(int orderId)
@@ -32,7 +36,9 @@ public sealed class InvoiceService
         var invoice = new Invoice
         {
             OrderId = order.Id,
-            InvoiceNumber = "HD-" + order.OrderNumber,
+            EmployeeId = order.User?.EmployeeId,
+            CustomerId = order.CustomerId,
+            InvoiceNumber = DocumentNumber.Invoice(order.Id),
             InvoiceStatus = "issued",
             PaymentStatus = order.PaymentStatus,
             PaymentMethod = order.PaymentMethod,
@@ -45,14 +51,21 @@ public sealed class InvoiceService
             TotalAmount = order.TotalAmount,
             IssuedAt = now,
             UpdatedAt = now,
-            Items = order.OrderItems.Select(i => new InvoiceItem
+            Items = order.OrderItems.GroupBy(item => item.ProductId).Select(group =>
             {
-                ProductId = i.ProductId,
-                ProductName = i.Product?.ProductName ?? "Sản phẩm",
-                Sku = i.Product?.Sku,
-                Quantity = i.Quantity,
-                UnitPrice = i.UnitPrice,
-                TotalPrice = i.TotalPrice
+                var first = group.First();
+                var quantity = group.Sum(item => item.Quantity);
+                var totalPrice = group.Sum(item => item.TotalPrice);
+                return new InvoiceItem
+                {
+                    ProductId = group.Key,
+                    ProductName = first.Product?.ProductName ?? "Sản phẩm",
+                    Sku = first.Product?.Sku,
+                    Quantity = quantity,
+                    UnitPrice = quantity == 0 ? first.UnitPrice
+                        : decimal.Round(totalPrice / quantity, 2, MidpointRounding.AwayFromZero),
+                    TotalPrice = totalPrice
+                };
             }).ToList()
         };
 
@@ -60,6 +73,7 @@ public sealed class InvoiceService
         {
             var created = await _repository.AddAsync(invoice);
             _cache.AddOrUpdate(MapSummary(created, order), item => item.InvoiceId);
+            _detailCache.Clear();
             return created;
         }
         catch (DbUpdateException)
@@ -72,6 +86,7 @@ public sealed class InvoiceService
 
     public async Task SyncOrderLifecycleAsync(int orderId)
     {
+        await _vouchers.SyncOrderAsync(orderId);
         var order = await _repository.GetOrderStatusAsync(orderId);
         if (order is null) return;
         var invoice = await _repository.GetByOrderIdAsync(orderId);
@@ -83,7 +98,9 @@ public sealed class InvoiceService
                 invoice.InvoiceStatus = "voided";
                 invoice.UpdatedAt = DateTime.UtcNow;
                 await _repository.SaveChangesAsync();
+                _detailCache.Clear();
             }
+            _cache.RemoveWhere(item => item.OrderId == orderId);
             return;
         }
 
@@ -95,7 +112,9 @@ public sealed class InvoiceService
                 invoice.PaymentStatus = "refunded";
                 invoice.UpdatedAt = DateTime.UtcNow;
                 await _repository.SaveChangesAsync();
+                _detailCache.Clear();
             }
+            _cache.RemoveWhere(item => item.OrderId == orderId);
             return;
         }
 
@@ -110,6 +129,7 @@ public sealed class InvoiceService
         invoice.UpdatedAt = DateTime.UtcNow;
         await _repository.SaveChangesAsync();
         _cache.AddOrUpdate(MapSummary(invoice, order), item => item.InvoiceId);
+        _detailCache.Clear();
     }
 
     public async Task<PagedResult<InvoiceDTO>> GetInvoicesAsync(
@@ -121,7 +141,7 @@ public sealed class InvoiceService
         var (items, _) = await _cache.GetOrCreateAsync(
             () => _repository.GetCompletedInvoiceDtosAsync(), CacheTtl);
 
-        IEnumerable<InvoiceDTO> filtered = items;
+        IEnumerable<InvoiceDTO> filtered = items.Where(item => item.OrderStatus == "completed");
         if (from.HasValue) filtered = filtered.Where(i => i.IssuedAt >= from.Value);
         if (to.HasValue) filtered = filtered.Where(i => i.IssuedAt < to.Value.Date.AddDays(1));
         if (!string.IsNullOrWhiteSpace(paymentStatus))
@@ -149,12 +169,29 @@ public sealed class InvoiceService
 
     public async Task<InvoiceDTO?> GetInvoiceAsync(int orderId)
     {
+        if (orderId <= 0) return null;
         var invoice = await _repository.GetDetailByOrderIdAsync(orderId);
-        if (invoice is null) return null;
+        return invoice is null ? null : MapDetail(invoice);
+    }
+
+    public Task<InvoiceDTO?> GetInvoiceByIdAsync(int invoiceId)
+    {
+        if (invoiceId <= 0) return Task.FromResult<InvoiceDTO?>(null);
+        return _detailCache.GetOrCreateAsync(invoiceId, async () =>
+        {
+            var invoice = await _repository.GetDetailByIdAsync(invoiceId);
+            return invoice is null ? null : MapDetail(invoice);
+        });
+    }
+
+    private static InvoiceDTO MapDetail(Invoice invoice)
+    {
         var delivery = invoice.Order is null ? null : OrderDeliveryDetails.FromOrder(invoice.Order);
         return new InvoiceDTO
         {
             InvoiceId = invoice.Id,
+            EmployeeId = invoice.EmployeeId,
+            CustomerId = invoice.CustomerId,
             OrderId = invoice.OrderId,
             InvoiceNumber = invoice.InvoiceNumber,
             OrderNumber = invoice.Order?.OrderNumber ?? "",
@@ -163,6 +200,7 @@ public sealed class InvoiceService
             IssuedAt = invoice.IssuedAt,
             PaymentStatus = invoice.PaymentStatus,
             PaymentMethod = invoice.PaymentMethod,
+            CreatedByName = invoice.Order?.User?.FullName ?? invoice.Employee?.FullName ?? "Hệ thống",
             Subtotal = invoice.Subtotal,
             Discount = invoice.DiscountAmount,
             TaxAmount = invoice.TaxAmount,
@@ -175,7 +213,7 @@ public sealed class InvoiceService
             RecipientName = delivery?.Name,
             RecipientPhone = delivery?.Phone,
             ShippingAddress = delivery?.Address,
-            Items = invoice.Items.Select(x => new InvoiceItemDTO
+            Items = invoice.Items.OrderBy(x => x.Id).Select(x => new InvoiceItemDTO
             {
                 ProductName = x.ProductName,
                 Sku = x.Sku,
@@ -189,6 +227,8 @@ public sealed class InvoiceService
     private static InvoiceDTO MapSummary(Invoice invoice, Order order) => new()
     {
         InvoiceId = invoice.Id,
+        EmployeeId = invoice.EmployeeId,
+        CustomerId = invoice.CustomerId,
         OrderId = invoice.OrderId,
         InvoiceNumber = invoice.InvoiceNumber,
         OrderNumber = order.OrderNumber,
@@ -197,6 +237,7 @@ public sealed class InvoiceService
         IssuedAt = invoice.IssuedAt,
         PaymentStatus = invoice.PaymentStatus,
         PaymentMethod = invoice.PaymentMethod,
+        CreatedByName = order.User?.FullName ?? invoice.Employee?.FullName ?? "Hệ thống",
         Subtotal = invoice.Subtotal,
         Discount = invoice.DiscountAmount,
         TaxAmount = invoice.TaxAmount,

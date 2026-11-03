@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { createPromotion } from "../../api/promotionApi";
 import ProductPickerModal from "../../components/promotions/ProductPickerModal";
+import VoucherDistributionFields from "../../components/promotions/VoucherDistributionFields";
 
 export default function PromotionCreate({ onCancel, onSuccess }) {
   const [formData, setFormData] = useState({
@@ -10,6 +11,10 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
     value: "",
     minOrderAmount: "",
     voucherCode: "",
+    visibility: "public",
+    sendToCustomers: false,
+    claimEndDate: "",
+    claimLimit: "",
     maxDiscount: "",
     usageLimit: "",
     description: "",
@@ -29,6 +34,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
       const newData = {
         ...prev,
         [name]: type === "checkbox" ? checked : value,
+        ...(name === "visibility" && value === "only-code" ? { sendToCustomers: false } : {}),
       };
       
       return newData;
@@ -56,12 +62,17 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
         voucherCode: formData.type === "voucher" ? formData.voucherCode.trim().toUpperCase() : null,
         productIds: formData.type === "product" ? formData.productIds : [],
         maxDiscount: formData.maxDiscount ? parseFloat(formData.maxDiscount) : null,
-        usageLimit: formData.usageLimit ? parseInt(formData.usageLimit) : null,
+        usageLimit: formData.type !== "voucher" && formData.usageLimit ? parseInt(formData.usageLimit) : null,
+        visibility: formData.visibility,
+        sendToCustomers: formData.type === "voucher" && formData.visibility === "public" && formData.sendToCustomers,
+        claimStartDate: formData.type === "voucher" ? formData.startDate : null,
+        claimEndDate: formData.type === "voucher" ? formData.claimEndDate : null,
+        claimLimit: formData.type === "voucher" ? Number(formData.claimLimit) : null,
         description: formData.description || "",
         startDate: formData.startDate || null,
         endDate: formData.endDate || null,
-        active: formData.active,
-        status: formData.active ? "active" : "disabled",
+        active: formData.type === "voucher" || formData.active,
+        status: formData.type === "voucher" || formData.active ? "active" : "disabled",
       };
 
       await createPromotion(payload);
@@ -170,7 +181,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
           {/* Thời gian */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Ngày bắt đầu</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{formData.type === "voucher" ? "Ngày bắt đầu nhận / sử dụng" : "Ngày bắt đầu"}</label>
               <input
                 type="date"
                 name="startDate"
@@ -181,7 +192,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Ngày kết thúc</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{formData.type === "voucher" ? "Ngày hết hạn sử dụng" : "Ngày kết thúc"}</label>
               <input
                 type="date"
                 name="endDate"
@@ -195,7 +206,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
           </div>
 
           {/* Giới hạn sử dụng */}
-          <div>
+          {formData.type === "voucher" ? <VoucherDistributionFields formData={formData} onChange={handleChange} /> : <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Giới hạn lượt sử dụng <span className="text-gray-500 text-xs">(để trống = không giới hạn)</span>
             </label>
@@ -207,7 +218,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
               min="0"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             />
-          </div>
+          </div>}
 
           {/* Mô tả */}
           <div>
@@ -223,7 +234,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
           </div>
 
           {/* Trạng thái */}
-          <div className="flex items-center">
+          {formData.type !== "voucher" && <div className="flex items-center">
             <input
               type="checkbox"
               name="active"
@@ -232,7 +243,7 @@ export default function PromotionCreate({ onCancel, onSuccess }) {
               className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
             />
             <label className="ml-2 block text-sm text-gray-700">Kích hoạt ngay</label>
-          </div>
+          </div>}
 
           {/* Actions */}
           <div className="flex gap-3 pt-4 border-t">

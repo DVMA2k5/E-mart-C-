@@ -5,12 +5,15 @@ public class InvoiceDTO
     public int OrderId { get; set; }
     public string InvoiceNumber { get; set; } = string.Empty;
     public int InvoiceId { get; set; }
+    public int? EmployeeId { get; set; }
+    public int? CustomerId { get; set; }
     public string InvoiceStatus { get; set; } = string.Empty;
     public string OrderNumber { get; set; } = string.Empty;
     public string OrderStatus { get; set; } = string.Empty;
     public DateTime IssuedAt { get; set; }
     public string PaymentStatus { get; set; } = string.Empty;
     public string? PaymentMethod { get; set; }
+    public string? CreatedByName { get; set; }
     public decimal Subtotal { get; set; }
     public decimal Discount { get; set; }
     public decimal TaxAmount { get; set; }

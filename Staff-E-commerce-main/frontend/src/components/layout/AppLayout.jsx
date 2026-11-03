@@ -37,7 +37,7 @@ export default function AppLayout() {
         {topbarEl}
 
         {/* main area: Outlet is where router will render the active route content */}
-        <main className="min-w-0 p-4 overflow-auto">
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto p-2 sm:p-3">
           <Outlet />
         </main>
       </div>

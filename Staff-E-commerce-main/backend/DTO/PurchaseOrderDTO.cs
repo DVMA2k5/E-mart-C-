@@ -21,8 +21,10 @@ public class PurchaseOrderListDTO
     public int SupplierId { get; set; }
     public string SupplierName { get; set; } = string.Empty;
     public string UserName { get; set; } = string.Empty;
+    public int? EmployeeId { get; set; }
+    public string? EmployeeName { get; set; }
     public decimal TotalAmount { get; set; }
-    public int ItemCount { get; set; }
+    public int TotalQuantity { get; set; }
     public string Status { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
 }

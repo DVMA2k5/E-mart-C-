@@ -5,7 +5,6 @@ import {
   createCategory,
   updateCategory,
   toggleCategoryStatus,
-  deleteCategory,
 } from "../../api/categoryApi";
 
 // Async thunks
@@ -68,18 +67,6 @@ export const toggleStatus = createAsyncThunk(
       return data;
     } catch (error) {
       return rejectWithValue(error.message || "Error toggling status");
-    }
-  }
-);
-
-export const removeCategory = createAsyncThunk(
-  "categories/removeCategory",
-  async (categoryId, { rejectWithValue }) => {
-    try {
-      await deleteCategory(categoryId);
-      return { id: categoryId };
-    } catch (error) {
-      return rejectWithValue(error.message || "Error deleting category");
     }
   }
 );
@@ -229,23 +216,6 @@ const categorySlice = createSlice({
         state.error = action.payload;
       });
 
-    // Delete Category
-    builder
-      .addCase(removeCategory.pending, (state) => {
-        state.loading = true;
-      })
-      .addCase(removeCategory.fulfilled, (state, action) => {
-        state.loading = false;
-        state.successMessage = "Xóa danh mục thành công";
-        const categoryId = action.payload?.id ?? action.meta.arg;
-        const hadCategory = state.items.some((item) => item.id === categoryId);
-        state.items = state.items.filter((item) => item.id !== categoryId);
-        if (hadCategory) state.pagination.totalItems = Math.max(0, state.pagination.totalItems - 1);
-      })
-      .addCase(removeCategory.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      });
   },
 });
 

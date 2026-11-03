@@ -16,6 +16,7 @@ const ProductModal = ({
   categories = [],
   suppliers = [],
   units = [],
+  embedded = false,
 }) => {
   const [formData, setFormData] = useState({});
   const [errors, setErrors] = useState({});
@@ -73,6 +74,7 @@ const ProductModal = ({
       setFormData({
         productName: "",
         price: "",
+        stockQuantity: 0,
         discountPrice: null,
         sku: "",
         unitId: "",
@@ -90,6 +92,7 @@ const ProductModal = ({
         id: p.id,
         productName: p.productName || p.product_name || p.name || "",
         price: p.price !== undefined && p.price !== null ? p.price : "",
+        stockQuantity: p.stockQuantity ?? p.inventory?.quantity ?? 0,
         discountPrice: p.discountPrice ?? p.DiscountPrice ?? null,
         sku: p.sku || p.barcode || "",
         unitId: p.unitId || p.unit?.id || p.unit_id || "",
@@ -119,6 +122,7 @@ const ProductModal = ({
               id: detail.id,
               productName: prev.productName || detail.productName || "",
               price: prev.price !== "" && prev.price !== undefined ? prev.price : detail.price,
+              stockQuantity: detail.stockQuantity ?? detail.inventory?.quantity ?? prev.stockQuantity ?? 0,
               discountPrice: detail.discountPrice ?? detail.DiscountPrice ?? null,
               sku: prev.sku || detail.sku || detail.barcode || "",
               unitId: prev.unitId || detail.unitId || detail.unit?.id || "",
@@ -160,6 +164,11 @@ const ProductModal = ({
       : (mode === "edit" ? product?.price : "");
     if (!priceVal || isNaN(priceVal) || Number(priceVal) <= 0) {
       newErrors.price = "Giá phải là số lớn hơn 0";
+    }
+
+    const stockValue = Number(formData.stockQuantity ?? 0);
+    if (!Number.isInteger(stockValue) || stockValue < 0) {
+      newErrors.stockQuantity = "Số lượng tồn phải là số nguyên không âm";
     }
 
     if (mode === "create") {
@@ -238,6 +247,7 @@ const ProductModal = ({
       id: mode === "edit" ? (product?.id || formData.id) : undefined,
       productName: resolvedName,
       price: resolvedPrice,
+      stockQuantity: Number(formData.stockQuantity ?? product?.stockQuantity ?? product?.inventory?.quantity ?? 0),
       sku: resolvedSku,
       unitId: resolvedUnitId,
       categoryId: resolvedCategoryId,
@@ -310,8 +320,8 @@ const ProductModal = ({
   const isView = mode === "view";
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-md w-full max-w-4xl p-4 shadow-lg">
+    <div className={embedded ? "w-full" : "fixed inset-0 z-40 flex items-center justify-center bg-black/50"}>
+      <div className={embedded ? "w-full rounded-xl border bg-white p-4 shadow-sm" : "bg-white rounded-md w-full max-w-4xl p-4 shadow-lg"}>
         <div className="flex justify-between items-center mb-3">
           <h3 className="text-lg font-semibold">{modalTitle}</h3>
           {onDelete && mode !== "create" && (
@@ -324,9 +334,9 @@ const ProductModal = ({
           )}
         </div>
 
-        <div className="flex gap-4">
+        <div className={embedded ? "space-y-4" : "flex gap-4"}>
           {/* --- CỘT TRÁI: ẢNH SẢN PHẨM --- */}
-          <div className="w-1/3">
+          <div className={embedded ? "w-full" : "w-1/3"}>
             <label className="text-xs text-gray-600 mb-2 block">
               Hình ảnh sản phẩm
             </label>
@@ -459,7 +469,7 @@ const ProductModal = ({
               </div>
             )}
           </div>
-          <div className="w-2/3">
+          <div className={embedded ? "w-full" : "w-2/3"}>
             <div className="grid grid-cols-2 gap-3">
               {/* --- TÊN SẢN PHẨM --- */}
               <div>
@@ -549,6 +559,27 @@ const ProductModal = ({
                 <p className="mt-1 text-xs text-gray-500">
                   Giá này được tính tự động từ khuyến mãi theo sản phẩm đang hoạt động.
                 </p>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-600">Số lượng tồn *</label>
+                {isView ? (
+                  <div className="p-2 border rounded bg-gray-50">
+                    {Number(formData.stockQuantity ?? 0).toLocaleString("vi-VN")}
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      className={`w-full border px-2 py-1 rounded ${errors.stockQuantity ? "border-red-500" : ""}`}
+                      value={formData.stockQuantity ?? 0}
+                      onChange={(event) => handleFieldChange("stockQuantity", event.target.value)}
+                    />
+                    {errors.stockQuantity && <p className="text-xs text-red-500 mt-1">{errors.stockQuantity}</p>}
+                  </>
+                )}
               </div>
 
               {/* --- ĐƠN VỊ --- */}
@@ -732,9 +763,11 @@ const ProductModal = ({
                     Nhập hàng từ nhà cung cấp
                   </button>
                 )}
-                <button className="px-3 py-1 rounded border" onClick={onCancel}>
-                  Hủy
-                </button>
+                {(!embedded || !isView) && (
+                  <button className="px-3 py-1 rounded border" onClick={onCancel}>
+                    {isView ? "Đóng" : "Hủy"}
+                  </button>
+                )}
                 {!isView && (
                   <button
                     className="px-3 py-1 rounded bg-primary-600 text-white hover:bg-primary-700"

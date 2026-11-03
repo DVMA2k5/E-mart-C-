@@ -1,5 +1,12 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import ProductDescription from "./components/ProductDescription";
+import {
+  checkoutDefinitelyRejected,
+  checkoutStorageKey,
+  createCheckoutRequestId,
+  parsePendingCheckout,
+  preparePendingCheckout,
+} from "./utils/storefrontCheckoutSession";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AppState,
@@ -55,6 +62,7 @@ const CART_KEY = "e-mart-mobile-cart";
 const CUSTOMER_KEY = "e-mart-mobile-customer";
 const CUSTOMER_TOKEN_KEY = "e-mart-mobile-customer-token";
 const ADDRESS_KEY = "e-mart-mobile-delivery-address";
+const PRODUCT_PAGE_SIZE = 40;
 
 function deliveryAddressFromProfile(value) {
   const parts = (value || "").trim().split(",").map((part) => part.trim()).filter(Boolean);
@@ -94,6 +102,9 @@ function ProductStock({ product, reservedQuantity = 0, style = styles.stockLabel
 
 const productDiscountAmount = (product) => Math.max(0, product.discountAmount ?? ((product.originalPrice ?? product.price) - product.price));
 const eventPromotionIssue = (promotion, orderAmount) => {
+  const walletIssues = { reserved: "Đang giữ cho đơn hàng chờ hoàn tất.", disabled: "Voucher đã bị vô hiệu.", scheduled: "Chưa đến ngày sử dụng.", used: "Voucher đã được sử dụng.", expired: "Voucher đã hết hạn." };
+  if (walletIssues[promotion.walletStatus]) return walletIssues[promotion.walletStatus];
+  if (orderAmount == null) return "";
   if (orderAmount <= 0) return "Thêm sản phẩm vào giỏ để sử dụng ưu đãi.";
   const minimum = Number(promotion.minOrderAmount) || 0;
   return orderAmount < minimum ? `Mua thêm ${money(minimum - orderAmount)} để sử dụng ưu đãi.` : "";
@@ -515,6 +526,7 @@ function CustomerInvoice({ order, token, onClose }) {
 }
 
 export default function App() {
+  const checkoutRequestLock = useRef(false);
   const { width: windowWidth } = useWindowDimensions();
   const isDesktop = windowWidth >= 768;
   const isWide = windowWidth >= 1024;
@@ -533,6 +545,15 @@ export default function App() {
   const previousCartCount = useRef(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [productPage, setProductPage] = useState(1);
+  const [productsHasMore, setProductsHasMore] = useState(false);
+  const [productsLoadingMore, setProductsLoadingMore] = useState(false);
+  const [flashSaleProducts, setFlashSaleProducts] = useState([]);
+  const [flashSalePage, setFlashSalePage] = useState(1);
+  const [flashSaleHasMore, setFlashSaleHasMore] = useState(false);
+  const [flashSaleLoading, setFlashSaleLoading] = useState(false);
+  const [flashSaleOpen, setFlashSaleOpen] = useState(false);
+  const [countdownNow, setCountdownNow] = useState(Date.now());
   const [query, setQuery] = useState("");
   const [categoryId, setCategoryId] = useState("all");
   const homeListRef = useRef(null);
@@ -550,6 +571,7 @@ export default function App() {
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderError, setOrderError] = useState("");
   const [completedOrder, setCompletedOrder] = useState(null);
+  const [pendingCheckout, setPendingCheckout] = useState(null);
 
   const [customerOrders, setCustomerOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -593,10 +615,59 @@ export default function App() {
   const [appliedVoucher, setAppliedVoucher] = useState(null);
   const [draftVoucher, setDraftVoucher] = useState(null);
   const [vouchersLoading, setVouchersLoading] = useState(false);
+  const [voucherContext, setVoucherContext] = useState("checkout");
+  const [voucherView, setVoucherView] = useState("available");
+  const [voucherHistory, setVoucherHistory] = useState([]);
+  const [voucherHistoryTab, setVoucherHistoryTab] = useState("used");
 
   const [paymentMethod, setPaymentMethod] = useState("cod");
+  const [paymentOptions, setPaymentOptions] = useState({ cod: true, momo: false, bank: false, bankDetails: null });
   const [useRewardPoints, setUseRewardPoints] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API_URL}/storefront/payment-options`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("payment options unavailable")))
+      .then((options) => {
+        if (!active) return;
+        setPaymentOptions(options);
+        setPaymentMethod((current) => options[current] ? current : "cod");
+      })
+      .catch(() => { if (active) setPaymentOptions({ cod: true, momo: false, bank: false, bankDetails: null }); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!customer?.id || !customerToken) {
+      setPendingCheckout(null);
+      return () => { active = false; };
+    }
+
+    AsyncStorage.getItem(checkoutStorageKey(customer.id))
+      .then((raw) => parsePendingCheckout(raw, customer.id))
+      .then((pending) => {
+        if (!active || !pending) return;
+        setPendingCheckout(pending);
+        setCart(pending.cart);
+        setCheckoutForm({
+          fullName: pending.payload.fullName || "",
+          phone: pending.payload.phone || "",
+          address: pending.payload.address || "",
+          note: pending.payload.note || "",
+        });
+        setPaymentMethod(pending.payload.paymentMethod || "cod");
+        setUseRewardPoints((pending.payload.pointsUsed || 0) > 0);
+        setAppliedVoucher(pending.voucher || null);
+        setOrderError("Có một yêu cầu đặt hàng chưa xác định kết quả. Hãy kiểm tra thông tin và gửi lại để nhận đúng kết quả, không tạo đơn trùng.");
+      })
+      .catch(() => {
+        if (active) setOrderError("Không đọc được yêu cầu đặt hàng đã lưu. Vui lòng liên hệ nhân viên trước khi đặt đơn khác.");
+      });
+
+    return () => { active = false; };
+  }, [customer?.id, customerToken]);
 
   // Auto scroll banner
   useEffect(() => {
@@ -622,35 +693,76 @@ export default function App() {
     return () => { active = false; };
   }, [customer?.id, customer?.address, customerToken]);
 
-  const loadStore = useCallback(async (silent = false) => {
-    if (!silent) {
+  const loadStore = useCallback(async (silent = false, page = 1, append = false) => {
+    if (!silent && !append) {
       setLoading(true);
       setLoadError("");
     }
+    if (append) setProductsLoadingMore(true);
     try {
-      const [productsResponse, categoriesResponse] = await Promise.all([
-        fetch(`${API_URL}/storefront/products`, { cache: "no-store" }),
-        fetch(`${API_URL}/storefront/categories`),
-      ]);
+      const productsResponse = await fetch(`${API_URL}/storefront/products/page?page=${page}&pageSize=${PRODUCT_PAGE_SIZE}`, { cache: "no-store" });
       if (!productsResponse.ok) throw new Error(await readError(productsResponse));
-      if (!categoriesResponse.ok) throw new Error(await readError(categoriesResponse));
-      const [productData, categoryData] = await Promise.all([productsResponse.json(), categoriesResponse.json()]);
-      setProducts(Array.isArray(productData) ? productData : []);
-      setCategories(Array.isArray(categoryData) ? categoryData : []);
+      const productPageData = await productsResponse.json();
+      const incoming = Array.isArray(productPageData.items) ? productPageData.items : [];
+      setProducts((current) => {
+        if (append) {
+          const known = new Set(current.map((item) => item.id));
+          return [...current, ...incoming.filter((item) => !known.has(item.id))];
+        }
+        if (silent && current.length) {
+          const refreshed = new Map(incoming.map((item) => [item.id, item]));
+          return current.map((item) => refreshed.get(item.id) || item);
+        }
+        return incoming;
+      });
+      if (!silent) {
+        setProductPage(page);
+        setProductsHasMore(Boolean(productPageData.hasMore));
+      }
+      if (page === 1) {
+        const categoriesResponse = await fetch(`${API_URL}/storefront/categories`);
+        if (!categoriesResponse.ok) throw new Error(await readError(categoriesResponse));
+        const categoryData = await categoriesResponse.json();
+        setCategories(Array.isArray(categoryData) ? categoryData : []);
+      }
     } catch (error) {
-      if (!silent) setLoadError(error.message || "Không thể tải sản phẩm.");
+      if (!silent && !append) setLoadError(error.message || "Không thể tải sản phẩm.");
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && !append) setLoading(false);
+      if (append) setProductsLoadingMore(false);
+    }
+  }, []);
+
+  const loadFlashSale = useCallback(async (page = 1, append = false) => {
+    setFlashSaleLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/storefront/products/page?page=${page}&pageSize=${PRODUCT_PAGE_SIZE}&discountedOnly=true`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      const incoming = Array.isArray(data.items) ? data.items : [];
+      setFlashSaleProducts((current) => append ? [...current, ...incoming.filter((item) => !current.some((known) => known.id === item.id))] : incoming);
+      setFlashSalePage(page);
+      setFlashSaleHasMore(Boolean(data.hasMore));
+    } catch (error) {
+      if (!append) setFlashSaleProducts([]);
+    } finally {
+      setFlashSaleLoading(false);
     }
   }, []);
 
   useEffect(() => {
     loadStore();
+    loadFlashSale();
     const stockRefresh = setInterval(() => {
       if (AppState.currentState === "active") loadStore(true);
     }, 15000);
     return () => clearInterval(stockRefresh);
-  }, [loadStore]);
+  }, [loadStore, loadFlashSale]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setCountdownNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const productInfoRequest = useRef(null);
   const [descriptionStatus, setDescriptionStatus] = useState(null);
@@ -661,11 +773,10 @@ export default function App() {
     productInfoRequest.current = controller;
     setDescriptionStatus({ id: product.id, loading: true });
     // Refresh from the public API, including descriptions edited after app startup.
-    fetch(`${API_URL}/storefront/products`, { cache: "no-store", signal: controller.signal })
+    fetch(`${API_URL}/storefront/products/${product.id}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
-        const data = await response.json();
-        const latest = Array.isArray(data) ? data.find((item) => item.id === product.id) : null;
+        const latest = await response.json();
         if (!latest) throw new Error("Sản phẩm hiện không còn khả dụng.");
         if (controller.signal.aborted) return;
         setProducts((current) => current.map((item) => item.id === product.id && item.description !== latest.description
@@ -701,7 +812,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!cartLoaded || loading || loadError) return;
+    if (!cartLoaded || loading || loadError || pendingCheckout) return;
     setCart((current) => {
       const adjusted = current.map((item) => ({
         ...item,
@@ -709,7 +820,7 @@ export default function App() {
       })).filter((item) => item.quantity > 0);
       return adjusted.length === current.length && adjusted.every((item, index) => item.quantity === current[index].quantity) ? current : adjusted;
     });
-  }, [products, cartLoaded, loading, loadError]);
+  }, [products, cartLoaded, loading, loadError, pendingCheckout]);
 
   useEffect(() => {
     let active = true;
@@ -959,7 +1070,7 @@ export default function App() {
 
   const clearCustomerSession = async () => {
     const customerAddressKey = customer?.id ? `${ADDRESS_KEY}:${customer.id}` : null;
-    const sessionKeys = [CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY, customerAddressKey].filter(Boolean);
+    const sessionKeys = [CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY, CART_KEY, customerAddressKey].filter(Boolean);
     let storageError = false;
     try {
       await AsyncStorage.multiRemove(sessionKeys);
@@ -991,6 +1102,12 @@ export default function App() {
     setDatePickerOpen(false);
     setCheckoutOpen(false);
     setCheckoutForm({ fullName: "", phone: "", address: "", note: "" });
+    setPendingCheckout(null);
+    setCart([]);
+    cartSnapshot.current = { cart: [], loaded: true };
+    setAppliedVoucher(null);
+    setDraftVoucher(null);
+    setUseRewardPoints(false);
 
     if (storageError) Alert.alert("Đăng xuất", "Đã thoát tài khoản trong ứng dụng nhưng thiết bị chưa xóa được phiên đã lưu.");
   };
@@ -1027,6 +1144,10 @@ export default function App() {
     }
     return result;
   }, [products, query, categoryId, sortOption]);
+
+  const visibleVoucherHistory = useMemo(() => voucherHistory.filter((item) => {
+    return item.walletStatus === voucherHistoryTab;
+  }), [voucherHistory, voucherHistoryTab]);
 
   const activeDrawerCategory = useMemo(() => (
     categories.find((category) => String(category.id) === String(selectedDrawerCatId))
@@ -1076,16 +1197,26 @@ export default function App() {
   const pointsDiscount = useRewardPoints ? maxPointsUsable * 1000 : 0;
   const payable = Math.max(0, afterVoucher - pointsDiscount);
 
-  const openVouchers = async () => {
+  const openVouchers = async (context = "checkout") => {
+    if (context === "checkout" && pendingCheckout) return;
+    if (!requireAuthenticatedCustomer()) return;
+    setVoucherContext(context);
+    setVoucherView("available");
     setDraftVoucher(appliedVoucher);
     setVoucherOpen(true);
     setVoucherMessage("");
     setVouchersLoading(true);
     try {
-      const response = await fetch(`${API_URL}/storefront/promotions`);
-      if (!response.ok) throw new Error(await readError(response));
-      const data = await response.json();
-      setVoucherList(Array.isArray(data) ? data.filter((promotion) => promotion.type === "event") : []);
+      const walletResponse = await fetch(`${API_URL}/storefront/vouchers`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!walletResponse.ok) throw new Error(await readError(walletResponse));
+      const wallet = await walletResponse.json();
+      let events = [];
+      if (context === "checkout") {
+        const response = await fetch(`${API_URL}/storefront/promotions`);
+        if (!response.ok) throw new Error(await readError(response));
+        events = (await response.json()).filter((promotion) => promotion.type === "event");
+      }
+      setVoucherList([...events, ...wallet.filter((promotion) => !["used", "expired"].includes(promotion.walletStatus))]);
     } catch (error) {
       setVoucherMessage(error.message || "Không tải được phiếu mua hàng.");
     } finally {
@@ -1106,7 +1237,7 @@ export default function App() {
     try {
       const response = await fetch(`${API_URL}/storefront/promotions/validate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
         body: JSON.stringify({ code: eventPromotionId ? "" : normalizedCode, eventPromotionId, orderAmount: subtotal }),
       });
       const result = await response.json().catch(() => ({}));
@@ -1132,8 +1263,66 @@ export default function App() {
   }, [customer, customerToken]);
 
   const navigateToTab = (nextTab) => {
-    if ((nextTab === "cart" || nextTab === "orders") && !requireAuthenticatedCustomer()) return;
+    if (nextTab === "home") setFlashSaleOpen(false);
     setTab(nextTab);
+  };
+
+  const openVoucherHistory = async () => {
+    if (!customerToken) return;
+    setVoucherView("history");
+    setVouchersLoading(true);
+    setVoucherMessage("");
+    try {
+      const response = await fetch(`${API_URL}/storefront/promotions/history`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      setVoucherHistory(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setVoucherMessage(error.message || "Không tải được lịch sử voucher.");
+    } finally {
+      setVouchersLoading(false);
+    }
+  };
+
+  const openVoucherDiscovery = async () => {
+    if (!requireAuthenticatedCustomer()) return;
+    setVoucherContext("account");
+    setVoucherView("discover");
+    setVoucherOpen(true);
+    setVoucherMessage("");
+    setVouchersLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/storefront/vouchers/discover`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      setVoucherList(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setVoucherMessage(error.message || "Không tải được voucher.");
+    } finally {
+      setVouchersLoading(false);
+    }
+  };
+
+  const claimVoucher = async (promotionId = null) => {
+    if (voucherBusy || !requireAuthenticatedCustomer()) return;
+    const code = voucherCode.trim().toUpperCase();
+    if (!promotionId && !code) { setVoucherMessage("Nhập mã voucher để nhận."); return; }
+    setVoucherBusy(true);
+    setVoucherMessage("");
+    try {
+      const response = await fetch(`${API_URL}/storefront/vouchers/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
+        body: JSON.stringify(promotionId ? { promotionId } : { code }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      const received = await response.json();
+      if (promotionId) setVoucherList((current) => current.map((item) => item.id === promotionId ? { ...item, isClaimed: true, claimedCount: received.claimedCount } : item));
+      else { await openVouchers("account"); setVoucherCode(""); }
+      setVoucherMessage("Đã lưu voucher vào kho của bạn.");
+    } catch (error) {
+      setVoucherMessage(error.message || "Không thể nhận voucher.");
+    } finally { setVoucherBusy(false); }
   };
 
   const flyProductToCart = useCallback((product, event) => {
@@ -1152,6 +1341,7 @@ export default function App() {
 
   const addToCart = useCallback((product, event) => {
     if (!requireAuthenticatedCustomer()) return;
+    if (pendingCheckout) return;
     if (loading || loadError) return;
     const available = stockLimit(products.find((item) => item.id === product.id));
     if (available === 0) return;
@@ -1179,9 +1369,10 @@ export default function App() {
         quantity: 1,
       }];
     });
-  }, [requireAuthenticatedCustomer, loading, loadError, products, flyProductToCart]);
+  }, [requireAuthenticatedCustomer, pendingCheckout, loading, loadError, products, flyProductToCart]);
 
   const changeQuantity = useCallback((id, amount) => {
+    if (pendingCheckout) return;
     if (amount > 0 && !requireAuthenticatedCustomer()) return;
     if (amount > 0 && (loading || loadError)) return;
     const available = stockLimit(products.find((product) => product.id === id));
@@ -1196,9 +1387,10 @@ export default function App() {
       next[index] = { ...item, quantity };
       return next;
     });
-  }, [requireAuthenticatedCustomer, loading, loadError, products]);
+  }, [requireAuthenticatedCustomer, pendingCheckout, loading, loadError, products]);
 
   const setProductQuantity = useCallback((id, quantity) => {
+    if (pendingCheckout) return;
     if (!requireAuthenticatedCustomer() || loading || loadError) return;
     if (!Number.isSafeInteger(quantity) || quantity < 1) return;
     const available = Math.min(1000, stockLimit(products.find((product) => product.id === id)));
@@ -1211,7 +1403,7 @@ export default function App() {
       next[index] = { ...current[index], quantity: nextQuantity };
       return next;
     });
-  }, [requireAuthenticatedCustomer, loading, loadError, products]);
+  }, [requireAuthenticatedCustomer, pendingCheckout, loading, loadError, products]);
 
   const getCartQuantity = (productId) => cart.find((item) => item.id === productId)?.quantity || 0;
 
@@ -1243,56 +1435,77 @@ export default function App() {
       setCheckoutOpen(false);
       return;
     }
-    if (!checkoutForm.fullName.trim() || !checkoutForm.phone.trim() || !checkoutForm.address.trim()) {
+    const formToValidate = pendingCheckout?.payload || checkoutForm;
+    if (!formToValidate.fullName?.trim() || !formToValidate.phone?.trim() || !formToValidate.address?.trim()) {
       setOrderError("Nhập họ tên, số điện thoại và địa chỉ nhận hàng.");
       return;
     }
-    if (!/^(0|\+84)[35789]\d{8}$/.test(checkoutForm.phone.trim())) {
+    if (!/^(0|\+84)[35789]\d{8}$/.test(formToValidate.phone.trim())) {
       setOrderError("Số điện thoại Việt Nam chưa đúng định dạng.");
       return;
     }
-    if (!cart.length) return;
+    if (!(pendingCheckout?.cart?.length || cart.length) || checkoutRequestLock.current) return;
+    checkoutRequestLock.current = true;
     setOrderSubmitting(true);
     setOrderError("");
     try {
+      const storageKey = checkoutStorageKey(customer.id);
+      const pending = await preparePendingCheckout(AsyncStorage, customer.id, () => ({
+        owner: customer.id,
+        cart,
+        voucher: appliedVoucher,
+        payload: {
+          ...checkoutForm,
+          fullName: checkoutForm.fullName.trim(),
+          phone: checkoutForm.phone.trim(),
+          requestId: createCheckoutRequestId(),
+          expectedTotal: payable,
+          paymentMethod,
+          pointsUsed: useRewardPoints ? maxPointsUsable : 0,
+          items: cart.map((item) => ({ productId: item.id, quantity: item.quantity })),
+          promotionCode: appliedVoucher?.code || null,
+          eventPromotionId: appliedVoucher?.eventPromotionId || null,
+        },
+      }));
+      setPendingCheckout(pending);
       const response = await fetch(`${API_URL}/storefront/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${customerToken}`,
         },
-        body: JSON.stringify({
-          ...checkoutForm,
-          fullName: checkoutForm.fullName.trim(),
-          phone: checkoutForm.phone.trim(),
-          paymentMethod,
-          pointsUsed: useRewardPoints ? maxPointsUsable : 0,
-          items: cart.map((item) => ({ productId: item.id, quantity: item.quantity })),
-          promotionCode: appliedVoucher?.code || null,
-          eventPromotionId: appliedVoucher?.eventPromotionId || null,
-        }),
+        body: JSON.stringify(pending.payload),
       });
-      if (!response.ok) throw new Error(await readError(response));
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (checkoutDefinitelyRejected(response.status, result)) {
+          await AsyncStorage.removeItem(storageKey);
+          setPendingCheckout(null);
+        }
+        throw new Error(result.message || result.title || "Chưa xác định được kết quả đặt hàng. Hãy thử lại yêu cầu đã lưu.");
+      }
+      await AsyncStorage.removeItem(storageKey);
+      setPendingCheckout(null);
       setCompletedOrder({
         ...result,
-        paymentMethod,
-        pointsDiscount,
-        vietQrUrl: result.vietQrUrl || (paymentMethod === "bank" ? `https://img.vietqr.io/image/MB-0987654321-compact2.png?amount=${result.totalAmount}&addInfo=EMART_${result.orderNumber}&accountName=EMART%20STORE` : null)
+        paymentMethod: result.paymentMethod || pending.payload.paymentMethod,
+        pointsDiscount: (result.pointsUsed ?? pending.payload.pointsUsed) * 1000,
+        vietQrUrl: result.vietQrUrl || null,
       });
-      if (customer && useRewardPoints && maxPointsUsable > 0) {
-        setCustomer((prev) => prev ? ({ ...prev, rewardPoints: Math.max(0, (prev.rewardPoints || 0) - maxPointsUsable) }) : null);
-      }
+      fetch(`${API_URL}/storefront/account`, { headers: { Authorization: `Bearer ${customerToken}` } })
+        .then((accountResponse) => accountResponse.ok ? accountResponse.json() : null)
+        .then((profile) => { if (profile) setCustomer(profile); })
+        .catch(() => {});
       const placedOrder = {
         ...result,
-        paymentMethod,
-        recipientName: result.recipientName || checkoutForm.fullName.trim(),
-        recipientPhone: result.recipientPhone || checkoutForm.phone.trim(),
-        shippingAddress: result.shippingAddress || checkoutForm.address.trim(),
-        note: result.note ?? (checkoutForm.note.trim() || null),
-        paymentStatus: "pending",
+        paymentMethod: result.paymentMethod || pending.payload.paymentMethod,
+        recipientName: result.recipientName || pending.payload.fullName,
+        recipientPhone: result.recipientPhone || pending.payload.phone,
+        shippingAddress: result.shippingAddress || pending.payload.address,
+        note: result.note ?? (pending.payload.note?.trim() || null),
+        paymentStatus: result.paymentStatus || "pending",
         orderType: "mobile",
-        items: cart.map((item) => ({
+        items: pending.cart.map((item) => ({
           productId: item.id,
           productName: item.name,
           imageUrl: item.image,
@@ -1308,11 +1521,23 @@ export default function App() {
     } catch (error) {
       setOrderError(error.message || "Không thể gửi đơn hàng. Kiểm tra kết nối rồi thử lại.");
     } finally {
+      checkoutRequestLock.current = false;
       setOrderSubmitting(false);
     }
   };
 
   const currentBanner = BANNERS[bannerIndex];
+  const flashSaleEnd = flashSaleProducts
+    .map((product) => product.promotionEndsAt ? new Date(product.promotionEndsAt).getTime() : 0)
+    .filter((value) => value > countdownNow)
+    .sort((left, right) => left - right)[0] || countdownNow;
+  const flashRemainingSeconds = Math.max(0, Math.floor((flashSaleEnd - countdownNow) / 1000));
+  const flashCountdown = [
+    { label: "ngày", value: Math.floor(flashRemainingSeconds / 86400) },
+    { label: "giờ", value: Math.floor((flashRemainingSeconds % 86400) / 3600) },
+    { label: "phút", value: Math.floor((flashRemainingSeconds % 3600) / 60) },
+    { label: "giây", value: flashRemainingSeconds % 60 },
+  ].map((part) => ({ ...part, value: String(part.value).padStart(2, "0") }));
 
   // Dynamic responsive card styles
   const cardWidthStyle = useMemo(() => {
@@ -1367,7 +1592,7 @@ export default function App() {
             <Text style={styles.bannerSubtitle} numberOfLines={2}>{currentBanner.subtitle}</Text>
 
             <Pressable
-              onPress={openVouchers}
+              onPress={() => openVouchers()}
               style={styles.bannerCtaBtn}
             >
               <Text style={styles.bannerCtaText}>Xem ưu đãi  ›</Text>
@@ -1386,6 +1611,32 @@ export default function App() {
           </View>
         </View>
 
+        {!!flashSaleProducts.length && <View style={styles.flashHomeSection}>
+          <View style={styles.flashHomeHeading}>
+            <View>
+              <Text style={styles.flashHomeTitle}>FLASH SALE</Text>
+              <View style={styles.flashCountdownRow}>
+                <Text style={styles.flashEndingText}>Kết thúc sau</Text>
+                {flashCountdown.map((part) => <View key={part.label} style={styles.flashTimeGroup}><View style={styles.flashTimeBox}><Text style={styles.flashTimeText}>{part.value}</Text></View><Text style={styles.flashTimeLabel}>{part.label}</Text></View>)}
+              </View>
+            </View>
+            <Pressable onPress={() => setFlashSaleOpen(true)} style={styles.flashShopAllButton}>
+              <Text style={styles.flashShopAllText}>XEM TẤT CẢ</Text>
+            </Pressable>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.flashProductRow}>
+            {flashSaleProducts.slice(0, 8).map((product) => <Pressable key={product.id} onPress={() => openProduct(product)} style={styles.flashProductCard}>
+              <View style={styles.flashProductImageBox}><ProductImage imagePath={product.imageUrl} productId={product.id} categoryName={product.categoryName} style={styles.productImage} /></View>
+              <Text style={styles.flashProductName} numberOfLines={2}>{product.productName}</Text>
+              <Text style={styles.flashProductPrice}>{money(product.price)}</Text>
+              <View style={styles.flashOldPriceRow}>
+                <Text style={styles.flashOriginalPrice}>{money(product.originalPrice)}</Text>
+                <Text style={styles.flashDiscountBadge}>-{Math.round(product.discountPercent || 0)}%</Text>
+              </View>
+            </Pressable>)}
+          </ScrollView>
+        </View>}
+
         {/* 2. DẢI CAM KẾT VÀNG SIÊU THỊ */}
   
 
@@ -1393,7 +1644,6 @@ export default function App() {
           <View style={styles.filterLeft}>
             <Text style={styles.filterResultCount} numberOfLines={1}>
               {categoryId === "all" ? "Tất cả sản phẩm" : (categories.find((c) => String(c.id) === String(categoryId))?.name || "Ngành hàng")}
-              <Text style={styles.filterNumber}> ({visibleProducts.length})</Text>
             </Text>
           </View>
 
@@ -1434,7 +1684,7 @@ export default function App() {
             <Text style={styles.errorTitle}>Chưa kết nối được cửa hàng</Text>
             <Text style={styles.errorText}>{loadError}</Text>
             <Text style={styles.apiHint}>API: {API_URL}</Text>
-            <AppButton title="Thử kết nối lại" onPress={loadStore} />
+            <AppButton title="Thử kết nối lại" onPress={() => loadStore()} />
           </View>
         ) : (
           <View style={styles.emptyState}>
@@ -1444,11 +1694,58 @@ export default function App() {
             <AppButton title="Xem tất cả sản phẩm" onPress={() => { setQuery(""); selectHomeCategory("all"); }} style={styles.emptyCta} />
           </View>
         )}
-      ListFooterComponent={<View style={{ height: 35 }} />}
+      ListFooterComponent={<View style={styles.loadMoreFooter}>
+        {productsHasMore && <AppButton title={productsLoadingMore ? "Đang tải thêm..." : "Load more"} disabled={productsLoadingMore} onPress={() => loadStore(false, productPage + 1, true)} style={styles.loadMoreButton} />}
+      </View>}
     />
   );
 
-  const renderCart = () => (
+  const renderFlashSale = () => (
+    <FlatList
+      key={`flash-${isWide ? "wide" : isDesktop ? "desktop" : "mobile"}`}
+      data={flashSaleProducts}
+      keyExtractor={(product) => `flash-${product.id}`}
+      renderItem={renderHomeProduct}
+      numColumns={isWide ? 5 : isDesktop ? 4 : 2}
+      contentContainerStyle={[styles.scrollContent, styles.responsiveContainer]}
+      columnWrapperStyle={styles.homeProductRow}
+      ListHeaderComponent={<View style={styles.flashPageHeader}>
+        <Pressable onPress={() => setFlashSaleOpen(false)} style={styles.flashBackButton}><Text style={styles.flashBackText}>‹</Text></Pressable>
+        <View style={{ flex: 1 }}><Text style={styles.flashPageTitle}>Flash Sale</Text><Text style={styles.flashPageSubtitle}>Giá sốc trong thời gian có hạn</Text></View>
+        <View style={styles.flashCountdownRow}>{flashCountdown.map((part) => <View key={`page-${part.label}`} style={styles.flashTimeGroup}><View style={styles.flashTimeBox}><Text style={styles.flashTimeText}>{part.value}</Text></View><Text style={styles.flashTimeLabel}>{part.label}</Text></View>)}</View>
+      </View>}
+      ListEmptyComponent={flashSaleLoading ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /><Text style={styles.stateText}>Đang tải Flash Sale...</Text></View> : <View style={styles.emptyState}><Text style={styles.emptyTitle}>Hiện chưa có sản phẩm Flash Sale</Text></View>}
+      ListFooterComponent={<View style={styles.loadMoreFooter}>{flashSaleHasMore && <AppButton title={flashSaleLoading ? "Đang tải thêm..." : "Load more"} disabled={flashSaleLoading} onPress={() => loadFlashSale(flashSalePage + 1, true)} style={styles.loadMoreButton} />}</View>}
+    />
+  );
+
+  const renderGuestRestrictedState = () => (
+    <View style={styles.guestRestrictedState}>
+      <View style={styles.guestRestrictedIllustration}>
+        <IconCart size={70} color={BHX_GREEN} />
+      </View>
+      <Text style={styles.guestRestrictedTitle}>Bạn chưa thêm gì ở đây</Text>
+      <View style={styles.guestRestrictedActions}>
+        <AppButton
+          title="Đăng nhập / Đăng ký"
+          onPress={() => {
+            setProfilePage("");
+            setRegisterMode(false);
+            setTab("profile");
+          }}
+          style={styles.guestRestrictedButton}
+        />
+        <AppButton
+          title="Trở về trang chủ"
+          secondary
+          onPress={() => setTab("home")}
+          style={[styles.guestRestrictedButton, styles.guestRestrictedHomeButton]}
+        />
+      </View>
+    </View>
+  );
+
+  const renderCart = () => (!customer || !customerToken) ? renderGuestRestrictedState() : (
     <ScrollView contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
       <View style={styles.responsiveContainer}>
         <Text style={styles.pageTitle}>{itemCount} mặt hàng trong giỏ</Text>
@@ -1495,7 +1792,7 @@ export default function App() {
                 <Text style={styles.freeShipping}>Miễn phí (0đ)</Text>
               </View>
 
-              <Pressable style={styles.voucherRow} onPress={openVouchers}>
+              <Pressable disabled={Boolean(pendingCheckout)} style={styles.voucherRow} onPress={() => openVouchers()}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                   <IconStar size={16} color={BHX_ORANGE} />
                   <Text style={styles.voucherLabel}>Phiếu giảm giá (Voucher)</Text>
@@ -1505,7 +1802,7 @@ export default function App() {
                 </Text>
               </Pressable>
               {appliedVoucher && (
-                <Pressable onPress={() => setAppliedVoucher(null)}>
+                <Pressable disabled={Boolean(pendingCheckout)} onPress={() => setAppliedVoucher(null)}>
                   <Text style={styles.voucherRemove}>✕ Bỏ phiếu mua hàng</Text>
                 </Pressable>
               )}
@@ -1519,6 +1816,7 @@ export default function App() {
               <AppButton
                 title="Xóa hết giỏ hàng"
                 secondary
+                disabled={Boolean(pendingCheckout)}
                 onPress={() => Alert.alert("Xóa giỏ hàng", "Bạn có chắc muốn xóa tất cả sản phẩm khỏi giỏ?", [
                   { text: "Hủy", style: "cancel" },
                   { text: "Xóa hết", style: "destructive", onPress: () => { setCart([]); setAppliedVoucher(null); } }
@@ -1555,6 +1853,8 @@ export default function App() {
   });
 
   const renderOrders = () => {
+    if (!customer || !customerToken) return renderGuestRestrictedState();
+
     if (selectedOrder) {
       const orderItems = selectedOrder.items || [];
       const address = orderAddress(selectedOrder);
@@ -1646,13 +1946,6 @@ export default function App() {
           <View style={styles.errorCard}>
             <Text style={styles.errorText}>{ordersError}</Text>
             <AppButton title="Thử lại" onPress={() => setOrdersRefreshKey((key) => key + 1)} />
-          </View>
-        ) : !customer && customerOrders.length === 0 ? (
-          <View style={styles.emptyState}>
-            <IconReceipt size={48} color="#cbd5e1" />
-            <Text style={styles.emptyTitle}>Đăng nhập để xem đơn</Text>
-            <Text style={styles.stateText}>Đơn hàng được lưu giữ an toàn theo số điện thoại của bạn.</Text>
-            <AppButton title="Đăng nhập ngay" onPress={() => setTab("profile")} style={styles.emptyCta} />
           </View>
         ) : visibleOrders.length === 0 ? (
           <View style={styles.emptyState}>
@@ -1764,6 +2057,7 @@ export default function App() {
           <View style={styles.infoCard}><Text style={styles.infoTitle}>Thông tin cá nhân</Text>
             <Pressable style={styles.profileMenuRow} onPress={() => { setAccountName(customer.fullName || ""); setProfilePage("personal"); }}><Text style={styles.profileMenuIcon}>♙</Text><Text style={styles.profileMenuText}>Sửa thông tin cá nhân</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
             <Pressable style={styles.profileMenuRow} onPress={() => { setAddressMessage(""); setProfilePage("address"); }}><Text style={styles.profileMenuIcon}>♧</Text><Text style={styles.profileMenuText}>Địa chỉ nhận hàng</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
+            <Pressable style={styles.profileMenuRow} onPress={() => openVouchers("account")}><Text style={styles.profileMenuIcon}>🎟</Text><Text style={styles.profileMenuText}>Voucher của tôi</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
           </View>
           <View style={styles.infoCard}>
             <AppButton title="Đăng xuất" secondary onPress={logoutCustomer} />
@@ -1776,8 +2070,34 @@ export default function App() {
             {registerMode ? <TextInput value={registerEmail} onChangeText={setRegisterEmail} placeholder="Email" style={styles.formInput} keyboardType="email-address" autoCapitalize="none" maxLength={255} /> : null}
             {registerMode ? <TextInput value={registerDateOfBirth} onChangeText={setRegisterDateOfBirth} placeholder="Ngày sinh (YYYY-MM-DD)" style={styles.formInput} keyboardType="numbers-and-punctuation" maxLength={10} /> : null}
             {registerMode ? <TextInput value={registerAddress} onChangeText={setRegisterAddress} placeholder="Địa chỉ" style={styles.formInput} multiline maxLength={500} /> : null}
-            {!registerMode ? <TextInput value={loginUsername} onChangeText={setLoginUsername} placeholder="Số điện thoại" style={styles.formInput} autoCapitalize="none" autoComplete="tel" keyboardType="phone-pad" /> : null}
-            <TextInput value={loginPassword} onChangeText={setLoginPassword} placeholder="Mật khẩu" style={styles.formInput} secureTextEntry autoCapitalize="none" autoComplete="password" />
+            {!registerMode ? <TextInput
+              value={loginUsername}
+              onChangeText={setLoginUsername}
+              placeholder="Số điện thoại"
+              style={styles.formInput}
+              autoCapitalize="none"
+              autoComplete="tel"
+              keyboardType="phone-pad"
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                if (!accountBusy) loginCustomer();
+              }}
+            /> : null}
+            <TextInput
+              value={loginPassword}
+              onChangeText={setLoginPassword}
+              placeholder="Mật khẩu"
+              style={styles.formInput}
+              secureTextEntry
+              autoCapitalize="none"
+              autoComplete="password"
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                if (accountBusy) return;
+                if (registerMode) registerCustomer();
+                else loginCustomer();
+              }}
+            />
             {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
             <AppButton title={accountBusy ? (registerMode ? "Đang tạo tài khoản..." : "Đang đăng nhập...") : (registerMode ? "Tạo tài khoản" : "Đăng nhập")} onPress={registerMode ? registerCustomer : loginCustomer} disabled={accountBusy} />
             <Pressable onPress={() => { setRegisterMode((mode) => !mode); setAccountError(""); setAccountMessage(""); }}>
@@ -1811,7 +2131,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor={BHX_GREEN} />
+      <StatusBar barStyle="light-content" />
 
       {/* 1. TOP HEADER PHONG CÁCH BÁCH HÓA XANH (TÁCH 2 TẦNG TRÊN MOBILE ĐẢM BẢO KHÔNG BỊ TRÀN) */}
       <View style={styles.header}>
@@ -1879,7 +2199,7 @@ export default function App() {
           </View>
 
           {/* Lọc sản phẩm theo danh mục */}
-          {tab === "home" && <ScrollView horizontal style={styles.quickTagsScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow} keyboardShouldPersistTaps="handled">
+          {tab === "home" && !flashSaleOpen && <ScrollView horizontal style={styles.quickTagsScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow} keyboardShouldPersistTaps="handled">
             {[{ id: "all", name: "Tất cả" }, ...categories].map((category) => (
               <Pressable
                 key={category.id}
@@ -1901,7 +2221,7 @@ export default function App() {
 
       {/* NỘI DUNG MÀN HÌNH CHÍNH */}
       <View style={styles.screen}>
-        {tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
+        {tab === "home" ? (flashSaleOpen ? renderFlashSale() : renderHome()) : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
       </View>
 
 
@@ -1913,7 +2233,7 @@ export default function App() {
             { 
               key: "cart", 
               label: "Giỏ hàng", 
-              badge: itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
+              badge: customer && customerToken && itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
               icon: (active) => <IconCart size={20} color={active ? BHX_GREEN : "#64748b"} /> 
             },
             { key: "orders", label: "Đơn hàng", icon: (active) => <IconReceipt size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
@@ -2050,7 +2370,7 @@ export default function App() {
                   ) : loadError ? (
                     <View style={styles.bhxEmptySubState}>
                       <Text style={styles.errorText}>{loadError}</Text>
-                      <AppButton title="Thử lại" onPress={loadStore} />
+                      <AppButton title="Thử lại" onPress={() => loadStore()} />
                     </View>
                   ) : drawerProducts.map((product) => (
                     <Pressable
@@ -2075,6 +2395,9 @@ export default function App() {
                       <Text style={styles.stateText}>{drawerSearchText.trim() ? "Không tìm thấy sản phẩm phù hợp." : "Loại này chưa có sản phẩm."}</Text>
                     </View>
                   )}
+                  {!loading && !loadError && productsHasMore && <View style={styles.drawerLoadMore}>
+                    <AppButton title={productsLoadingMore ? "Đang tải thêm..." : "Load more"} disabled={productsLoadingMore} onPress={() => loadStore(false, productPage + 1, true)} />
+                  </View>}
                 </ScrollView>
               </View>
             </View>
@@ -2131,9 +2454,9 @@ export default function App() {
                       <Image source={{ uri: completedOrder.vietQrUrl }} style={styles.vietQrImage} resizeMode="contain" />
                     )}
                     <View style={styles.bankDetailCard}>
-                      <Text style={styles.bankDetailLine}>• Ngân hàng: <Text style={styles.bankBold}>MBBank (Quân Đội)</Text></Text>
-                      <Text style={styles.bankDetailLine}>• Số tài khoản: <Text style={styles.bankBold}>0987654321</Text></Text>
-                      <Text style={styles.bankDetailLine}>• Chủ tài khoản: <Text style={styles.bankBold}>EMART STORE</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Ngân hàng: <Text style={styles.bankBold}>{completedOrder.bankDetails?.bankCode || paymentOptions.bankDetails?.bankCode || "—"}</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Số tài khoản: <Text style={styles.bankBold}>{completedOrder.bankDetails?.accountNumber || paymentOptions.bankDetails?.accountNumber || "—"}</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Chủ tài khoản: <Text style={styles.bankBold}>{completedOrder.bankDetails?.accountName || paymentOptions.bankDetails?.accountName || "—"}</Text></Text>
                       <Text style={styles.bankDetailLine}>• Số tiền: <Text style={styles.bankMoney}>{money(completedOrder.totalAmount)}</Text></Text>
                       <Text style={styles.bankDetailLine}>• Nội dung: <Text style={styles.bankContent}>EMART_{completedOrder.orderNumber}</Text></Text>
                     </View>
@@ -2157,6 +2480,7 @@ export default function App() {
                 <Text style={styles.inputLabel}>HỌ VÀ TÊN</Text>
                 <TextInput
                   value={checkoutForm.fullName}
+                  editable={!pendingCheckout}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, fullName: value }))}
                   placeholder="Ví dụ: Nguyễn Văn An"
                   style={styles.formInput}
@@ -2167,6 +2491,7 @@ export default function App() {
                 <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI</Text>
                 <TextInput
                   value={checkoutForm.phone}
+                  editable={!pendingCheckout}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, phone: value }))}
                   placeholder="Ví dụ: 0912345678"
                   style={styles.formInput}
@@ -2178,6 +2503,7 @@ export default function App() {
                 <Text style={{ color: TEXT_MUTED, fontSize: 12, marginBottom: 6 }}>Bạn có thể nhập địa chỉ khác. Địa chỉ mặc định đã lưu sẽ không thay đổi.</Text>
                 <TextInput
                   value={checkoutForm.address}
+                  editable={!pendingCheckout}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, address: value }))}
                   placeholder="Số nhà, tên đường, phường/xã, quận/huyện..."
                   style={[styles.formInput, styles.addressInput]}
@@ -2188,6 +2514,7 @@ export default function App() {
                 <Text style={styles.inputLabel}>GHI CHÚ GIAO HÀNG (NẾU CÓ)</Text>
                 <TextInput
                   value={checkoutForm.note}
+                  editable={!pendingCheckout}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, note: value }))}
                   placeholder="Ví dụ: Gọi trước khi đến 15 phút..."
                   style={[styles.formInput, styles.noteInput]}
@@ -2202,9 +2529,10 @@ export default function App() {
                     { key: "cod", label: "Tiền mặt khi nhận hàng (COD)", desc: "Nhận hàng kiểm tra rồi trả tiền mặt" },
                     { key: "momo", label: "Ví điện tử MoMo", desc: "Thanh toán online qua ứng dụng MoMo" },
                     { key: "bank", label: "Chuyển khoản QR ngân hàng", desc: "Quét mã VietQR chuyển khoản siêu tốc" },
-                  ].map((m) => (
+                  ].filter((method) => paymentOptions[method.key]).map((m) => (
                     <Pressable
                       key={m.key}
+                      disabled={Boolean(pendingCheckout)}
                       onPress={() => setPaymentMethod(m.key)}
                       style={[styles.paymentMethodOption, paymentMethod === m.key && styles.paymentMethodOptionActive]}
                     >
@@ -2224,6 +2552,7 @@ export default function App() {
                 {/* ĐIỂM THƯỞNG KHÁCH HÀNG */}
                 {customer && (customer.rewardPoints || 0) > 0 && maxPointsUsable > 0 && (
                   <Pressable
+                    disabled={Boolean(pendingCheckout)}
                     onPress={() => setUseRewardPoints(!useRewardPoints)}
                     style={[styles.rewardPointsCard, useRewardPoints && styles.rewardPointsCardActive]}
                   >
@@ -2273,33 +2602,80 @@ export default function App() {
               <Pressable style={styles.voucherCloseButton} accessibilityRole="button" accessibilityLabel="Quay lại giỏ hàng" onPress={() => setVoucherOpen(false)}>
                 <View style={{ transform: [{ rotate: "180deg" }] }}><IconChevronRight size={24} color="#ee4d2d" /></View>
               </Pressable>
-              <Text style={styles.voucherTitle}>Chọn E-Mart Voucher</Text>
+              <Text style={styles.voucherTitle}>{voucherView === "discover" ? "Siêu Voucher" : (voucherView === "history" ? "Lịch sử voucher" : (voucherContext === "account" ? "Voucher của tôi" : "Chọn E-Mart Voucher"))}</Text>
+              {voucherView === "discover" ? <Pressable onPress={() => openVouchers("account")} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>Kho voucher</Text></Pressable> : voucherContext === "account" && <Pressable onPress={voucherView === "history" ? () => openVouchers("account") : openVoucherHistory} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>{voucherView === "history" ? "Voucher" : "Lịch sử"}</Text></Pressable>}
             </View>
 
-            <View style={styles.voucherCodeRow}>
+            {voucherView === "available" && voucherContext === "account" && <><View style={styles.voucherCodeRow}>
               <TextInput
                 value={voucherCode}
                 onChangeText={setVoucherCode}
-                placeholder="Nhập mã voucher..."
+                placeholder="Nhập mã để nhận vào kho..."
                 autoCapitalize="characters"
                 style={styles.voucherInput}
               />
-              <Pressable disabled={voucherBusy} onPress={() => applyVoucher()} style={[styles.voucherAdd, voucherBusy && styles.buttonDisabled]}>
-                <Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Áp dụng"}</Text>
+              <Pressable disabled={voucherBusy} onPress={() => claimVoucher()} style={[styles.voucherAdd, voucherBusy && styles.buttonDisabled]}>
+                <Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Nhận mã"}</Text>
               </Pressable>
             </View>
+            {voucherContext === "account" && <View style={styles.voucherExploreRow}>
+              <Pressable onPress={openVoucherDiscovery} style={styles.voucherExploreButton}><Text style={styles.voucherExploreText}>⌕ Tìm thêm voucher</Text></Pressable>
+            </View>}</>}
 
             <ScrollView style={styles.voucherList} contentContainerStyle={styles.voucherListContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {voucherView === "discover" ? <>
+                <View style={styles.voucherDiscoverHero}>
+                  <Text style={styles.voucherDiscoverHeroSmall}>E-MART</Text>
+                  <Text style={styles.voucherDiscoverHeroTitle}>SIÊU VOUCHER</Text>
+                  <Text style={styles.voucherDiscoverHeroText}>Lưu voucher để sử dụng khi mã còn hiệu lực</Text>
+                </View>
+                <View style={styles.voucherDiscoverGuide}>
+                  <Text style={styles.voucherDiscoverGuideText}>• Số lượng có hạn, ưu tiên khách hàng nhận mã sớm.</Text>
+                  <Text style={styles.voucherDiscoverGuideText}>• Voucher đã lưu sẽ xuất hiện trong Kho voucher của tôi.</Text>
+                </View>
+                {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color="#ee4d2d" /><Text style={styles.stateText}>Đang tải voucher...</Text></View> : <View style={styles.voucherDiscoverGrid}>
+                  {voucherList.map((voucher) => {
+                    const soldOut = voucher.claimLimit != null && Number(voucher.claimedCount) >= Number(voucher.claimLimit);
+                    const cannotClaim = voucherBusy || voucher.isClaimed || soldOut;
+                    return <View key={voucher.id} style={styles.voucherDiscoverCard}>
+                      <View style={styles.voucherDiscoverBadge}>
+                        <Text style={styles.voucherDiscoverBadgeIcon}>★</Text>
+                        <Text style={styles.voucherDiscoverBadgeValue}>{voucher.discountType === "percent" ? `GIẢM ${voucher.value}%` : `GIẢM ${money(voucher.value)}`}</Text>
+                        <Text style={styles.voucherDiscoverBadgeBrand}>E-MART</Text>
+                      </View>
+                      <View style={styles.voucherDiscoverInfo}>
+                        <Text style={styles.voucherDiscoverName}>giảm {voucher.discountType === "percent" ? `${voucher.value}%` : money(voucher.value)}</Text>
+                        {voucher.maxDiscount ? <Text style={styles.voucherDiscoverDetail}>Giảm tối đa {money(voucher.maxDiscount)}</Text> : null}
+                        <Text style={styles.voucherDiscoverDetail}>Đơn tối thiểu {money(voucher.minOrderAmount || 0)}</Text>
+                        <Pressable accessibilityRole="button" disabled={cannotClaim} onPress={() => claimVoucher(voucher.id)} style={[styles.voucherDiscoverSave, cannotClaim && styles.voucherDiscoverSaveDisabled]}><Text style={[styles.voucherDiscoverSaveText, cannotClaim && styles.voucherDiscoverSaveTextDisabled]}>{voucher.isClaimed ? "Đã lưu" : soldOut ? "Mã đã hết lượt" : voucherBusy ? "Đang lưu..." : "Lưu mã"}</Text></Pressable>
+                        <Text style={styles.voucherDiscoverConditions}>Mỗi khách 1 lần · Đã nhận {voucher.claimedCount || 0}/{voucher.claimLimit ?? "∞"}</Text>
+                        <Text style={styles.voucherDiscoverConditions}>Nhận đến {new Date(voucher.claimEndDate).toLocaleDateString("vi-VN")} · Dùng đến {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>
+                      </View>
+                    </View>;
+                  })}
+                </View>}
+                {!vouchersLoading && !voucherList.length && <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có voucher để nhận.</Text></View>}
+                {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
+              </> : voucherView === "history" ? <>
+                <View style={styles.voucherHistoryTabs}>
+                  {[['used', 'Voucher đã dùng'], ['expired', 'Voucher hết hạn']].map(([key, label]) => <Pressable key={key} onPress={() => setVoucherHistoryTab(key)} style={[styles.voucherHistoryTab, voucherHistoryTab === key && styles.voucherHistoryTabActive]}><Text style={[styles.voucherHistoryTabText, voucherHistoryTab === key && styles.voucherHistoryTabTextActive]}>{label}</Text></Pressable>)}
+                </View>
+                {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /></View> : visibleVoucherHistory.map((item) => <View key={item.id} style={styles.voucherHistoryCard}>
+                  <View style={styles.voucherHistoryIcon}><Text style={styles.voucherHistoryIconText}>%</Text></View>
+                  <View style={{ flex: 1 }}><Text style={styles.voucherName}>{item.name}</Text>{item.walletStatus === "used" ? <><Text style={styles.voucherMinimum}>Đơn hàng {item.orderNumber}</Text><Text style={styles.voucherExpiry}>Đã dùng ngày {new Date(item.usedAt).toLocaleDateString("vi-VN")}</Text></> : <Text style={styles.voucherExpiry}>Hết hạn ngày {new Date(item.endDate).toLocaleDateString("vi-VN")}</Text>}<Text style={styles.voucherUse}>Mã: {item.voucherCode}</Text></View>
+                </View>)}
+                {!vouchersLoading && !visibleVoucherHistory.length && <View style={styles.centerState}><Text style={styles.stateText}>Chưa có voucher trong mục này.</Text></View>}
+              </> : <>
               {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color="#ee4d2d" /><Text style={styles.stateText}>Đang tải voucher...</Text></View> : [false, true].map((unavailable) => {
-                const vouchers = voucherList.filter((voucher) => !!eventPromotionIssue(voucher, subtotal) === unavailable);
+                const vouchers = voucherList.filter((voucher) => !!eventPromotionIssue(voucher, voucherContext === "account" ? null : subtotal) === unavailable);
                 if (unavailable && !vouchers.length) return null;
                 return <View key={String(unavailable)} style={styles.voucherSection}>
                 <Text style={styles.voucherSubheading}>{unavailable ? "Voucher không khả dụng" : "Mã giảm giá"}</Text>
                 {!unavailable && !vouchers.length && voucherList.length > 0 && <Text style={styles.voucherEmptyText}>Chưa có mã phù hợp với đơn hàng này.</Text>}
                 {vouchers.map((voucher) => {
-                const issue = eventPromotionIssue(voucher, subtotal);
+                const issue = eventPromotionIssue(voucher, voucherContext === "account" ? null : subtotal);
                 const disabled = voucherBusy || !!issue;
-                const selected = draftVoucher?.eventPromotionId === voucher.id;
+                const selected = voucher.type === "voucher" ? draftVoucher?.promotion?.id === voucher.id : draftVoucher?.eventPromotionId === voucher.id;
                 const usagePercent = Number(voucher.usageLimit) > 0
                   ? Math.min(100, Math.max(0, Math.round((Number(voucher.usedCount) || 0) / Number(voucher.usageLimit) * 100)))
                   : null;
@@ -2317,13 +2693,13 @@ export default function App() {
                       <Text style={styles.voucherMinimum}>Đơn tối thiểu {money(voucher.minOrderAmount || 0)}</Text>
                       <Text style={styles.voucherPromotionName} numberOfLines={2}>{voucher.name || "Ưu đãi sự kiện"}</Text>
                       {voucher.endDate && <Text style={styles.voucherExpiry}>Hạn {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>}
-                      <Text style={styles.voucherUsage}>{usagePercent !== null ? `Đã dùng ${usagePercent}%` : `Đã dùng ${voucher.usedCount || 0} lượt · Không giới hạn`}</Text>
+                      <Text style={styles.voucherUsage}>{voucher.type === "voucher" ? `Mã: ${voucher.voucherCode} · Dùng 1 lần` : usagePercent !== null ? `Đã dùng ${usagePercent}%` : `Đã dùng ${voucher.usedCount || 0} lượt · Không giới hạn`}</Text>
                     </View>
-                    <Pressable disabled={disabled} accessibilityRole="radio" accessibilityLabel={`Chọn ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled, checked: selected }} onPress={() => { if (selected) { setDraftVoucher(null); setVoucherMessage(""); } else { applyVoucher("", voucher.id); } }} style={styles.voucherSelectTarget}>
+                    {voucherContext === "account" ? <View style={styles.voucherSaveLater}><Text style={styles.voucherSaveLaterText}>Dùng sau</Text></View> : <Pressable disabled={disabled} accessibilityRole="radio" accessibilityLabel={`Chọn ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled, checked: selected }} onPress={() => { if (selected) { setDraftVoucher(null); setVoucherMessage(""); } else { applyVoucher(voucher.type === "voucher" ? voucher.voucherCode : "", voucher.type === "event" ? voucher.id : null); } }} style={styles.voucherSelectTarget}>
                       <View style={[styles.voucherRadio, selected && styles.voucherRadioSelected, !!issue && styles.voucherRadioUnavailable]}>
                         {selected && <Text style={styles.voucherRadioCheck}>✓</Text>}
                       </View>
-                    </Pressable>
+                    </Pressable>}
                   </View>
                   {!!issue && <Text style={styles.voucherUnavailableText}>{issue}</Text>}
                 </View>
@@ -2331,16 +2707,17 @@ export default function App() {
                 })}</View>;
               })}
               {!vouchersLoading && !voucherList.length && !voucherMessage && (
-                <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có ưu đãi sự kiện. Nếu có voucher, bạn có thể nhập mã ở trên.</Text></View>
+                <View style={styles.centerState}><Text style={styles.stateText}>Kho chưa có voucher. Vào trang Nhận voucher hoặc nhập mã để nhận.</Text></View>
               )}
               {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
+              </>}
             </ScrollView>
 
-            <View style={styles.voucherFooter}>
+            {voucherContext === "checkout" && voucherView === "available" && <View style={styles.voucherFooter}>
               <Text style={styles.voucherFooterHint}>{draftVoucher ? "1 voucher đã được chọn." : "Chưa chọn voucher."}</Text>
               {draftVoucher && <Text style={styles.voucherFooterSaving}>Giảm <Text style={styles.voucherSavingAmount}>-{money(draftVoucher.discountAmount)}</Text></Text>}
               <AppButton title={voucherBusy ? "Đang kiểm tra..." : "Đồng ý"} disabled={voucherBusy} style={styles.voucherConfirm} onPress={() => { setAppliedVoucher(draftVoucher); setVoucherOpen(false); }} />
-            </View>
+            </View>}
           </View>
         </View>
       </Modal>
@@ -2368,6 +2745,7 @@ const styles = StyleSheet.create({
   bhxModalSearchBox: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8, minHeight: 42, backgroundColor: "#fff", borderRadius: 8, paddingHorizontal: 10 },
   bhxModalSearchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 12, paddingVertical: 8, outlineStyle: "none" },
   drawerBody: { flex: 1, minHeight: 0, flexDirection: "row" },
+  drawerLoadMore: { width: "100%", paddingHorizontal: 12, paddingVertical: 16 },
   drawerSidebarWrapper: { backgroundColor: "#f1f5f9", flexShrink: 0 },
   drawerSidebar: { flex: 1 },
   bhxSidebarItem: { alignItems: "center", justifyContent: "center", minHeight: 88, paddingHorizontal: 6, paddingVertical: 10, gap: 5, borderBottomWidth: 1, borderBottomColor: BORDER_COLOR },
@@ -2433,7 +2811,7 @@ const styles = StyleSheet.create({
   voucherUseText: { color: "#fff", fontSize: 11, fontWeight: "800" },
   header: { backgroundColor: BHX_GREEN, paddingHorizontal: 14, paddingTop: 7, paddingBottom: 10, flexShrink: 0 },
   headerResponsiveInner: { width: "100%", maxWidth: 1200, alignSelf: "center" },
-  locationBar: { backgroundColor: "#fff", borderRadius: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingHorizontal: 12, paddingVertical: 10 },
+  locationBar: { width: "100%", maxWidth: 760, alignSelf: "center", backgroundColor: "#fff", borderRadius: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingHorizontal: 12, paddingVertical: 7 },
   locationLeft: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 4 },
   locationLabel: { color: TEXT_DARK, fontSize: 11 },
   locationAddress: { flex: 1, color: TEXT_DARK, fontSize: 11, fontWeight: "700" },
@@ -2486,6 +2864,32 @@ const styles = StyleSheet.create({
   bannerDots: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 12 },
   bannerDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#ffffff66" },
   bannerDotActive: { width: 20, backgroundColor: BHX_YELLOW },
+  flashHomeSection: { marginTop: 16, backgroundColor: "#fff", borderRadius: 12, paddingVertical: 14 },
+  flashHomeHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginBottom: 12 },
+  flashHomeTitle: { color: "#d32f2f", fontSize: 19, fontWeight: "900" },
+  flashCountdownRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 7 },
+  flashEndingText: { color: TEXT_MUTED, fontSize: 10, marginRight: 3 },
+  flashTimeGroup: { alignItems: "center", gap: 2 },
+  flashTimeBox: { minWidth: 27, height: 27, borderRadius: 4, backgroundColor: "#c83232", alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
+  flashTimeText: { color: "#fff", fontSize: 11, fontWeight: "900" },
+  flashTimeLabel: { color: TEXT_MUTED, fontSize: 8, fontWeight: "600" },
+  flashShopAllButton: { borderWidth: 1, borderColor: BHX_ORANGE, borderRadius: 5, paddingHorizontal: 10, paddingVertical: 9 },
+  flashShopAllText: { color: BHX_ORANGE, fontSize: 10, fontWeight: "800" },
+  flashProductRow: { paddingHorizontal: 12, gap: 10 },
+  flashProductCard: { width: 145, backgroundColor: "#fff" },
+  flashProductImageBox: { height: 130, backgroundColor: "#f7f8f7", borderRadius: 7, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  flashProductName: { color: TEXT_DARK, fontSize: 11, lineHeight: 16, minHeight: 32, marginTop: 7 },
+  flashProductPrice: { color: BHX_ORANGE, fontSize: 14, fontWeight: "900", marginTop: 4 },
+  flashOldPriceRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 3 },
+  flashOriginalPrice: { color: "#9aa1a8", fontSize: 10, textDecorationLine: "line-through" },
+  flashDiscountBadge: { color: "#fff", backgroundColor: "#d33b35", borderRadius: 3, overflow: "hidden", paddingHorizontal: 4, fontSize: 9, fontWeight: "800" },
+  flashPageHeader: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#fff", borderRadius: 12, padding: 12, marginBottom: 14 },
+  flashBackButton: { width: 38, height: 42, alignItems: "center", justifyContent: "center" },
+  flashBackText: { color: BHX_ORANGE, fontSize: 36, lineHeight: 39 },
+  flashPageTitle: { color: TEXT_DARK, fontSize: 19, fontWeight: "900" },
+  flashPageSubtitle: { color: TEXT_MUTED, fontSize: 10, marginTop: 3 },
+  loadMoreFooter: { paddingVertical: 18, alignItems: "center" },
+  loadMoreButton: { width: "100%", maxWidth: 360 },
   trustBar: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 10, paddingVertical: 12, marginTop: 10 },
   trustItem: { flex: 1, minWidth: 0, alignItems: "center", gap: 5, paddingHorizontal: 3 },
   trustLabel: { color: TEXT_MUTED, fontSize: 9, textAlign: "center" },
@@ -2553,6 +2957,12 @@ const styles = StyleSheet.create({
   emptyEmoji: { fontSize: 51, marginBottom: 9 },
   emptyTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "900", textAlign: "center" },
   emptyCta: { marginTop: 18, alignSelf: "stretch" },
+  guestRestrictedState: { flex: 1, minHeight: 400, alignItems: "center", justifyContent: "center", paddingHorizontal: 24, paddingVertical: 48, backgroundColor: "#f4f4f4" },
+  guestRestrictedIllustration: { width: 142, height: 142, borderRadius: 71, alignItems: "center", justifyContent: "center", marginBottom: 28, backgroundColor: "#e7f4ec" },
+  guestRestrictedTitle: { color: "#4b5563", fontSize: 22, lineHeight: 30, fontWeight: "600", textAlign: "center" },
+  guestRestrictedActions: { width: "100%", maxWidth: 360, marginTop: 24 },
+  guestRestrictedButton: { width: "100%", minHeight: 52, borderRadius: 4 },
+  guestRestrictedHomeButton: { borderWidth: 1, borderColor: BHX_GREEN, backgroundColor: "transparent" },
   errorCard: { backgroundColor: "#fff", borderRadius: 13, padding: 17, borderWidth: 1, borderColor: "#f0dfda" },
   errorTitle: { color: "#a3443c", fontSize: 14, fontWeight: "900" },
   errorText: { color: "#785f5b", fontSize: 11, lineHeight: 17, marginTop: 6 },
@@ -2668,6 +3078,45 @@ const styles = StyleSheet.create({
   voucherInput: { flex: 1, minHeight: 48, backgroundColor: "#fff", borderColor: "#dce3e9", borderWidth: 1, borderRadius: 10, paddingHorizontal: 13, color: TEXT_DARK, fontSize: 14 },
   voucherAdd: { width: 86, borderRadius: 6, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center" },
   voucherAddText: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  voucherHistoryButton: { paddingHorizontal: 8, paddingVertical: 10 },
+  voucherHistoryButtonText: { color: "#ee4d2d", fontSize: 13, fontWeight: "700" },
+  voucherExploreRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, backgroundColor: "#fff", paddingHorizontal: 12, paddingBottom: 12 },
+  voucherExploreButton: { width: "100%", minHeight: 42, borderWidth: 1, borderColor: "#f1c2b7", borderRadius: 7, alignItems: "center", justifyContent: "center" },
+  voucherExploreText: { color: "#ee4d2d", fontSize: 13, fontWeight: "700" },
+  voucherDiscoverHero: { margin: 12, minHeight: 118, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 18, justifyContent: "center", backgroundColor: "#f4512a", overflow: "hidden" },
+  voucherDiscoverHeroSmall: { color: "#fff2d8", fontSize: 11, fontWeight: "800", letterSpacing: 2 },
+  voucherDiscoverHeroTitle: { color: "#fff", fontSize: 27, lineHeight: 33, fontWeight: "900", letterSpacing: 0.5 },
+  voucherDiscoverHeroText: { color: "#fff7ed", fontSize: 12, marginTop: 4 },
+  voucherDiscoverGuide: { paddingHorizontal: 20, paddingTop: 7, paddingBottom: 17, gap: 8 },
+  voucherDiscoverGuideText: { color: "#344054", fontSize: 13, lineHeight: 20 },
+  voucherDiscoverGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, paddingHorizontal: 12, paddingBottom: 18 },
+  voucherDiscoverCard: { width: "48.5%", minHeight: 214, flexDirection: "row", backgroundColor: "#fff", borderWidth: 1, borderColor: "#e7e7e7", borderRadius: 10, overflow: "hidden", elevation: 1, shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 3 },
+  voucherDiscoverBadge: { width: 72, paddingHorizontal: 5, paddingVertical: 14, backgroundColor: "#f4512a", alignItems: "center", justifyContent: "center", gap: 7 },
+  voucherDiscoverBadgeIcon: { color: "#ffe084", fontSize: 24, fontWeight: "900" },
+  voucherDiscoverBadgeValue: { color: "#fff", fontSize: 11, textAlign: "center", fontWeight: "900", lineHeight: 15 },
+  voucherDiscoverBadgeBrand: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.7 },
+  voucherDiscoverInfo: { flex: 1, minWidth: 0, paddingHorizontal: 9, paddingVertical: 12, justifyContent: "center" },
+  voucherDiscoverName: { color: "#1d2939", fontSize: 16, lineHeight: 20, fontWeight: "800" },
+  voucherDiscoverDetail: { color: "#475467", fontSize: 10, lineHeight: 15, marginTop: 2 },
+  voucherDiscoverSave: { marginTop: 10, minHeight: 31, borderRadius: 5, alignItems: "center", justifyContent: "center", backgroundColor: "#f4512a" },
+  voucherDiscoverSaveDisabled: { backgroundColor: "#d0d5dd" },
+  voucherDiscoverSaveText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  voucherDiscoverSaveTextDisabled: { color: "#667085" },
+  voucherDiscoverConditions: { color: "#447bc3", fontSize: 10, textAlign: "center", marginTop: 5, fontWeight: "700" },
+  voucherFilterChip: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 16, backgroundColor: "#f2f3f5" },
+  voucherFilterChipActive: { backgroundColor: "#ee4d2d" },
+  voucherFilterText: { color: TEXT_MUTED, fontSize: 11 },
+  voucherFilterTextActive: { color: "#fff", fontWeight: "700" },
+  voucherHistoryTabs: { flexDirection: "row", backgroundColor: "#fff", marginBottom: 10 },
+  voucherHistoryTab: { flex: 1, alignItems: "center", paddingVertical: 14, borderBottomWidth: 2, borderBottomColor: "transparent" },
+  voucherHistoryTabActive: { borderBottomColor: "#ee4d2d" },
+  voucherHistoryTabText: { color: TEXT_MUTED, fontSize: 13 },
+  voucherHistoryTabTextActive: { color: "#ee4d2d", fontWeight: "800" },
+  voucherHistoryCard: { flexDirection: "row", gap: 12, marginHorizontal: 12, marginBottom: 10, padding: 14, backgroundColor: "#fff", borderRadius: 8 },
+  voucherHistoryIcon: { width: 70, minHeight: 86, backgroundColor: "#f6a89b", alignItems: "center", justifyContent: "center" },
+  voucherHistoryIconText: { color: "#fff", fontSize: 29, fontWeight: "900" },
+  voucherSaveLater: { width: 66, alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
+  voucherSaveLaterText: { color: "#ee4d2d", borderWidth: 1, borderColor: "#ee4d2d", borderRadius: 4, paddingHorizontal: 7, paddingVertical: 7, fontSize: 11, textAlign: "center" },
   voucherSubheading: { color: "#222", fontSize: 17, fontWeight: "700", marginBottom: 18 },
   voucherList: { flex: 1 },
   voucherListContent: { paddingBottom: 12 },

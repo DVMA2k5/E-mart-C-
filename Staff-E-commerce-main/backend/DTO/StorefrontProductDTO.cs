@@ -18,6 +18,15 @@ public sealed class StorefrontProductDTO
     public string? ImageUrl { get; set; }
 }
 
+public sealed class StorefrontProductPageDTO
+{
+    public List<StorefrontProductDTO> Items { get; set; } = new();
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int TotalItems { get; set; }
+    public bool HasMore => Page * PageSize < TotalItems;
+}
+
 public sealed class StorefrontProductPromotionDTO
 {
     public int ProductId { get; set; }

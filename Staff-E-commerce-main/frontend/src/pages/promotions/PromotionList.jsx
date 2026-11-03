@@ -393,7 +393,7 @@ export default function PromotionList() {
           <>
             <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
+                <table className="management-table min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -412,7 +412,7 @@ export default function PromotionList() {
                         Thời gian
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Lượt dùng
+                        Lượt nhận / dùng
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Trạng thái
@@ -466,13 +466,14 @@ export default function PromotionList() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center text-sm">
                             <span className="font-medium text-gray-900">
-                              {promo.usedCount}
+                              {promo.type === "voucher" ? promo.claimedCount || 0 : promo.usedCount}
                             </span>
                             <span className="text-gray-400 mx-1">/</span>
                             <span className="text-gray-500">
-                              {promo.usageLimit ?? "∞"}
+                              {promo.type === "voucher" ? promo.claimLimit ?? "∞" : promo.usageLimit ?? "∞"}
                             </span>
                           </div>
+                          {promo.type === "voucher" && <div className="mt-1 text-xs text-gray-500">Đã nhận · Đã dùng: {promo.usedCount || 0}<br />{promo.visibility === "only-code" ? "Only-code" : "Public"}{promo.sendToCustomers ? " · Cấp sẵn" : ""}</div>}
                           {promo.usageLimit && (
                             <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
                               <div

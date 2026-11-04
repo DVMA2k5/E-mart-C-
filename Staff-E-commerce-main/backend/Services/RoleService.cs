@@ -12,11 +12,12 @@ public sealed class RoleService
     private readonly BusMemoryCache<RoleDTO> _cache;
     private readonly BusMemoryCache<Permission> _permissionCache;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly ActorPermissionService _actor;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
     public RoleService(RoleRepository repository, BusMemoryCache<RoleDTO> cache, BusMemoryCache<Permission> permissionCache,
-        IHttpContextAccessor httpContextAccessor)
-    { _repository = repository; _cache = cache; _permissionCache = permissionCache; _httpContextAccessor = httpContextAccessor; }
+        IHttpContextAccessor httpContextAccessor, ActorPermissionService actor)
+    { _repository = repository; _cache = cache; _permissionCache = permissionCache; _httpContextAccessor = httpContextAccessor; _actor = actor; }
 
     public async Task<IReadOnlyList<RoleDTO>> GetRolesAsync()
     {
@@ -36,8 +37,8 @@ public sealed class RoleService
         if (await _repository.ExistsByNameAsync(request.Name)) return (null, "Role already exists.", 409);
         var permissions = await _repository.GetPermissionsByIdsAsync(request.PermissionIds);
         if (permissions.Count != request.PermissionIds.Distinct().Count()) return (null, "One or more permissions do not exist.", 400);
-        if (!IsAdminActor() && permissions.Any(permission => PermissionCatalog.AdministrationPermissions.Contains(permission.Code)))
-            return (null, "Chỉ quản trị viên được tạo vai trò có quyền quản trị tài khoản.", 403);
+        var grantIssue = await _actor.GrantIssueAsync(permissions.Select(permission => permission.Code));
+        if (grantIssue != null) return (null, grantIssue, 403);
         var role = new Role { Name = request.Name, Description = request.Description?.Trim(), IsActive = request.IsActive };
         role.RolePermissions = permissions.Select(p => new RolePermission { Permission = p }).ToList();
         _repository.Add(role);
@@ -61,6 +62,15 @@ public sealed class RoleService
         if (permissions.Count != request.PermissionIds.Distinct().Count()) return (null, "One or more permissions do not exist.", 400);
         if (role.Name == "admin" && PermissionCatalog.AdministrationPermissions.Any(code => permissions.All(p => p.Code != code)))
             return (null, "Vai trò admin phải giữ quyền quản lý tài khoản và phân quyền để tránh mất quyền quản trị.", 409);
+        if (!_actor.IsAdmin)
+        {
+            // Non-admins may not widen their own role, nor grant rights they do not hold themselves.
+            if (await _actor.GetRoleIdAsync() == role.Id)
+                return (null, "Bạn không thể tự thay đổi quyền của vai trò mình đang sử dụng.", 403);
+            var existingIds = role.RolePermissions.Select(link => link.PermissionId).ToHashSet();
+            var grantIssue = await _actor.GrantIssueAsync(permissions.Where(p => !existingIds.Contains(p.Id)).Select(p => p.Code));
+            if (grantIssue != null) return (null, grantIssue, 403);
+        }
         if (role.IsActive != request.IsActive || role.Name != request.Name) await _repository.IncrementUserSessionsAsync(id);
         role.Name = request.Name; role.Description = request.Description?.Trim(); role.IsActive = request.IsActive;
         _repository.ReplacePermissions(role, permissions);

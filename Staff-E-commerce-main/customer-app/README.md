@@ -18,12 +18,12 @@ Start Expo in another terminal:
 ```powershell
 cd D:\E-mart-C-\Staff-E-commerce-main\customer-app
 npm.cmd install
-npm.cmd start -- --go --clear
+npm.cmd start -- --android --clear
 ```
 
-This project uses Expo SDK 58. Install an Expo Go version that supports SDK 58 on your Android phone and scan the QR code. Keep the phone and computer on the same Wi-Fi. The `--go` option targets Expo Go, and `--clear` clears the Metro cache after the SDK upgrade. Stop any old Expo server before starting this command.
+This opens the app in the running Android emulator using Expo Go. If the emulator does not open automatically, start it in Android Studio, run `npm.cmd start -- --go --clear`, then press `a` in the Expo terminal. This project uses Expo SDK 58, so the installed Expo Go version must support SDK 58. Stop any old Expo server before starting this command.
 
-If your network blocks the QR connection, try `npm.cmd start -- --go --tunnel ngrok --clear`. SDK 58 defaults to an Expo tunnel that requires Expo login; explicitly selecting `ngrok` avoids that Expo login requirement. The tunnel exposes the Expo development server; your phone still needs network access to the backend URL below.
+If your network blocks the QR connection, run `npm.cmd run start:tunnel`. The tunnel exposes the Expo development server; your phone still needs network access to the backend URL below.
 
 The Expo Go app connects to the backend using the computer's LAN address; create a local `.env` file with:
 

@@ -168,29 +168,18 @@ namespace backend.Services
 
         public async Task<InventoryListDTO> AdjustInventoryAsync(AdjustInventoryDTO dto)
         {
-            var product = await _inventoryRepo.GetByIdAsync(dto.InventoryId);
-            if (product == null)
-                throw new ArgumentException($"Không tìm thấy sản phẩm với ID {dto.InventoryId}");
+            if (dto.NewQuantity < 0)
+                throw new InvalidOperationException("Số lượng không được âm.");
+            var reason = dto.Reason?.Trim();
+            if (string.IsNullOrWhiteSpace(reason))
+                throw new InvalidOperationException("Vui lòng nhập lý do điều chỉnh tồn kho (ví dụ: kiểm kê, hàng hỏng).");
+            if (reason.Length > 200)
+                throw new InvalidOperationException("Lý do tối đa 200 ký tự.");
 
-            int oldQuantity = product.StockQuantity;
-            int changeAmount = dto.NewQuantity - oldQuantity;
-
-            product.StockQuantity = dto.NewQuantity;
-            product.UpdatedAt = DateTime.UtcNow;
-
-            await _inventoryRepo.UpdateAsync(product);
-            _inventoryCache.AddOrUpdate(product, item => item.Id);
-
-            // Ghi lịch sử điều chỉnh
-            var adjustment = new InventoryAdjustment
-            {
-                ProductId = product.Id,
-                ChangeAmount = changeAmount,
-                Reason = string.IsNullOrWhiteSpace(dto.Reason) ? null : dto.Reason.Trim(),
-                UserId = TryGetCurrentUserId(),
-                CreatedAt = DateTime.UtcNow
-            };
-            await _inventoryRepo.AddAdjustmentAsync(adjustment);
+            var adjusted = await _inventoryRepo.AdjustStockAsync(dto.InventoryId, dto.NewQuantity, reason, TryGetCurrentUserId())
+                ?? throw new ArgumentException($"Không tìm thấy sản phẩm với ID {dto.InventoryId}");
+            var product = adjusted.Product;
+            _inventoryCache.Clear();
             _adjustmentCache.Clear();
             await _realtime.BroadcastStock("StockUpdated", new
             {

@@ -15,16 +15,22 @@ public sealed class StorefrontCheckoutService(
     BankTransferService bank,
     RealtimeNotificationService realtime,
     IConfiguration configuration,
-    VoucherWalletService vouchers)
+    VoucherWalletService vouchers,
+    PaymentSimulator simulator)
 {
     public object GetPaymentOptions() => new
     {
         cod = true,
         bank = bank.Enabled,
         bankDetails = bank.Details,
-        momo = !string.IsNullOrWhiteSpace(configuration["Momo:Endpoint"]) &&
-               !string.IsNullOrWhiteSpace(configuration["Momo:SecretKey"])
+        momo = simulator.MomoAvailable,
+        simulated = simulator.Enabled
     };
+
+    private string? BankSimulatorUrl(Order order) =>
+        simulator.Enabled && order.PaymentMethod == "card" && order.PaymentStatus == "pending" && order.Status is not ("cancelled" or "refunded")
+            ? simulator.BankPageUrl(order.Id)
+            : null;
 
     public async Task<StorefrontCheckoutDTO> CreateAsync(int customerId, StorefrontOrderRequest request)
     {
@@ -263,7 +269,8 @@ public sealed class StorefrontCheckoutService(
             TotalAmount = order.TotalAmount,
             VietQrUrl = order.PaymentStatus == "pending" && order.PaymentMethod == "card"
                 ? bank.QrUrl(order.TotalAmount, order.OrderNumber)
-                : null
+                : null,
+            BankSimulatorUrl = BankSimulatorUrl(order)
         };
     }
 
@@ -317,6 +324,7 @@ public sealed class StorefrontCheckoutService(
         PaymentError = paymentError,
         BankDetails = order.PaymentMethod == "card" ? bank.Details : null,
         VietQrUrl = order.PaymentMethod == "card" ? bank.QrUrl(order.TotalAmount, order.OrderNumber) : null,
+        BankSimulatorUrl = BankSimulatorUrl(order),
         Replay = replay
     };
 

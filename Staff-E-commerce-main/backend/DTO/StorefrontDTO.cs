@@ -150,6 +150,7 @@ public sealed class StorefrontCheckoutDTO
     public string? PaymentError { get; set; }
     public object? BankDetails { get; set; }
     public string? VietQrUrl { get; set; }
+    public string? BankSimulatorUrl { get; set; }
     public bool Replay { get; set; }
 }
 
@@ -162,4 +163,5 @@ public sealed class StorefrontPaymentStatusDTO
     public string PaymentMethod { get; set; } = string.Empty;
     public decimal TotalAmount { get; set; }
     public string? VietQrUrl { get; set; }
+    public string? BankSimulatorUrl { get; set; }
 }

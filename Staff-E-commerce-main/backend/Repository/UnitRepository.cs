@@ -79,7 +79,8 @@ namespace backend.Repository
 
             if (unit == null) return false;
 
-            unit.IsActive = !unit.IsActive;
+            if (!unit.IsActive) return true; // already hidden: deleting again must not re-activate it
+            unit.IsActive = false;
             unit.UpdatedAt = DateTime.UtcNow;
 
             _context.Units.Update(unit);

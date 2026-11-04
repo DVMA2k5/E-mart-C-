@@ -4,20 +4,20 @@ namespace backend.DTO
 {
     public class CustomerCreateDTO
     {
-        [Required(ErrorMessage = "FullName is required")]
-        [MaxLength(150, ErrorMessage = "FullName must be at most 150 characters long")]
-        [MinLength(3, ErrorMessage = "FullName must be at least 3 characters long")]
-        [RegularExpression(@"^[a-zA-Z\sÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚĂĐĨŨƠàáâãèéêìíòóôõùúăđĩũơƯĂẠẢẤẦẨẪẬẮẰẲẴẶẸẺẼỀỀỂưăạảấầẩẫậắằẳẵặẹẻẽềềểỄỆỈỊỌỎỐỒỔỖỘỚỜỞỠỢỤỦỨỪễệỉịọỏốồổỗộớờởỡợụủứừỬỮỰỲỴÝỶỸửữựỳỵỷỹ]+$", ErrorMessage = "FullName can only contain letters and spaces")]
+        [Required(ErrorMessage = "Vui lòng nhập họ tên.")]
+        [MaxLength(150, ErrorMessage = "Họ tên tối đa 150 ký tự.")]
+        [MinLength(3, ErrorMessage = "Họ tên phải có ít nhất 3 ký tự.")]
+        [RegularExpression(@"^[\p{L}\p{M}\s'.-]+$", ErrorMessage = "Họ tên chỉ được chứa chữ cái và khoảng trắng.")]
         public string FullName { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "Phone is required")]
-        [RegularExpression("^(0|\\+84)[35789]\\d{8}$", ErrorMessage = "Invalid phone number format")]
+        [Required(ErrorMessage = "Vui lòng nhập số điện thoại.")]
+        [RegularExpression("^(0|\\+84)[35789]\\d{8}$", ErrorMessage = "Số điện thoại không hợp lệ.")]
         public string Phone { get; set; } = string.Empty;
 
-        [EmailAddress(ErrorMessage = "Invalid email address format")]
+        [EmailAddress(ErrorMessage = "Email không hợp lệ.")]
         public string? Email { get; set; }
 
-        [MaxLength(250, ErrorMessage = "Address must be at most 250 characters long")]
+        [MaxLength(250, ErrorMessage = "Địa chỉ tối đa 250 ký tự.")]
         public string? Address { get; set; }
         public DateTime? DateOfBirth { get; set; }
     }

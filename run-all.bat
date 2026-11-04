@@ -16,5 +16,5 @@ echo   Run "f:\CNPM\run-customer-app.bat" to start Expo/Web preview at: http://l
 echo.
 echo Login credentials:
 echo   - Admin:   admin / admin123
-echo   - Staff:   staff01 / admin123
+echo   - Staff:   staff01 / 123456
 echo.

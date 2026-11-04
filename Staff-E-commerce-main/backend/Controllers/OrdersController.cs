@@ -1,3 +1,4 @@
+using backend.Helpers;
 using backend.DTO;
 using backend.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -36,7 +37,7 @@ namespace backend.Controllers
             catch (Exception ex)
             {
                 Console.WriteLine($"Lỗi tạo order: {ex}");
-                return StatusCode(500, new { success = false, message = ex.Message });
+                return this.ServerError(ex);
             }
         }
 
@@ -235,10 +236,34 @@ namespace backend.Controllers
             int pageNumber = 1,
             int pageSize = 20,
             string? status = null,
-            string? search = null)
+            string? search = null,
+            DateTime? fromDate = null,
+            DateTime? toDate = null)
         {
-            var result = await _orderService.GetOnlineOrdersAsync(pageNumber, pageSize, status, search);
+            if (fromDate.HasValue && toDate.HasValue && fromDate.Value.Date > toDate.Value.Date)
+                return BadRequest(new { message = "Ngày bắt đầu phải trước hoặc bằng ngày kết thúc." });
+            var result = await _orderService.GetOnlineOrdersAsync(pageNumber, pageSize, status, search, null, fromDate, toDate);
             return Ok(result);
+        }
+
+        /// <summary>Lịch sử thay đổi trạng thái của một đơn: ai làm, lúc nào.</summary>
+        [HttpGet("{orderId:int}/history")]
+        public async Task<IActionResult> GetOrderHistory(int orderId) => Ok(await _orderService.GetOrderHistoryAsync(orderId));
+
+        /// <summary>Nhân viên xác nhận đã nhận chuyển khoản cho đơn online thanh toán bằng VietQR.</summary>
+        [HttpPost("{orderId:int}/confirm-transfer")]
+        public async Task<IActionResult> ConfirmOnlineTransfer(int orderId, [FromBody] OnlineTransferConfirmation? request)
+        {
+            try
+            {
+                var reference = string.IsNullOrWhiteSpace(request?.Reference) ? $"BANK-{orderId}" : request!.Reference!;
+                var userId = int.TryParse(User.FindFirst("uid")?.Value, out var id) ? id : (int?)null;
+                return await _orderService.ConfirmOnlineTransferAsync(orderId, reference, userId)
+                    ? Ok(new { success = true, message = "Đã ghi nhận chuyển khoản." })
+                    : NotFound(new { message = "Không tìm thấy đơn hàng online." });
+            }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         }
 
         /// <summary>
@@ -255,9 +280,10 @@ namespace backend.Controllers
 
                 return Ok(new { success = true, message = "Đã xác nhận đơn hàng." });
             }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                return this.ServerError(ex);
             }
         }
 
@@ -275,9 +301,10 @@ namespace backend.Controllers
 
                 return Ok(new { success = true, message = "Đã từ chối đơn hàng." });
             }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                return this.ServerError(ex);
             }
         }
 
@@ -298,7 +325,7 @@ namespace backend.Controllers
             catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                return this.ServerError(ex);
             }
         }
 
@@ -325,7 +352,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                return this.ServerError(ex);
             }
         }
     }

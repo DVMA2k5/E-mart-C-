@@ -9,6 +9,8 @@ namespace backend.Services;
 /// <summary>BLL: pivots repository projections and applies report rules. Excel serialization also belongs to this service.</summary>
 public sealed class RevenueAnalyticsService(RevenueAnalyticsRepository repository)
 {
+    private static readonly TimeZoneInfo VietnamTimeZone = ResolveVietnamTimeZone();
+
     public async Task<RevenueAnalyticsDTO> GetAsync(int firstYear, int lastYear, DateTime? from, DateTime? to, CancellationToken ct)
     {
         if (firstYear < 2000 || lastYear > 2200 || firstYear > lastYear || lastYear - firstYear > 9)
@@ -17,7 +19,15 @@ public sealed class RevenueAnalyticsService(RevenueAnalyticsRepository repositor
             throw new ArgumentException("Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc.");
 
         var raw = await repository.LoadAsync(firstYear, lastYear, ct);
-        var periodRevenue = await repository.GetPeriodRevenueAsync(from, to, ct);
+        var localRevenueStart = from.HasValue && to.HasValue
+            ? from.Value.Date
+            : (from ?? to)?.Date ?? TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, VietnamTimeZone).Date;
+        var localRevenueEnd = from.HasValue && to.HasValue
+            ? to.Value.Date.AddDays(1)
+            : localRevenueStart.AddDays(1);
+        var revenueStart = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localRevenueStart, DateTimeKind.Unspecified), VietnamTimeZone);
+        var revenueEnd = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localRevenueEnd, DateTimeKind.Unspecified), VietnamTimeZone);
+        var periodRevenue = await repository.GetRevenueAsync(revenueStart, revenueEnd, ct);
         var years = Enumerable.Range(firstYear, lastYear - firstYear + 1).ToList();
         var columns = years.SelectMany(y => Enumerable.Range(1, 4).Select(q => $"Q{q}/{y}")).ToList();
         List<string> financeColumns = years.Count == 1 ? new() { "Q1", "Q2", "Q3", "Q4" } : columns;
@@ -88,4 +98,10 @@ public sealed class RevenueAnalyticsService(RevenueAnalyticsRepository repositor
 
     private static RevenueMatrixRowDTO Matrix(string label, List<decimal> values, int? id = null) =>
         new() { Id = id, Label = label, Values = values, Total = values.Sum() };
+
+    private static TimeZoneInfo ResolveVietnamTimeZone()
+    {
+        try { return TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time"); }
+        catch (TimeZoneNotFoundException) { return TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"); }
+    }
 }

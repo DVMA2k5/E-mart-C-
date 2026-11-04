@@ -1,14 +1,26 @@
 import { request } from "./apiClient";
 
 // Lấy danh sách đơn hàng online (order_type = 'mobile')
-export async function getOnlineOrders(pageNumber = 1, pageSize = 20, status = '', search = '') {
+export async function getOnlineOrders(pageNumber = 1, pageSize = 20, status = '', search = '', fromDate = '', toDate = '') {
   const params = new URLSearchParams({
     pageNumber: pageNumber.toString(),
     pageSize: pageSize.toString(),
     ...(status && { status }),
     ...(search && { search }),
+    ...(fromDate && { fromDate }),
+    ...(toDate && { toDate }),
   });
   return request(`/orders/online?${params}`);
+}
+
+// Nhân viên xác nhận đã nhận chuyển khoản cho đơn thanh toán VietQR
+export async function confirmOnlineTransfer(orderId, reference = '') {
+  return request(`/orders/${orderId}/confirm-transfer`, { method: 'POST', body: { reference } });
+}
+
+// Lịch sử thay đổi trạng thái đơn
+export async function getOrderHistory(orderId) {
+  return request(`/orders/${orderId}/history`);
 }
 
 // Xác nhận đơn hàng (pending -> processing)

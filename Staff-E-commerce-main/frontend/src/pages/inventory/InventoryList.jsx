@@ -10,8 +10,9 @@ import { useAuth } from "../../hook/useAuth";
 import { useRealtimeNotifications } from "../../hooks/useRealtimeNotifications";
 
 export default function InventoryList({ embedded = false }) {
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("inventory.write");
 
   // --- state
   const [items, setItems] = useState([]);
@@ -184,12 +185,16 @@ export default function InventoryList({ embedded = false }) {
       });
       return;
     }
+    if (!adjustModal.reason?.trim()) {
+      setNotification({ type: "error", message: "Vui lòng nhập lý do điều chỉnh (ví dụ: kiểm kê, hàng hỏng)." });
+      return;
+    }
 
     setSaving(true);
     setNotification(null);
 
     try {
-      await adjustInventory(adjustModal.item.id, newQty, adjustModal.reason);
+      await adjustInventory(adjustModal.item.id, newQty, adjustModal.reason.trim());
       setNotification({
         type: "success",
         message: "Cập nhật số lượng tồn kho thành công",
@@ -199,16 +204,17 @@ export default function InventoryList({ embedded = false }) {
       await fetchInventory(page, pageSize, debouncedSearch, stockStatus);
       await fetchStats();
 
+      // Keep the form locked until it closes so a second click cannot record the adjustment twice.
       setTimeout(() => {
         closeAdjustModal();
-      }, 1500);
+        setSaving(false);
+      }, 1200);
     } catch (err) {
       console.error("Lỗi khi cập nhật tồn kho:", err);
       setNotification({
         type: "error",
         message: err.message || "Không thể cập nhật tồn kho",
       });
-    } finally {
       setSaving(false);
     }
   };
@@ -417,7 +423,7 @@ export default function InventoryList({ embedded = false }) {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">
                   Cập nhật lần cuối
                 </th>
-                {!isStaff && (
+                {!readOnly && (
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">
                     Hành động
                   </th>
@@ -479,7 +485,7 @@ export default function InventoryList({ embedded = false }) {
                     <td className="px-4 py-3 text-sm text-gray-600">
                       {formatDate(item.updatedAt)}
                     </td>
-                    {!isStaff && (
+                    {!readOnly && (
                       <td className="px-4 py-3 text-sm text-center">
                         <button
                           onClick={() => openAdjustModal(item)}
@@ -593,7 +599,7 @@ export default function InventoryList({ embedded = false }) {
 
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Lý do điều chỉnh (tùy chọn)
+                Lý do điều chỉnh <span className="text-red-500">*</span>
               </label>
               <textarea
                 value={adjustModal.reason}

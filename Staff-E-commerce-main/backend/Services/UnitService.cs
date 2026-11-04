@@ -94,7 +94,7 @@ namespace backend.Services
         public async Task<bool> DeleteUnitAsync(int id)
         {
             var deleted = await _unitRepo.DeleteAsync(id);
-            if (deleted) _cache.RemoveWhere(unit => unit.Id == id);
+            if (deleted) _cache.Clear(); // the unit still exists (inactive), so reload it rather than drop it
             return deleted;
         }
 

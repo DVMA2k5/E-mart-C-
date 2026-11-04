@@ -25,8 +25,9 @@ export default function PromotionList() {
   const [editingPromotion, setEditingPromotion] = useState(null);
   const [statsLocal, setStatsLocal] = useState(null);
 
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("promotions.write");
 
   const dispatch = useDispatch();
   const {
@@ -138,7 +139,7 @@ export default function PromotionList() {
             <h1 className="text-2xl font-bold text-gray-900">
               Quản lý Khuyến mãi
             </h1>
-            {!isStaff && (
+            {!readOnly && (
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-all shadow-lg hover:shadow-xl"
@@ -499,7 +500,7 @@ export default function PromotionList() {
                             >
                               Chi tiết
                             </button>
-                            {!isStaff && (
+                            {!readOnly && (
                               <>
                                 <button
                                   onClick={() => handleToggle(promo.id)}

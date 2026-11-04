@@ -37,19 +37,15 @@ export default function PromotionDetail({ promotionId, onClose, onEdit }) {
 
   const formatDate = (dateStr) => {
     if (!dateStr) return "Không giới hạn";
-    const date = new Date(dateStr);
-    // Cộng 7 giờ để chuyển từ UTC sang giờ Việt Nam
-    date.setHours(date.getHours() + 7);
-    return date.toLocaleDateString("vi-VN", { day: '2-digit', month: '2-digit', year: 'numeric' });
+    // API trả thời điểm UTC (có hậu tố Z); hiển thị theo giờ Việt Nam bất kể múi giờ của máy.
+    return new Date(dateStr).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: '2-digit', month: '2-digit', year: 'numeric' });
   };
 
   const formatDateTime = (dateStr) => {
     if (!dateStr) return "N/A";
-    const date = new Date(dateStr);
-    // Cộng 7 giờ để chuyển từ UTC sang giờ Việt Nam
-    date.setHours(date.getHours() + 7);
-    return date.toLocaleString("vi-VN", { 
-      day: '2-digit', 
+    return new Date(dateStr).toLocaleString("vi-VN", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      day: '2-digit',
       month: '2-digit', 
       year: 'numeric',
       hour: '2-digit',

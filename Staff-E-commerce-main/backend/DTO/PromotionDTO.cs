@@ -17,6 +17,8 @@ namespace backend.DTO
         public int? ClaimLimit { get; set; }
         public int ClaimedCount { get; set; }
         public bool IsClaimed { get; set; }
+        /// <summary>Why the customer cannot save this voucher right now (null when they can).</summary>
+        public string? ClaimIssue { get; set; }
         public int? ClaimId { get; set; }
         public DateTime? ClaimedAt { get; set; }
         public DateTime? UsedAt { get; set; }

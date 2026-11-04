@@ -46,6 +46,34 @@ namespace backend.Repository
                 .ToListAsync();
         }
 
+        /// <summary>Filters and pages online orders in SQL so the list stays fast as the order history grows.</summary>
+        public async Task<(List<Order> Items, int TotalItems)> GetOnlineOrdersPageAsync(
+            int pageNumber, int pageSize, string? status, string? search, int? orderId, DateTime? fromUtc, DateTime? toUtc)
+        {
+            var query = _context.Orders.AsNoTracking().Where(o => o.OrderType == "mobile");
+            if (orderId.HasValue) query = query.Where(o => o.Id == orderId.Value);
+            if (!string.IsNullOrWhiteSpace(status)) query = query.Where(o => o.Status == status);
+            if (fromUtc.HasValue) query = query.Where(o => o.CreatedAt >= fromUtc.Value);
+            if (toUtc.HasValue) query = query.Where(o => o.CreatedAt < toUtc.Value);
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var keyword = search.Trim();
+                query = query.Where(o => o.OrderNumber.Contains(keyword) ||
+                    (o.RecipientName != null && o.RecipientName.Contains(keyword)) ||
+                    (o.RecipientPhone != null && o.RecipientPhone.Contains(keyword)) ||
+                    (o.Customer != null && (o.Customer.FullName.Contains(keyword) || (o.Customer.Phone != null && o.Customer.Phone.Contains(keyword)))));
+            }
+            var totalItems = await query.CountAsync();
+            var items = await query
+                .Include(o => o.Customer).Include(o => o.Promotion)
+                .Include(o => o.OrderItems).ThenInclude(oi => oi.Product)
+                .OrderByDescending(o => o.CreatedAt).ThenByDescending(o => o.Id)
+                .Skip((pageNumber - 1) * pageSize).Take(pageSize)
+                .AsSplitQuery()
+                .ToListAsync();
+            return (items, totalItems);
+        }
+
         public Task<IDbContextTransaction> BeginSerializableTransactionAsync() =>
             _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
 
@@ -79,6 +107,25 @@ namespace backend.Repository
             _context.PromotionRedemptions.RemoveRange(redemptions);
 
         public void AddPayment(Payment payment) => _context.Payments.Add(payment);
+        public void AddActivityLog(ActivityLog log) => _context.ActivityLogs.Add(log);
+
+        /// <summary>Status history of one order, oldest first, with the name of whoever made each change.</summary>
+        public Task<List<OrderHistoryEntryDTO>> GetOrderHistoryAsync(int orderId)
+        {
+            var key = orderId.ToString();
+            return _context.ActivityLogs.AsNoTracking()
+                .Where(log => log.EntityType == "orders" && log.EntityId == key)
+                .OrderBy(log => log.CreatedAt).ThenBy(log => log.Id)
+                .Select(log => new OrderHistoryEntryDTO
+                {
+                    Action = log.Action,
+                    Note = log.Payload,
+                    UserId = log.UserId,
+                    UserName = log.User != null ? log.User.FullName ?? log.User.Username : null,
+                    CreatedAt = log.CreatedAt
+                })
+                .ToListAsync();
+        }
         public void AddInventoryAdjustment(InventoryAdjustment adjustment) => _context.InventoryAdjustments.Add(adjustment);
         public Task SaveChangesAsync() => _context.SaveChangesAsync();
 

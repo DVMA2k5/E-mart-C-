@@ -1,4 +1,5 @@
 using backend.DTO;
+using backend.Security;
 using backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,7 +14,9 @@ public sealed class StorefrontController(
     StorefrontService storefront,
     StorefrontAccountService accounts,
     StorefrontCheckoutService checkout,
-    VoucherWalletService vouchers) : ControllerBase
+    VoucherWalletService vouchers,
+    OrderService orders,
+    LoginThrottle throttle) : ControllerBase
 {
     [HttpGet("promotions")]
     [AllowAnonymous]
@@ -37,6 +40,29 @@ public sealed class StorefrontController(
     {
         if (!TryGetCustomerId(out var customerId)) return InvalidSession();
         return Ok(await vouchers.WalletAsync(customerId));
+    }
+
+    /// <summary>
+    /// Shows one voucher by its exact code (this is the only way an Only-code voucher becomes visible).
+    /// Ten unknown codes in ten minutes lock the lookup briefly so codes cannot be guessed.
+    /// </summary>
+    [HttpGet("vouchers/lookup")]
+    [Authorize(Roles = "customer")]
+    public async Task<IActionResult> LookupVoucher([FromQuery] string? code)
+    {
+        if (!TryGetCustomerId(out var customerId)) return InvalidSession();
+        if (string.IsNullOrWhiteSpace(code)) return BadRequest(new { message = "Nhập mã voucher." });
+        var key = customerId.ToString();
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        if (throttle.RetryAfter("voucher-code", key, ip) is { } wait)
+            return StatusCode(429, new { message = $"Bạn đã nhập sai mã quá nhiều lần. Vui lòng thử lại sau {Math.Max(1, (int)Math.Ceiling(wait.TotalMinutes))} phút." });
+        var voucher = await vouchers.LookupByCodeAsync(customerId, code);
+        if (voucher == null)
+        {
+            throttle.RegisterFailure("voucher-code", key, ip, accountLimit: 10);
+            return NotFound(new { message = "Mã voucher không tồn tại hoặc đã hết hạn." });
+        }
+        return Ok(voucher);
     }
 
     [HttpPost("vouchers/claim")]
@@ -76,6 +102,14 @@ public sealed class StorefrontController(
         return Ok(result);
     }
 
+    [HttpGet("register/phone-availability")]
+    [AllowAnonymous]
+    public async Task<IActionResult> CheckRegistrationPhone([FromQuery] string phone)
+    {
+        try { return Ok(new { available = await accounts.IsRegistrationPhoneAvailableAsync(phone) }); }
+        catch (BusinessRuleException exception) { return BusinessError(exception); }
+    }
+
     [HttpPost("register")]
     [AllowAnonymous]
     public async Task<IActionResult> RegisterCustomer([FromBody] StorefrontCustomerRegisterRequest request)
@@ -88,8 +122,20 @@ public sealed class StorefrontController(
     [AllowAnonymous]
     public async Task<IActionResult> Login([FromBody] StorefrontCustomerLoginRequest request)
     {
-        try { return Ok(await accounts.LoginAsync(request)); }
-        catch (BusinessRuleException exception) { return BusinessError(exception); }
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        if (throttle.RetryAfter("customer", request.Username, ip) is { } wait)
+            return StatusCode(429, new { message = LoginThrottle.Message(wait) });
+        try
+        {
+            var result = await accounts.LoginAsync(request);
+            throttle.RegisterSuccess("customer", request.Username);
+            return Ok(result);
+        }
+        catch (BusinessRuleException exception)
+        {
+            if (exception.StatusCode == 401) throttle.RegisterFailure("customer", request.Username, ip);
+            return BusinessError(exception);
+        }
     }
 
     [HttpGet("account")]
@@ -194,6 +240,20 @@ public sealed class StorefrontController(
         if (!TryGetCustomerId(out var customerId)) return InvalidSession();
         try { return Ok(await checkout.GetPaymentStatusAsync(customerId, id)); }
         catch (BusinessRuleException exception) { return BusinessError(exception); }
+    }
+
+    [HttpPost("orders/{id:int}/cancel")]
+    [Authorize(Roles = "customer")]
+    public async Task<IActionResult> CancelOrder(int id, [FromBody] RejectOrderDTO? request)
+    {
+        if (!TryGetCustomerId(out var customerId)) return InvalidSession();
+        try
+        {
+            return await orders.CancelByCustomerAsync(id, customerId, request?.Reason)
+                ? Ok(new { message = "Đã hủy đơn hàng." })
+                : NotFound(new { message = "Không tìm thấy đơn hàng." });
+        }
+        catch (InvalidOperationException exception) { return Conflict(new { message = exception.Message }); }
     }
 
     [HttpPost("orders/{id:int}/pay-momo")]

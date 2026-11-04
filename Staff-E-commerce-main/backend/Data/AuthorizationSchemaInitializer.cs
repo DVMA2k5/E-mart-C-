@@ -12,5 +12,7 @@ public static class AuthorizationSchemaInitializer
         // Structured delivery data requires the existing C# parser for legacy notes.
         await OrderDeliverySchemaMigration.MigrateAsync(db);
         await VoucherWalletSchemaMigration.MigrateAsync(db);
+        await UnicodeTextSchemaMigration.MigrateAsync(db);
+        await CustomerUsernameMigration.MigrateAsync(db);
     }
 }

@@ -27,7 +27,7 @@ public static class OrderDeliveryRegression
             structured.RecipientName = "Người nhận mới"; structured.RecipientPhone = "0901234567"; structured.ShippingAddress = "Địa chỉ đã tách";
             db.Orders.AddRange(old, noNote, malformed, counter, structured);
             var buyer = new Customer { FullName = "Chủ tài khoản", Phone = "0988888811", Address = "Địa chỉ hồ sơ cũ", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
-            var user = new User { Username = "delivery_buyer", FullName = buyer.FullName, PasswordHash = "unused", Customer = buyer,
+            var user = new User { Username = "0988888811", FullName = buyer.FullName, PasswordHash = "unused", Customer = buyer,
                 RoleEntity = await db.Roles.SingleAsync(r => r.Name == "customer"), IsActive = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
             var product = new Product { ProductName = "Delivery item", Price = 20000, StockQuantity = 10, IsActive = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
             db.Users.Add(user); db.Products.Add(product);

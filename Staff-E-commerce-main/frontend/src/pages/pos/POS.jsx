@@ -7,6 +7,8 @@ import {
   confirmOnlineOrder,
   rejectOnlineOrder,
   deliverOnlineOrder,
+  confirmOnlineTransfer,
+  getOrderHistory,
 } from "../../api/onlineOrderApi";
 import {
   getProductByBarcode,
@@ -94,16 +96,30 @@ function playNewOrderChime() {
   }
 }
 
+const orderHistoryLabels = {
+  order_confirmed: "Cửa hàng xác nhận đơn",
+  order_rejected: "Cửa hàng hủy đơn",
+  order_cancelled_by_customer: "Khách tự hủy đơn",
+  order_delivered: "Giao hàng thành công",
+  order_refunded: "Hoàn tiền",
+  online_transfer_confirmed: "Đã nhận chuyển khoản",
+  payment_received: "Đã nhận thanh toán MoMo",
+};
+
 export default function POS() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedOrderId = searchParams.get("orderId");
   const { permissions } = useAuth();
   const canWriteOrders = permissions.includes("orders.write");
+  const canWritePayments = permissions.includes("payments.write");
   const [activeTab, setActiveTab] = useState("online");
   const [orders, setOrders] = useState([]);
   const [meta, setMeta] = useState({ totalItems: 0, totalPages: 1, pageNumber: 1, pageSize: 20 });
   const [loading, setLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [orderHistory, setOrderHistory] = useState({ orderId: null, items: [], error: "" });
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -196,10 +212,15 @@ export default function POS() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const fetchOrders = useCallback(async (p = 1) => {
-    setLoading(true);
+  // silent = background refresh: keep the current list on screen instead of flashing a spinner.
+  const fetchOrders = useCallback(async (p = 1, silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const data = await getOnlineOrders(p, 20, filterStatus, debouncedSearch);
+      if (fromDate && toDate && fromDate > toDate) {
+        showToast("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.", "error");
+        return;
+      }
+      const data = await getOnlineOrders(p, 20, filterStatus, debouncedSearch, fromDate, toDate);
       setOrders(data.items || []);
       setMeta({
         totalItems: data.totalItems || 0,
@@ -212,7 +233,7 @@ export default function POS() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, debouncedSearch]);
+  }, [filterStatus, debouncedSearch, fromDate, toDate]);
 
   useEffect(() => {
     fetchOrders(page);
@@ -220,7 +241,7 @@ export default function POS() {
 
   // Auto-refresh every 30s
   useEffect(() => {
-    intervalRef.current = setInterval(() => fetchOrders(page), 30000);
+    intervalRef.current = setInterval(() => fetchOrders(page, true), 30000);
     return () => clearInterval(intervalRef.current);
   }, [page, fetchOrders]);
 
@@ -255,7 +276,7 @@ export default function POS() {
       });
 
       connection.on("OrderStatusChanged", () => {
-        fetchOrders(page);
+        fetchOrders(page, true);
       });
 
       connection.on("StockUpdated", () => refreshPosProductsRef.current());
@@ -469,7 +490,7 @@ export default function POS() {
       await confirmOnlineOrder(orderId);
       if (detailOrder?.id === orderId) setDetailOrder(await request(`/orders/online/${orderId}`));
       showToast("Đã xác nhận đơn hàng thành công!");
-      fetchOrders(page);
+      fetchOrders(page, true);
     } catch (err) {
       showToast(err.message || "Lỗi xác nhận đơn", "error");
     } finally {
@@ -483,13 +504,39 @@ export default function POS() {
       await deliverOnlineOrder(orderId);
       if (detailOrder?.id === orderId) setDetailOrder(await request(`/orders/online/${orderId}`));
       showToast("Đã hoàn thành giao hàng & tích điểm cho khách!");
-      fetchOrders(page);
+      fetchOrders(page, true);
     } catch (err) {
       showToast(err.message || "Lỗi giao hàng", "error");
     } finally {
       setActionLoading(false);
     }
   };
+
+  const handleConfirmTransfer = async (orderId) => {
+    const reference = window.prompt("Nhập mã giao dịch ngân hàng (để trống sẽ dùng mã mặc định):", "");
+    if (reference === null) return;
+    setActionLoading(true);
+    try {
+      await confirmOnlineTransfer(orderId, reference.trim());
+      if (detailOrder?.id === orderId) setDetailOrder(await request(`/orders/online/${orderId}`));
+      showToast("Đã ghi nhận chuyển khoản. Đơn có thể giao hàng.");
+      fetchOrders(page, true);
+    } catch (err) {
+      showToast(err.message || "Không ghi nhận được chuyển khoản", "error");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Status history of the order shown in the detail panel (who changed it and when).
+  useEffect(() => {
+    if (!detailOrder?.id) return;
+    let active = true;
+    getOrderHistory(detailOrder.id)
+      .then((items) => { if (active) setOrderHistory({ orderId: detailOrder.id, items: Array.isArray(items) ? items : [], error: "" }); })
+      .catch((err) => { if (active) setOrderHistory({ orderId: detailOrder.id, items: [], error: err.message || "Không tải được lịch sử." }); });
+    return () => { active = false; };
+  }, [detailOrder?.id, detailOrder?.status, detailOrder?.paymentStatus]);
 
   const openReject = (orderId) => {
     setRejectModal({ open: true, orderId });
@@ -503,7 +550,7 @@ export default function POS() {
       if (detailOrder?.id === rejectModal.orderId) setDetailOrder(await request(`/orders/online/${rejectModal.orderId}`));
       showToast("Đã từ chối đơn hàng.");
       setRejectModal({ open: false, orderId: null });
-      fetchOrders(page);
+      fetchOrders(page, true);
     } catch (err) {
       showToast(err.message || "Lỗi từ chối đơn", "error");
     } finally {
@@ -689,6 +736,22 @@ export default function POS() {
                 <option value="completed">Hoàn thành</option>
                 <option value="cancelled">Đã huỷ</option>
               </select>
+              <label className="flex items-center gap-1 text-xs text-gray-500">
+                Từ
+                <input type="date" value={fromDate} max={toDate || undefined}
+                  onChange={(e) => { setFromDate(e.target.value); setPage(1); }}
+                  className="px-2 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
+              </label>
+              <label className="flex items-center gap-1 text-xs text-gray-500">
+                đến
+                <input type="date" value={toDate} min={fromDate || undefined}
+                  onChange={(e) => { setToDate(e.target.value); setPage(1); }}
+                  className="px-2 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" />
+              </label>
+              {(fromDate || toDate) && (
+                <button type="button" onClick={() => { setFromDate(""); setToDate(""); setPage(1); }}
+                  className="text-xs font-semibold text-gray-500 underline">Bỏ lọc ngày</button>
+              )}
               <button
                 onClick={() => fetchOrders(page)}
                 className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-semibold transition"
@@ -774,6 +837,16 @@ export default function POS() {
                               ✕ Huỷ
                             </button>
                           </>
+                        )}
+                        {o.paymentMethod === "card" && o.paymentStatus === "pending" && ["pending", "processing"].includes(o.status) && (
+                          <button
+                            onClick={() => handleConfirmTransfer(o.id)}
+                            disabled={actionLoading || !canWritePayments}
+                            title={canWritePayments ? "Đối chiếu sao kê rồi xác nhận đã nhận tiền" : "Cần quyền payments.write"}
+                            className="px-3 py-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-bold shadow-sm transition disabled:opacity-50"
+                          >
+                            💳 Đã nhận chuyển khoản
+                          </button>
                         )}
                         {o.status === "processing" && (
                           <button
@@ -1251,6 +1324,7 @@ export default function POS() {
                 </div>
               </div>
               <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+                {detailOrder.paymentMethod === "card" && detailOrder.paymentStatus === "pending" && ["pending", "processing"].includes(detailOrder.status) && <button disabled={actionLoading || !canWritePayments} onClick={() => handleConfirmTransfer(detailOrder.id)} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Đã nhận chuyển khoản</button>}
                 {detailOrder.status === "pending" && <button disabled={actionLoading || !canWriteOrders} onClick={() => handleConfirm(detailOrder.id)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Xác nhận nhận đơn</button>}
                 {detailOrder.status === "processing" && <button disabled={actionLoading || !canWriteOrders || (detailOrder.paymentMethod !== "cash" && detailOrder.paymentStatus !== "paid")} onClick={() => {
                   if (window.confirm(detailOrder.paymentMethod === "cash" ? `Xác nhận đã giao hàng và thu đủ ${formatPrice(detailOrder.totalAmount)} tiền COD?` : "Xác nhận đã giao hàng thành công?")) handleDeliver(detailOrder.id);
@@ -1258,6 +1332,19 @@ export default function POS() {
                 {["pending", "processing"].includes(detailOrder.status) && <button disabled={actionLoading || !canWriteOrders} onClick={() => openReject(detailOrder.id)} className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 disabled:opacity-50">Hủy đơn</button>}
               </div>
               {detailOrder.status === "processing" && detailOrder.paymentMethod !== "cash" && detailOrder.paymentStatus !== "paid" && <p className="text-sm text-amber-700">Chờ xác nhận thanh toán trước khi hoàn tất giao hàng.</p>}
+              <div className="border-t pt-3">
+                <h4 className="mb-2 text-sm font-bold text-gray-700">Lịch sử xử lý</h4>
+                {orderHistory.orderId === detailOrder.id && orderHistory.error && <p className="text-xs text-red-600">{orderHistory.error}</p>}
+                <ol className="space-y-1 text-xs text-gray-600">
+                  <li><span className="font-semibold">{formatDate(detailOrder.createdAt)}</span> — Khách đặt đơn</li>
+                  {orderHistory.orderId === detailOrder.id && orderHistory.items.map((entry, index) => (
+                    <li key={index}>
+                      <span className="font-semibold">{formatDate(entry.createdAt)}</span> — {orderHistoryLabels[entry.action] || entry.action}
+                      {entry.userName ? ` · ${entry.userName}` : ""}{entry.note ? ` · ${entry.note}` : ""}
+                    </li>
+                  ))}
+                </ol>
+              </div>
             </div>
           </div>
         </div>

@@ -17,7 +17,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 // Runs against an isolated temporary database; never modifies the application database.
-var backendPath = args.FirstOrDefault() ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../backend"));
+// Accept a relative path (as in the README) as well as an absolute one.
+var backendPath = Path.GetFullPath(args.FirstOrDefault(arg => !arg.StartsWith("--")) ?? Path.Combine(AppContext.BaseDirectory, "../../../../../backend"));
 var config = new ConfigurationBuilder().SetBasePath(backendPath).AddJsonFile("appsettings.json")
     .AddJsonFile("appsettings.Development.json", optional: true).AddEnvironmentVariables().Build();
 var connection = new SqlConnectionStringBuilder(config.GetConnectionString("DefaultConnection"))
@@ -69,7 +70,10 @@ builder.Services.AddScoped<OrderItemService>();
 builder.Services.AddScoped<PromotionRepository>();
 builder.Services.AddScoped<PromotionService>();
 builder.Services.AddScoped<VoucherWalletService>();
-builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Momo:AccessKey"] = "test-access", ["Momo:SecretKey"] = "test-secret" });
+builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Payments:Mode"] = "Live", ["Momo:AccessKey"] = "test-access", ["Momo:SecretKey"] = "test-secret" });
+builder.Services.AddScoped<ActorPermissionService>();
+builder.Services.AddScoped<PaymentSimulator>();
+builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddScoped<PermissionFilter>();
 builder.Services.AddScoped<AccountMutationFilter>();
 builder.Services.AddScoped<ReadCacheInvalidationService>();
@@ -122,7 +126,7 @@ try
         var staff = NewUser("staff_test", roles["staff"]);
         staff.Employee = employee;
         staff.Email = employee.Email;
-        var buyer = NewUser("customer_test", roles["customer"]);
+        var buyer = NewUser("0900000000", roles["customer"]); // customer usernames are their phone numbers
         buyer.Customer = customer;
         db.Users.AddRange(admin, staff, buyer);
         await db.SaveChangesAsync();
@@ -181,9 +185,22 @@ try
     await Expect(HttpMethod.Put, $"/api/roles/{staffRole.Id}", adminToken,
         new { name = "staff", isActive = true, permissionIds = staffRole.PermissionIds }, HttpStatusCode.OK);
     await Expect(HttpMethod.Get, "/api/users/getalluser", staffToken, null, HttpStatusCode.Forbidden);
+    // A customer account created with a self-chosen username (old app versions) is renamed to its phone.
+    int legacyCustomerId = 0;
+    await WithDb(async db =>
+    {
+        var legacy = NewUser("legacy_nickname", await db.Roles.SingleAsync(r => r.Name == "customer"));
+        legacy.Customer = new Customer { FullName = "Legacy Customer", Phone = "0911111111", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.Users.Add(legacy);
+        await db.SaveChangesAsync();
+        legacyCustomerId = legacy.Id;
+    });
     // Restarting schema initialization must not restore revoked permissions.
     await AuthorizationSchemaInitializer.InitializeAsync(app.Services);
     await Expect(HttpMethod.Get, "/api/users/getalluser", staffToken, null, HttpStatusCode.Forbidden);
+    await WithDb(async db => Check((await db.Users.FindAsync(legacyCustomerId))!.Username == "0911111111", "Legacy customer username becomes the phone number"));
+    await Expect(HttpMethod.Post, "/api/storefront/login", null, new { username = "0911111111", password = "Password123" }, HttpStatusCode.OK);
+    await Expect(HttpMethod.Post, "/api/storefront/login", null, new { username = "legacy_nickname", password = "Password123" }, HttpStatusCode.Unauthorized);
 
     await Expect(HttpMethod.Patch, $"/api/users/{adminId}/status?isActive=false", adminToken, null, HttpStatusCode.Conflict);
     await Expect(HttpMethod.Delete, $"/api/users/{adminId}", adminToken, null, HttpStatusCode.Conflict);

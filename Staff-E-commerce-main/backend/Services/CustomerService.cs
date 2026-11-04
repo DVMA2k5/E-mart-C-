@@ -106,7 +106,7 @@ namespace backend.Services
             var customer = entity == null ? null : MapToCustomerResponseDto(entity);
             if (customer == null)
             {
-                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(404, "Customer not found.");
+                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(404, "Không tìm thấy khách hàng.");
             }
 
             return ServiceResultDTO<CustomerResponseDTO>.CreateSuccessResult(customer, 200);
@@ -125,12 +125,13 @@ namespace backend.Services
                 CreatedAt = DateTime.UtcNow
             };
 
-            var exists = (await GetCachedAsync()).Any(c => c.Phone == customer.Phone);
-            if (exists)
-            {
-                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(409, "Customer already exists.");
-
-            }
+            customer.FullName = customer.FullName.Trim();
+            customer.Phone = customer.Phone?.Trim();
+            customer.Email = string.IsNullOrWhiteSpace(customer.Email) ? null : customer.Email.Trim();
+            if (await _repo.PhoneTakenAsync(customer.Phone ?? "", 0))
+                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(409, "Số điện thoại đã được dùng cho khách hàng khác.");
+            if (customer.Email != null && await _repo.EmailTakenAsync(customer.Email, 0))
+                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(409, "Email đã được dùng cho khách hàng hoặc tài khoản khác.");
 
             var newCustomer = await _repo.AddAsync(customer);
             var result = MapToCustomerResponseDto(newCustomer);
@@ -144,26 +145,32 @@ namespace backend.Services
             var customer = cached == null ? null : await _repo.GetByIdAsync(id);
             if (customer == null)
             {
-                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(404, "Customer not found.");
+                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(404, "Không tìm thấy khách hàng.");
             }
 
             var hasChanges = false;
 
-            if (updateDto.FullName != null && updateDto.FullName != customer.FullName)
+            if (!string.IsNullOrWhiteSpace(updateDto.FullName) && updateDto.FullName.Trim() != customer.FullName)
             {
-                customer.FullName = updateDto.FullName;
+                customer.FullName = updateDto.FullName.Trim();
                 hasChanges = true;
             }
 
-            if (updateDto.Phone != null && updateDto.Phone != customer.Phone)
+            if (updateDto.Phone != null && updateDto.Phone.Trim() != customer.Phone)
             {
-                customer.Phone = updateDto.Phone;
+                var phone = updateDto.Phone.Trim();
+                if (await _repo.PhoneTakenAsync(phone, id))
+                    return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(409, "Số điện thoại đã được dùng cho khách hàng khác.");
+                customer.Phone = phone;
                 hasChanges = true;
             }
 
-            if (updateDto.Email != null && updateDto.Email != customer.Email)
+            if (updateDto.Email != null && updateDto.Email.Trim() != (customer.Email ?? ""))
             {
-                customer.Email = updateDto.Email;
+                var email = string.IsNullOrWhiteSpace(updateDto.Email) ? null : updateDto.Email.Trim();
+                if (email != null && await _repo.EmailTakenAsync(email, id))
+                    return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(409, "Email đã được dùng cho khách hàng hoặc tài khoản khác.");
+                customer.Email = email;
                 hasChanges = true;
             }
 
@@ -180,10 +187,12 @@ namespace backend.Services
 
             if (!hasChanges)
             {
-                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(400, "No changes detected.");
+                // Saving an unchanged form is not an error; return the current data.
+                return ServiceResultDTO<CustomerResponseDTO>.CreateSuccessResult(MapToCustomerResponseDto(customer), 200);
             }
 
             customer.UpdatedAt = DateTime.UtcNow;
+            await _repo.SyncLinkedAccountAsync(customer);
 
             var updatedCustomer = await _repo.UpdateAsync(customer);
             _cache.AddOrUpdate(MapToCustomerResponseDto(updatedCustomer), item => item.Id);
@@ -199,17 +208,17 @@ namespace backend.Services
             var exists = (await GetCachedAsync()).FirstOrDefault(c => c.Id == id);
             if (exists == null)
             {
-                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(404, "Customer not found.");
+                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(404, "Không tìm thấy khách hàng.");
             }
 
             if (exists.IsActive == isActive)
             {
-                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(400, "No changes detected.");
+                return ServiceResultDTO<CustomerResponseDTO>.CreateSuccessResult(exists, 200);
             }
 
             var entity = await _repo.GetByIdAsync(id);
             if (entity == null)
-                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(404, "Customer not found.");
+                return ServiceResultDTO<CustomerResponseDTO>.CreateFailureResult(404, "Không tìm thấy khách hàng.");
             var updatedCustomer = await _repo.UpdateActiveAsync(entity, isActive);
             _cache.AddOrUpdate(MapToCustomerResponseDto(updatedCustomer), item => item.Id);
             return ServiceResultDTO<CustomerResponseDTO>.CreateSuccessResult(MapToCustomerResponseDto(updatedCustomer), 200);
@@ -223,6 +232,8 @@ namespace backend.Services
         }
 
         public Task<bool> HasLoginAccountAsync(int customerId) => _repo.HasLoginAccountAsync(customerId);
+
+        public Task<bool> HasBusinessHistoryAsync(int customerId) => _repo.HasBusinessHistoryAsync(customerId);
 
         public CustomerResponseDTO MapToCustomerResponseDto(Customer customer)
         {

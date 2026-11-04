@@ -123,11 +123,16 @@ namespace backend.Services
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
+                // Nothing was committed, so the counters must not claim rows were created or updated.
+                result.RolledBack = true;
+                result.Skipped += result.Created + result.Updated;
+                result.Created = 0;
+                result.Updated = 0;
                 result.Errors.Add(new ImportErrorDTO
                 {
                     RowNumber = 0,
                     Field = "System",
-                    Message = $"Lỗi hệ thống: {ex.Message}"
+                    Message = $"Lỗi hệ thống, toàn bộ file chưa được lưu: {ex.Message}"
                 });
             }
 
@@ -215,6 +220,7 @@ namespace backend.Services
                     {
                         // Update existing customer
                         UpdateCustomerFromImport(existing, row);
+                        await _customerRepo.SyncLinkedAccountAsync(existing);
                         await _customerRepo.UpdateAsync(existing);
                         result.Updated++;
                     }
@@ -232,11 +238,16 @@ namespace backend.Services
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
+                // Nothing was committed, so the counters must not claim rows were created or updated.
+                result.RolledBack = true;
+                result.Skipped += result.Created + result.Updated;
+                result.Created = 0;
+                result.Updated = 0;
                 result.Errors.Add(new ImportErrorDTO
                 {
                     RowNumber = 0,
                     Field = "System",
-                    Message = $"Lỗi hệ thống: {ex.Message}"
+                    Message = $"Lỗi hệ thống, toàn bộ file chưa được lưu: {ex.Message}"
                 });
             }
 

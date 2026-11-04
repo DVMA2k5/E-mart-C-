@@ -53,8 +53,9 @@ const CategoryList = () => {
     return () => window.clearTimeout(timer);
   }, [actionNotice]);
 
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("categories.write");
 
   // Fetch stats (total, active, inactive) on mount
   useEffect(() => {
@@ -238,7 +239,7 @@ const CategoryList = () => {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-800">Quản Lý Danh Mục</h1>
-        {!isStaff && (
+        {!readOnly && (
           <button
             onClick={() => setIsAddModalOpen(true)}
             className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
@@ -449,7 +450,7 @@ const CategoryList = () => {
                     </td>
                     <td className="px-6 py-3 text-center" onClick={(event) => event.stopPropagation()}>
                       <div className="flex items-center justify-center gap-2">
-                        {!isStaff && (editingCategoryId === category.id ? (
+                        {!readOnly && (editingCategoryId === category.id ? (
                           <>
                             <button
                               type="button"

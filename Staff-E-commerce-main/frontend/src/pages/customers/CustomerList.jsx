@@ -42,8 +42,9 @@ const CustomerList = () => {
     filters,
   } = useSelector((state) => state.customers);
 
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("customers.write");
 
   const [localSearchTerm, setLocalSearchTerm] = useState(filters.search || "");
   const [compact, setCompact] = useState(true);
@@ -410,7 +411,7 @@ const CustomerList = () => {
                     </td>
                     <td className="px-6 py-3 text-center" onClick={(event) => event.stopPropagation()}>
                       <div className="table-actions flex items-center justify-center gap-2">
-                        {!isStaff && (
+                        {!readOnly && (
                           <>
                             <button
                               onClick={() => handleEdit(customer.id)}

@@ -12,8 +12,9 @@ import { useAuth } from "../../hook/useAuth";
 
 export default function UnitList() {
   // Get current user and role
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("units.write");
 
   const [units, setUnits] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +74,7 @@ export default function UnitList() {
 
   // Handle save (create/edit)
   const handleSave = async (unitData, mode) => {
-    if (isStaff) {
+    if (readOnly) {
       setNotification({
         type: "error",
         message: "Bạn không có quyền thực hiện thao tác này",
@@ -114,7 +115,7 @@ export default function UnitList() {
 
   // Handle delete
   const handleDelete = async (id, productCount) => {
-    if (isStaff) {
+    if (readOnly) {
       setNotification({
         type: "error",
         message: "Bạn không có quyền xóa đơn vị",
@@ -151,7 +152,7 @@ export default function UnitList() {
 
   // Handle toggle active
   const handleToggleActive = async (id) => {
-    if (isStaff) {
+    if (readOnly) {
       setNotification({
         type: "error",
         message: "Bạn không có quyền thay đổi trạng thái",
@@ -253,7 +254,7 @@ export default function UnitList() {
               Quản lý các đơn vị đo lường sản phẩm
             </p>
           </div>
-          {!isStaff && (
+          {!readOnly && (
             <button
               onClick={openCreateModal}
               className="bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700 flex items-center gap-2 transition"
@@ -445,12 +446,12 @@ export default function UnitList() {
                       ) : (
                         <button
                           onClick={() => handleToggleActive(unit.id)}
-                          disabled={isStaff}
+                          disabled={readOnly}
                           className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
                             unit.isActive
                               ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
                               : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-                          } ${isStaff ? "opacity-50 cursor-not-allowed" : ""}`}
+                          } ${readOnly ? "opacity-50 cursor-not-allowed" : ""}`}
                         >
                           {unit.isActive ? "Đang dùng" : "Ngừng dùng"}
                         </button>
@@ -458,7 +459,7 @@ export default function UnitList() {
                     </td>
                     <td className="px-6 py-4 text-center text-sm">
                       <div className="flex items-center justify-center gap-2">
-                        {!isStaff && (editingId === unit.id ? (
+                        {!readOnly && (editingId === unit.id ? (
                           <>
                             <button
                               onClick={() => saveInlineEdit(unit)}
@@ -526,7 +527,7 @@ export default function UnitList() {
           onSave={handleSave}
           onCancel={closeModal}
           onDelete={() => {
-            if (modalState.unit?.id && !isStaff) {
+            if (modalState.unit?.id && !readOnly) {
               handleDelete(modalState.unit.id, modalState.unit.productCount);
             }
           }}

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using backend.Models;
 using backend.Repository;
 using backend.DTO;
+using backend.Helpers;
 
 namespace backend.Services
 {
@@ -161,7 +162,7 @@ namespace backend.Services
             return dto;
         }
 
-        public async Task<ProductDTO> CreateProductAsync(Product product, IFormFile? imageFile = null)
+        public async Task<ProductDTO> CreateProductAsync(Product product, IFormFile? imageFile = null, int? userId = null)
         {
             var validator = await ValidateProductAsync(product, imageFile, mode: "create");
             if (validator.HasErrors) throw validator;
@@ -170,14 +171,18 @@ namespace backend.Services
             product.CreatedAt = DateTime.UtcNow;
             product.UpdatedAt = DateTime.UtcNow;
 
-            var created = await _productRepository.CreateAsync(product);
+            var created = await _productRepository.CreateAsync(product, userId);
             var result = MapToProductDto(created);
             _cache.Clear();
             _supplierCache.Clear();
             return result;
         }
 
-        public async Task<ProductDTO> UpdateProductAsync(Product product, IFormFile? imageFile = null, int? requestedStockQuantity = null)
+        /// <summary>
+        /// Updates product information. Stock is never changed here: it moves only through sales, purchase orders
+        /// and inventory adjustments, which keep a history. A stale edit form therefore cannot undo recent sales.
+        /// </summary>
+        public async Task<ProductDTO> UpdateProductAsync(Product product, IFormFile? imageFile = null)
         {
             var existing = await _productRepository.GetByIdForUpdateAsync(product.Id);
             if (existing == null)
@@ -185,16 +190,32 @@ namespace backend.Services
 
             // keep createdAt from existing if not provided
             product.CreatedAt = existing.CreatedAt;
-            product.StockQuantity = requestedStockQuantity ?? existing.StockQuantity;
+            product.StockQuantity = existing.StockQuantity;
             product.UpdatedAt = DateTime.UtcNow;
 
             var validator = await ValidateProductAsync(product, imageFile, mode: "edit");
             if (validator.HasErrors) throw validator;
 
+            var previousImage = existing.ImageUrl;
             var updated = await _productRepository.UpdateAsync(product);
+            // Remove the replaced upload only after the new URL is saved.
+            if (!string.Equals(previousImage, updated.ImageUrl, StringComparison.OrdinalIgnoreCase))
+                ProductImageStorage.DeleteIfUploaded(previousImage);
             var result = MapToProductDto(updated);
             _cache.Clear();
             _supplierCache.Clear();
+            return result;
+        }
+
+        public async Task<bool> SetProductActiveAsync(int id, bool isActive)
+        {
+            if (id <= 0) throw new ArgumentException("Product ID must be greater than 0", nameof(id));
+            var result = await _productRepository.SetActiveAsync(id, isActive);
+            if (result)
+            {
+                _cache.Clear();
+                _supplierCache.Clear();
+            }
             return result;
         }
 

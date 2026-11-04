@@ -33,8 +33,9 @@ function ProductThumbnail({ imagePath, name }) {
 export default function ProductList() {
   const navigate = useNavigate();
   // Get current user and role
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("products.write");
 
   // --- state
   const [items, setItems] = useState([]);
@@ -284,7 +285,7 @@ export default function ProductList() {
 
   // --- Xóa (sử dụng debouncedSearch để refresh consistent)
   const handleDelete = async (id, isActive) => {
-    if (isStaff) {
+    if (readOnly) {
       setNotification({
         type: "error",
         message: "Bạn không có quyền thực hiện thao tác này",
@@ -302,7 +303,8 @@ export default function ProductList() {
       return;
     try {
       setLoading(true);
-      await request(`/products/${id}`, { method: "DELETE" });
+      // Explicit target state: repeating the action can never flip the product back.
+      await request(`/products/${id}/status?isActive=${!isActive}`, { method: "PATCH" });
       setNotification({
         type: "success",
         message: `${isActive ? "Vô hiệu" : "Kích hoạt"} sản phẩm thành công`,
@@ -313,7 +315,7 @@ export default function ProductList() {
       setNotification({
         type: "error",
         message:
-          `${isActive ? "Vô hiệu" : "Kích hoạt"} sản phẩm không thành công` +
+          `${isActive ? "Vô hiệu" : "Kích hoạt"} sản phẩm không thành công: ` +
           err.message,
       });
     } finally {
@@ -323,7 +325,7 @@ export default function ProductList() {
 
   // --- Lưu (create / edit)
   const handleSave = async (productData, mode) => {
-    if (isStaff) {
+    if (readOnly) {
       setNotification({
         type: "error",
         message: "Bạn không có quyền thực hiện thao tác này",
@@ -349,7 +351,7 @@ export default function ProductList() {
           id: productData.id,
           productName: productData.productName,
           price: Number(productData.price ?? 0),
-          stockQuantity: Number(productData.stockQuantity ?? productData.inventory?.quantity ?? 0),
+          // Stock is not sent: it changes only through Kho hàng / phiếu nhập so recent sales are never overwritten.
           sku: productData.sku,
           unitId: productData.unitId ? Number(productData.unitId) : null,
           categoryId: productData.categoryId ? Number(productData.categoryId) : null,
@@ -374,11 +376,10 @@ export default function ProductList() {
       await fetchProducts(page, pageSize, debouncedSearch);
     } catch (err) {
       console.error(err);
-      setNotification({
-        type: "error",
-        message:
-          `${mode === "create" ? "Thêm" : "Cập nhật"} thất bại: ` + err.message,
-      });
+      const message = `${mode === "create" ? "Thêm" : "Cập nhật"} thất bại: ` + err.message;
+      setNotification({ type: "error", message });
+      // The create form is a full-screen overlay that hides page notifications; tell it to show the error too.
+      return Promise.reject(new Error(message));
     } finally {
       setSaving(false);
     }
@@ -410,7 +411,7 @@ export default function ProductList() {
               className="px-3 py-2 border rounded-md focus:outline-none focus:ring focus:border-primary-300"
             />
       
-            {!isStaff && (
+            {!readOnly && (
               <>
                 <button
                   className="px-3 py-2 rounded-md bg-primary-600 text-white hover:bg-primary-700"
@@ -718,7 +719,7 @@ export default function ProductList() {
                     </td>
                     <td className="px-4 py-3 text-sm text-center" onClick={(event) => event.stopPropagation()}>
                       <div className="table-actions flex items-center justify-center gap-2">
-                        {!isStaff && (
+                        {!readOnly && (
                           <>
                             <button
                               onClick={() => openModal("edit", p)}
@@ -802,14 +803,14 @@ export default function ProductList() {
           <div className="management-detail-panel min-w-0">
             <ProductModal
               embedded
-              mode={isStaff ? "view" : modalState.mode}
+              mode={readOnly ? "view" : modalState.mode}
               product={modalState.product}
               onSave={handleSave}
-              onCreatePurchaseOrder={!isStaff ? (product) => navigate("/purchase-orders", { state: { prefillProduct: product } }) : undefined}
+              onCreatePurchaseOrder={!readOnly ? (product) => navigate("/purchase-orders", { state: { prefillProduct: product } }) : undefined}
               onCancel={closeModal}
               onDelete={() => {
-                if (modalState.product?.id && !isStaff) {
-                  handleDelete(modalState.product.id);
+                if (modalState.product?.id && !readOnly) {
+                  handleDelete(modalState.product.id, modalState.product.isActive !== false);
                   closeModal();
                 }
               }}
@@ -827,14 +828,14 @@ export default function ProductList() {
       {/* Universal Modal */}
       {modalState.open && modalState.mode === "create" && (
         <ProductModal
-          mode={isStaff ? "view" : modalState.mode}
+          mode={readOnly ? "view" : modalState.mode}
           product={modalState.product}
           onSave={handleSave}
-          onCreatePurchaseOrder={!isStaff ? (product) => navigate("/purchase-orders", { state: { prefillProduct: product } }) : undefined}
+          onCreatePurchaseOrder={!readOnly ? (product) => navigate("/purchase-orders", { state: { prefillProduct: product } }) : undefined}
           onCancel={closeModal}
           onDelete={() => {
-            if (modalState.product?.id && !isStaff) {
-              handleDelete(modalState.product.id);
+            if (modalState.product?.id && !readOnly) {
+              handleDelete(modalState.product.id, modalState.product.isActive !== false);
               closeModal();
             }
           }}
@@ -846,7 +847,7 @@ export default function ProductList() {
       )}
 
       {/* Import Modal */}
-      {!isStaff && (
+      {!readOnly && (
         <ImportModal
           isOpen={importModalOpen}
           onClose={() => setImportModalOpen(false)}

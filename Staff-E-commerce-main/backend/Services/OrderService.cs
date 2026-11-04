@@ -59,6 +59,26 @@ namespace backend.Services
             throw new InvalidOperationException("Không tìm thấy user_id trong token");
         }
 
+        private int? TryGetCurrentUserId()
+        {
+            var claim = _httpContextAccessor.HttpContext?.User?.FindFirst("uid");
+            return claim != null && int.TryParse(claim.Value, out var id) ? id : null;
+        }
+
+        // Every lifecycle change leaves one history row so staff can see who changed an order and when.
+        private void LogOrderChange(Order order, string action, string? note = null) =>
+            _orderRepo.AddActivityLog(new ActivityLog
+            {
+                UserId = TryGetCurrentUserId(),
+                Action = action,
+                EntityType = "orders",
+                EntityId = order.Id.ToString(),
+                Payload = note,
+                CreatedAt = DateTime.UtcNow
+            });
+
+        public Task<List<OrderHistoryEntryDTO>> GetOrderHistoryAsync(int orderId) => _orderRepo.GetOrderHistoryAsync(orderId);
+
 
 
         /*
@@ -209,12 +229,18 @@ namespace backend.Services
         // ===== ONLINE ORDER MANAGEMENT =====
 
         public async Task<PagedResult<OnlineOrderDTO>> GetOnlineOrdersAsync(
-            int pageNumber, int pageSize, string? status, string? search, int? orderId = null)
+            int pageNumber, int pageSize, string? status, string? search, int? orderId = null,
+            DateTime? fromDate = null, DateTime? toDate = null)
         {
+            pageNumber = Math.Max(1, pageNumber);
+            pageSize = Math.Clamp(pageSize, 1, 100);
+            // Dates arrive as Vietnamese calendar days; the database stores UTC.
+            DateTime? fromUtc = fromDate.HasValue ? DateTimeHelper.ToUtc(fromDate.Value.Date) : null;
+            DateTime? toUtc = toDate.HasValue ? DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)) : null;
             // Mobile checkouts can be committed by another API instance, so always
             // query SQL here instead of serving a process-local cache entry.
-            var orders = await _orderRepo.GetAllOnlineOrdersAsync();
-            var allOrders = orders.Select(o =>
+            var (orders, totalItems) = await _orderRepo.GetOnlineOrdersPageAsync(pageNumber, pageSize, status, search, orderId, fromUtc, toUtc);
+            var dtos = orders.Select(o =>
                 {
                     var delivery = OrderDeliveryDetails.FromOrder(o);
                     return new OnlineOrderDTO
@@ -238,20 +264,6 @@ namespace backend.Services
                         }).ToList()
                     };
                 }).ToList();
-
-            IEnumerable<OnlineOrderDTO> filtered = allOrders;
-            if (orderId.HasValue) filtered = filtered.Where(order => order.Id == orderId.Value);
-            if (!string.IsNullOrWhiteSpace(status)) filtered = filtered.Where(order => order.Status == status);
-            if (!string.IsNullOrWhiteSpace(search))
-            {
-                var keyword = search.Trim();
-                filtered = filtered.Where(order => order.OrderNumber.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
-                    (order.CustomerName?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                    (order.CustomerPhone?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false));
-            }
-            var filteredList = filtered.ToList();
-            var totalItems = filteredList.Count;
-            var dtos = filteredList.Skip((pageNumber - 1) * pageSize).Take(pageSize).ToList();
 
             return new PagedResult<OnlineOrderDTO>
             {
@@ -277,6 +289,7 @@ namespace backend.Services
                 order.Status = "processing";
                 order.UserId = GetCurrentUserId();
                 order.UpdatedAt = DateTime.UtcNow;
+                LogOrderChange(order, "order_confirmed");
                 await _orderRepo.SaveChangesAsync();
                 await _invoiceService.SyncOrderLifecycleAsync(orderId);
             }
@@ -289,17 +302,35 @@ namespace backend.Services
         }
 
         /// <summary>Từ chối đơn: pending|processing -> cancelled (hoàn kho)</summary>
-        public async Task<bool> RejectOnlineOrderAsync(int orderId, string? reason)
+        public Task<bool> RejectOnlineOrderAsync(int orderId, string? reason) => CancelOnlineOrderAsync(orderId, reason, customerId: null);
+
+        /// <summary>
+        /// Khách tự hủy đơn của mình khi cửa hàng chưa xác nhận và đơn chưa được thanh toán.
+        /// Trả về false nếu đơn không thuộc khách này.
+        /// </summary>
+        public Task<bool> CancelByCustomerAsync(int orderId, int customerId, string? reason) =>
+            CancelOnlineOrderAsync(orderId, string.IsNullOrWhiteSpace(reason) ? "Khách hủy đơn" : reason, customerId);
+
+        private async Task<bool> CancelOnlineOrderAsync(int orderId, string? reason, int? customerId)
         {
             await using var transaction = await _orderRepo.BeginSerializableTransactionAsync();
             await _vouchers.LockAsync();
             await _orderRepo.LockOrderAsync(orderId);
             var order = await _orderRepo.GetOnlineOrderForLifecycleAsync(orderId);
             if (order == null) return false;
+            if (customerId.HasValue && order.CustomerId != customerId) return false;
             if (order.Status == "cancelled") return true;
+            if (customerId.HasValue)
+            {
+                if (order.Status != "pending")
+                    throw new InvalidOperationException("Cửa hàng đã xác nhận đơn nên bạn không thể tự hủy. Vui lòng liên hệ cửa hàng.");
+                if (order.PaymentStatus == "paid" && order.TotalAmount > 0)
+                    throw new InvalidOperationException("Đơn đã thanh toán, vui lòng liên hệ cửa hàng để hủy và hoàn tiền.");
+            }
             if (order.Status is not ("pending" or "processing")) return false;
 
             var now = DateTime.UtcNow;
+            var actorUserId = TryGetCurrentUserId();
             foreach (var item in order.OrderItems)
             {
                 if (!await _orderRepo.RestoreStockAsync(item.ProductId, item.Quantity, now))
@@ -309,7 +340,7 @@ namespace backend.Services
                     ProductId = item.ProductId,
                     ChangeAmount = item.Quantity,
                     Reason = $"Hủy {order.OrderNumber}",
-                    UserId = GetCurrentUserId(),
+                    UserId = actorUserId,
                     CreatedAt = now
                 });
             }
@@ -326,10 +357,12 @@ namespace backend.Services
             }
             _orderRepo.RemovePromotionRedemptions(redemptions);
             order.Status = "cancelled";
-            order.UserId = GetCurrentUserId();
+            if (!customerId.HasValue) order.UserId = GetCurrentUserId();
             order.UpdatedAt = now;
+            var label = customerId.HasValue ? "Khách hủy" : "Từ chối";
             if (!string.IsNullOrWhiteSpace(reason))
-                order.Note = string.IsNullOrWhiteSpace(order.Note) ? $"Từ chối: {reason}" : $"{order.Note} | Từ chối: {reason}";
+                order.Note = string.IsNullOrWhiteSpace(order.Note) ? $"{label}: {reason}" : $"{order.Note} | {label}: {reason}";
+            LogOrderChange(order, customerId.HasValue ? "order_cancelled_by_customer" : "order_rejected", reason);
             // Paid cancellations remain paid until the refund transaction is confirmed.
             await _orderRepo.SaveChangesAsync();
             await _invoiceService.SyncOrderLifecycleAsync(orderId);
@@ -383,6 +416,7 @@ namespace backend.Services
                 order.Customer.RewardPoints += order.PointsEarned;
                 order.Customer.UpdatedAt = now;
             }
+            LogOrderChange(order, "order_delivered", order.PaymentMethod == "cash" ? "Thu tiền khi giao (COD)" : null);
             await _orderRepo.SaveChangesAsync();
             await _invoiceService.SyncOrderLifecycleAsync(orderId);
             await transaction.CommitAsync();
@@ -392,6 +426,61 @@ namespace backend.Services
                 await _realtime.BroadcastToWeb("OrderStatusChanged", new { orderId, status = "completed" });
             }
             return delivered;
+        }
+
+        /// <summary>
+        /// Records the bank transfer for an online order paid by "card" (VietQR). Used by staff after checking the
+        /// bank statement, and by the coursework bank simulator. Re-sending the same reference is idempotent.
+        /// </summary>
+        public async Task<bool> ConfirmOnlineTransferAsync(int orderId, string reference, int? actorUserId)
+        {
+            if (string.IsNullOrWhiteSpace(reference) || reference.Trim().Length > 200)
+                throw new ArgumentException("Nhập mã giao dịch chuyển khoản.");
+            var normalizedReference = reference.Trim();
+            await using var transaction = await _orderRepo.BeginSerializableTransactionAsync();
+            await _vouchers.LockAsync();
+            await _orderRepo.LockOrderAsync(orderId);
+            var order = await _orderRepo.GetOnlineOrderForLifecycleAsync(orderId);
+            if (order == null) return false;
+            if (order.PaymentMethod != "card")
+                throw new InvalidOperationException("Đơn này không thanh toán bằng chuyển khoản.");
+            if (order.PaymentStatus == "paid")
+            {
+                if (order.Payments.Any(payment => payment.Status == "completed" && payment.TransactionRef == normalizedReference)) return true;
+                throw new InvalidOperationException("Đơn đã được ghi nhận thanh toán.");
+            }
+            if (order.Status is "cancelled" or "refunded" || order.PaymentStatus != "pending")
+                throw new InvalidOperationException("Đơn không còn chờ chuyển khoản.");
+            if (await _orderRepo.TransactionReferenceExistsAsync(normalizedReference))
+                throw new InvalidOperationException("Mã giao dịch đã được dùng cho đơn khác.");
+
+            var now = DateTime.UtcNow;
+            _orderRepo.AddPayment(new Payment
+            {
+                OrderId = order.Id,
+                Amount = order.TotalAmount,
+                Method = "card",
+                Status = "completed",
+                TransactionRef = normalizedReference,
+                CreatedAt = now
+            });
+            order.PaymentStatus = "paid";
+            if (order.Status == "pending") order.Status = "processing";
+            order.UpdatedAt = now;
+            _orderRepo.AddActivityLog(new ActivityLog
+            {
+                UserId = actorUserId,
+                Action = "online_transfer_confirmed",
+                EntityType = "orders",
+                EntityId = order.Id.ToString(),
+                Payload = normalizedReference,
+                CreatedAt = now
+            });
+            await _orderRepo.SaveChangesAsync();
+            await _invoiceService.SyncOrderLifecycleAsync(orderId);
+            await transaction.CommitAsync();
+            await _realtime.BroadcastToWeb("OrderStatusChanged", new { orderId, status = order.Status, paymentStatus = "paid" });
+            return true;
         }
 
         public async Task<bool> MarkOrderRefundedAsync(int orderId, decimal amount, string reference)
@@ -415,9 +504,11 @@ namespace backend.Services
             var now = DateTime.UtcNow;
             if (order.Customer != null && order.Status != "cancelled")
             {
-                order.Customer.RewardPoints += order.PointsUsed - order.PointsEarned;
+                // Earned points may already be spent; never leave a negative balance.
+                order.Customer.RewardPoints = Math.Max(0, order.Customer.RewardPoints + order.PointsUsed - order.PointsEarned);
                 order.Customer.UpdatedAt = now;
             }
+            LogOrderChange(order, "order_refunded", normalizedReference);
             if (order.Status != "cancelled") order.Status = "refunded";
             order.PaymentStatus = "refunded";
             order.UpdatedAt = now;

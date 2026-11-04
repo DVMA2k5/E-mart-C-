@@ -70,13 +70,23 @@ namespace backend.Repository
 
 
 
-        public async Task<Product> CreateAsync(Product product)
+        public async Task<Product> CreateAsync(Product product, int? userId = null)
         {
             // đảm bảo timestamp nếu cần
             product.CreatedAt = DateTime.UtcNow;
             product.UpdatedAt = DateTime.UtcNow;
 
             _context.Products.Add(product);
+            // Opening stock is recorded in the same save so stock never exists without a history row.
+            if (product.StockQuantity > 0)
+                _context.InventoryAdjustments.Add(new InventoryAdjustment
+                {
+                    Product = product,
+                    ChangeAmount = product.StockQuantity,
+                    Reason = "Tồn đầu kỳ khi tạo sản phẩm",
+                    UserId = userId,
+                    CreatedAt = product.CreatedAt
+                });
             await _context.SaveChangesAsync();
             return product;
         }
@@ -85,17 +95,22 @@ namespace backend.Repository
         {
             product.UpdatedAt = DateTime.UtcNow;
             _context.Products.Update(product);
+            // Stock is owned by sales/purchase/adjustment flows; never overwrite it from a product edit.
+            _context.Entry(product).Property(p => p.StockQuantity).IsModified = false;
             await _context.SaveChangesAsync();
             return product;
         }
 
-        public async Task<bool> DeleteAsync(int id)
+        public Task<bool> DeleteAsync(int id) => SetActiveAsync(id, false);
+
+        /// <summary>Sets the sale status explicitly, so repeating a hide never re-activates the product.</summary>
+        public async Task<bool> SetActiveAsync(int id, bool isActive)
         {
             var product = await _context.Products.FindAsync(id);
             if (product == null) return false;
+            if (product.IsActive == isActive) return true;
 
-
-            product.IsActive = !product.IsActive;
+            product.IsActive = isActive;
             product.UpdatedAt = DateTime.UtcNow;
 
             _context.Products.Update(product);

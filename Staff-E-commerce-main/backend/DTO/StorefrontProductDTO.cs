@@ -16,6 +16,9 @@ public sealed class StorefrontProductDTO
     public string? PromotionName { get; set; }
     public DateTime? PromotionEndsAt { get; set; }
     public string? ImageUrl { get; set; }
+    /// <summary>Units sold in the last 30 days (completed orders), used for the "Bán chạy" sort.</summary>
+    public int SoldCount { get; set; }
+    public bool IsBestSeller { get; set; }
 }
 
 public sealed class StorefrontProductPageDTO

@@ -7,12 +7,11 @@ namespace backend.Repository;
 /// <summary>DAL: returns flat projections and performs grouping in SQL; no pivot/business calculations here.</summary>
 public sealed class RevenueAnalyticsRepository(AppDbContext db)
 {
-    public Task<decimal> GetPeriodRevenueAsync(DateTime? from, DateTime? to, CancellationToken ct)
+    public Task<decimal> GetRevenueAsync(DateTime startInclusive, DateTime endExclusive, CancellationToken ct)
     {
         var orders = db.Orders.AsNoTracking().Where(o => o.Status == "completed" &&
-            (o.PaymentStatus == "paid" || o.PaymentStatus == "refunded"));
-        if (from.HasValue) orders = orders.Where(o => o.CreatedAt >= from.Value.Date);
-        if (to.HasValue) orders = orders.Where(o => o.CreatedAt < to.Value.Date.AddDays(1));
+            (o.PaymentStatus == "paid" || o.PaymentStatus == "refunded") &&
+            o.CreatedAt >= startInclusive && o.CreatedAt < endExclusive);
         return orders.Select(o => o.PaymentStatus == "refunded" ? -o.TotalAmount : o.TotalAmount).SumAsync(ct);
     }
 

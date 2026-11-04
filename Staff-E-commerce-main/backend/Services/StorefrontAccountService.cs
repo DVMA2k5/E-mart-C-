@@ -12,6 +12,16 @@ public sealed class StorefrontAccountService(
     CustomerService customers,
     RealtimeNotificationService realtime)
 {
+    public async Task<bool> IsRegistrationPhoneAvailableAsync(string value)
+    {
+        var phone = NormalizePhone(value ?? string.Empty);
+        if (!Regex.IsMatch(phone, "^0[35789]\\d{8}$"))
+            throw new BusinessRuleException("Sá»‘ Ä‘iá»‡n thoáº¡i Viá»‡t Nam chÆ°a Ä‘Ãºng Ä‘á»‹nh dáº¡ng.");
+        var internationalPhone = $"+84{phone[1..]}";
+        return !await repository.UsernameExistsAsync(phone) &&
+            await repository.GetCustomerByPhoneAsync(phone, internationalPhone) == null;
+    }
+
     public async Task<StorefrontAuthenticationDTO> RegisterAsync(StorefrontCustomerRegisterRequest request)
     {
         var phone = NormalizePhone(request.Phone);

@@ -15,7 +15,8 @@ public sealed class RequestLoggingMiddleware(RequestDelegate next, IServiceProvi
     {
         var method = context.Request.Method.ToUpperInvariant();
         if (method is not ("POST" or "PUT" or "PATCH" or "DELETE") ||
-            context.GetEndpoint()?.Metadata.GetMetadata<ReadOnlyRequestAttribute>() is not null)
+            context.GetEndpoint()?.Metadata.GetMetadata<ReadOnlyRequestAttribute>() is not null ||
+            IsLoginEndpoint(context.Request.Path))
         {
             await next(context);
             return;
@@ -127,6 +128,9 @@ public sealed class RequestLoggingMiddleware(RequestDelegate next, IServiceProvi
                     normalized.Contains("secret") || normalized.Contains("creditcard") ||
                     normalized is "authorization" or "apikey")
                     obj[key] = "[REDACTED]";
+                else if (normalized.Contains("phone") || normalized.Contains("address") || normalized.Contains("email") ||
+                         normalized is "username" or "identifier" && LooksLikePhone(obj[key]))
+                    obj[key] = MaskPersonalData(obj[key]); // customer usernames are their phone numbers
                 else
                     Redact(obj[key]);
             }
@@ -135,6 +139,17 @@ public sealed class RequestLoggingMiddleware(RequestDelegate next, IServiceProvi
         {
             foreach (var child in array) Redact(child);
         }
+    }
+
+    private static bool LooksLikePhone(JsonNode? value) =>
+        value is JsonValue && value.AsValue().TryGetValue<string>(out var text) && Regex.IsMatch(text.Trim(), @"^\+?\d{9,12}$");
+
+    // Personal contact data is kept recognisable for support (first/last characters) but not readable in logs.
+    private static JsonNode? MaskPersonalData(JsonNode? value)
+    {
+        if (value is not JsonValue || !value.AsValue().TryGetValue<string>(out var text) || string.IsNullOrEmpty(text))
+            return value;
+        return text.Length <= 4 ? "****" : $"{text[..2]}***{text[^2..]}";
     }
 
     private static int? GetAuthenticatedUserId(HttpContext context)
@@ -146,8 +161,10 @@ public sealed class RequestLoggingMiddleware(RequestDelegate next, IServiceProvi
     private static bool IsAuthenticationEndpoint(string path) =>
         path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/me/change-password", StringComparison.OrdinalIgnoreCase) ||
-        path.Equals("/api/storefront/login", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/storefront/register", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLoginEndpoint(PathString path) =>
+        path.Value?.Equals("/api/storefront/login", StringComparison.OrdinalIgnoreCase) == true;
 
     private static string NormalizeEntityName(string entityName) => entityName switch
     {

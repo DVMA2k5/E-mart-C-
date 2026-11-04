@@ -64,44 +64,51 @@ namespace backend.Controllers
         [HttpPost("")]
         public async Task<ActionResult> CreateCustomer([FromBody] CustomerCreateDTO createDto)
         {
-            var result = await _service.CreateCustomerAsync(createDto);
-            if (!result.Success && result.StatusCode == 409)
+            try
             {
-                return Conflict(result.Errors);
+                var result = await _service.CreateCustomerAsync(createDto);
+                return result.Success ? StatusCode(201, result.Data) : Failure(result);
             }
-            return StatusCode(201, result.Data);
+            catch (DbUpdateException)
+            {
+                return Conflict(new { message = "Số điện thoại hoặc email đã được dùng cho khách hàng khác." });
+            }
         }
 
         // PATCH api/customers/{id}
         [HttpPatch("{id:int}")]
         public async Task<ActionResult> UpdateCustomer(int id, [FromBody] CustomerUpdateDTO updateDto)
         {
-            var result = await _service.UpdateCustomerAsync(id, updateDto);
-            if (!result.Success && result.StatusCode == 404)
+            try
             {
-                return NotFound(result.Errors);
+                var result = await _service.UpdateCustomerAsync(id, updateDto);
+                return result.Success ? Ok(result.Data) : Failure(result);
             }
-            return Ok(result.Data);
+            catch (DbUpdateException)
+            {
+                return Conflict(new { message = "Số điện thoại hoặc email đã được dùng cho khách hàng khác." });
+            }
         }
 
         // PUT api/customers/{id}
         [HttpPut("{id:int}")]
         public async Task<ActionResult> UpdateActiveCustomer(int id, [FromBody] CustomerUpdateActiveDTO activeDto)
         {
-            Console.WriteLine($"[CONTROLLER] UpdateActiveCustomerAsync called with id={id}, isActive={activeDto.IsActive}");
             var result = await _service.UpdateActiveCustomerAsync(id, activeDto.IsActive);
-            if (!result.Success && result.StatusCode == 404)
-            {
-                return NotFound(result.Errors);
-            }
-            return Ok(result.Data);
+            return result.Success ? Ok(result.Data) : Failure(result);
         }
 
+        /// <summary>
+        /// Only a profile that was never used can be removed. Customers with orders, invoices, vouchers, points
+        /// or a login account are kept so their history stays intact; they can be set to inactive instead.
+        /// </summary>
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> DeleteCustomer(int id)
         {
             if (await _service.HasLoginAccountAsync(id))
                 return Conflict(new { message = "Không thể xóa khách hàng đang có tài khoản đăng nhập. Hãy chuyển trạng thái khách hàng sang Không hoạt động để khóa đăng nhập và giữ nguyên lịch sử." });
+            if (await _service.HasBusinessHistoryAsync(id))
+                return Conflict(new { message = "Khách hàng đã có đơn hàng, hóa đơn, voucher hoặc điểm thưởng nên không thể xóa. Hãy chuyển sang Không hoạt động để giữ nguyên lịch sử." });
 
             try
             {
@@ -114,5 +121,8 @@ namespace backend.Controllers
                 return Conflict(new { message = "Không thể xóa khách hàng vì hồ sơ đang được dữ liệu nghiệp vụ khác tham chiếu." });
             }
         }
+
+        private ObjectResult Failure<T>(ServiceResultDTO<T> result) =>
+            StatusCode(result.StatusCode, new { message = result.Errors.FirstOrDefault() ?? "Yêu cầu không hợp lệ.", errors = result.Errors });
     }
 }

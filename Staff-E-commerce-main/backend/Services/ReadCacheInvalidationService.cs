@@ -16,6 +16,7 @@ public sealed class ReadCacheInvalidationService(
     BusMemoryCache<Permission> permissions,
     BusMemoryCache<RoleDTO> roles,
     BusMemoryCache<StorefrontCategoryDTO> storefrontCategories,
+    BusMemoryCache<StorefrontProductDTO> storefrontProducts,
     BusMemoryCache<SupplierDTO> suppliers,
     BusMemoryCache<UnitDTO> units,
     BusMemoryCache<UserDTO> users)
@@ -34,6 +35,7 @@ public sealed class ReadCacheInvalidationService(
         permissions.Clear();
         roles.Clear();
         storefrontCategories.Clear();
+        storefrontProducts.Clear();
         suppliers.Clear();
         units.Clear();
         users.Clear();

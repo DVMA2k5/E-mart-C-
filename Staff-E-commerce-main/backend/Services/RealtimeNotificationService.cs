@@ -16,7 +16,9 @@ public sealed class RealtimeNotificationService(
     public async Task BroadcastStock(string eventName, object payload)
     {
         await SendToStaffSafelyAsync("inventory.read", eventName, payload);
-        await SendToCustomersSafelyAsync(eventName, payload);
+        // Customers only need to know which products changed, never internal order or purchase ids.
+        var productIds = payload.GetType().GetProperty("productIds")?.GetValue(payload);
+        await SendToCustomersSafelyAsync(eventName, new { productIds, changedAt = DateTime.UtcNow });
     }
 
     private async Task SendToStaffSafelyAsync(string permission, string eventName, object payload)

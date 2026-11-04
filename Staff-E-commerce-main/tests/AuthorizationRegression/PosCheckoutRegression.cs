@@ -156,7 +156,8 @@ public static class PosCheckoutRegression
             Check(await db.Payments.CountAsync(p => p.OrderId == momo.Id) == 1, "Callback reuses its payment attempt");
             Check(await db.Invoices.CountAsync(i => i.OrderId == momo.Id) == 1, "Callback invoice idempotent");
         });
-        await Send("/api/payment/offlinepayment", new { orderId = anotherCard.Id, amount = 1, method = "cash" }, HttpStatusCode.BadRequest);
+        // The raw offline-payment endpoint was removed: payments are recorded only by checkout flows.
+        await Send("/api/payment/offlinepayment", new { orderId = anotherCard.Id, amount = 1, method = "cash" }, HttpStatusCode.NotFound);
         await Send("/api/orderitem/create", new[] { new { orderId = paid.Id, productId, quantity = 100, unitPrice = 1, totalPrice = 100 } }, HttpStatusCode.BadRequest);
         // Repeating the same basket as a new sale must still create a separate order.
         var nextSale1 = await Send("/api/orders/checkout", Bill("cash", 1, 10000));

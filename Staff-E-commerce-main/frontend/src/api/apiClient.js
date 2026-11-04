@@ -1,7 +1,13 @@
 // src/api/apiClient.js
 import { trackRequestStart, trackRequestEnd } from "../utils/requestTracker";
 
-const BASE_URL = "http://localhost:5099/api";
+// The backend runs on port 5099 of the same machine that serves this page, so opening the admin site from
+// another computer on the LAN (http://192.168.x.x:5173) still reaches the API. VITE_API_URL overrides it.
+export const API_ORIGIN = (import.meta.env?.VITE_API_URL ||
+  (typeof window !== "undefined" && window.location?.hostname
+    ? `${window.location.protocol}//${window.location.hostname}:5099`
+    : "http://localhost:5099")).replace(/\/$/, "");
+const BASE_URL = `${API_ORIGIN}/api`;
 const USER_ID_STORAGE_KEY = "currentUserId";
 const AUTH_TOKEN_KEY = "auth_token";
 const AUTH_REFRESH_KEY = "auth_refresh_token";

@@ -1,6 +1,7 @@
 using backend.DTO;
 using backend.Models;
 using backend.Repository;
+using backend.Security;
 using System.Security.Claims;
 
 namespace backend.Services
@@ -17,13 +18,32 @@ namespace backend.Services
         private readonly UserRepository _userRepository;
         private readonly BusMemoryCache<UserDTO> _cache;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly ActorPermissionService _actor;
         private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
-        public UserService(UserRepository userRepository, BusMemoryCache<UserDTO> cache, IHttpContextAccessor httpContextAccessor)
+        public UserService(UserRepository userRepository, BusMemoryCache<UserDTO> cache, IHttpContextAccessor httpContextAccessor,
+            ActorPermissionService actor)
         {
             _userRepository = userRepository;
             _cache = cache;
             _httpContextAccessor = httpContextAccessor;
+            _actor = actor;
+        }
+
+        /// <summary>
+        /// Non-admins may only hand out roles whose rights they already hold, may not change their own role
+        /// and may not reset another person's password (that would let staff sign in as a customer).
+        /// </summary>
+        private async Task EnsureNonAdminMayAssignAsync(Role role, User? target, bool settingPassword)
+        {
+            if (_actor.IsAdmin) return;
+            if (target != null && target.Id == _actor.UserId && target.RoleId != role.Id)
+                throw new UnauthorizedAccessException("Bạn không thể tự đổi vai trò của chính mình.");
+            if (target != null && settingPassword && target.Id != _actor.UserId)
+                throw new UnauthorizedAccessException("Chỉ quản trị viên được đặt lại mật khẩu cho tài khoản khác.");
+            if (target != null && target.RoleId == role.Id) return;
+            var issue = await _actor.GrantIssueAsync(await _actor.GetRolePermissionCodesAsync(role.Id));
+            if (issue != null) throw new UnauthorizedAccessException(issue);
         }
 
         public async Task<List<UserDTO>> GetAllUsersAsync()
@@ -104,12 +124,14 @@ namespace backend.Services
             if (string.IsNullOrWhiteSpace(request.Password))
                 throw new ArgumentException("Password is required", nameof(request.Password));
 
+            await ApplyCustomerUsernameAsync(request);
             await ValidateAccountAsync(request);
             var roleName = NormalizeRole(request.Role);
             EnsureAdminActorForAdminAccount(roleName);
             var role = await _userRepository.GetRoleByNameAsync(roleName);
             if (role == null || !role.IsActive)
                 throw new ArgumentException($"Role '{roleName}' does not exist or is inactive.", nameof(request.Role));
+            await EnsureNonAdminMayAssignAsync(role, null, settingPassword: false);
             if (request.EmployeeId.HasValue && roleName == "customer")
                 throw new ArgumentException("Tài khoản khách hàng không được gắn hồ sơ nhân viên.", nameof(request.EmployeeId));
             if (request.CustomerId.HasValue && roleName != "customer")
@@ -154,11 +176,26 @@ namespace backend.Services
             return MapToUserDto(createdUser);
         }
 
+        /// <summary>
+        /// Customers always sign in with their phone number, so a customer account's username is the phone of its
+        /// customer profile, whatever was typed in the admin form.
+        /// </summary>
+        private async Task ApplyCustomerUsernameAsync(UserDTO request)
+        {
+            if (NormalizeRole(request.Role) != "customer" || !request.CustomerId.HasValue) return;
+            var customer = await _userRepository.GetCustomerAsync(request.CustomerId.Value)
+                ?? throw new ArgumentException("Hồ sơ khách hàng không tồn tại.", nameof(request.CustomerId));
+            if (string.IsNullOrWhiteSpace(customer.Phone))
+                throw new ArgumentException("Hồ sơ khách hàng chưa có số điện thoại để làm tên đăng nhập.", nameof(request.CustomerId));
+            request.Username = customer.Phone.Trim();
+        }
+
         public async Task<UserDTO?> UpdateUserAsync(int id, UserDTO request)
         {
             var existingUser = await _userRepository.GetByIdAsync(id);
             if (existingUser == null) return null;
 
+            await ApplyCustomerUsernameAsync(request);
             await ValidateAccountAsync(request, id);
 
             existingUser.Username = request.Username.Trim();
@@ -167,6 +204,7 @@ namespace backend.Services
             var role = await _userRepository.GetRoleByNameAsync(requestedRole);
             if (role == null || !role.IsActive)
                 throw new ArgumentException($"Role '{request.Role}' does not exist or is inactive.", nameof(request.Role));
+            await EnsureNonAdminMayAssignAsync(role, existingUser, !string.IsNullOrWhiteSpace(request.Password));
 
             var employee = request.EmployeeId.HasValue
                 ? await _userRepository.GetEmployeeAsync(request.EmployeeId.Value)
@@ -211,7 +249,8 @@ namespace backend.Services
             if (existingUser == null) return null;
             EnsureAdminActorForAdminAccount(existingUser.RoleEntity.Name);
 
-            existingUser.Username = request.Username.Trim();
+            // A customer's username stays their phone number; only staff/admin may rename themselves.
+            if (existingUser.CustomerId == null) existingUser.Username = request.Username.Trim();
             existingUser.Email = request.Email?.Trim();
             existingUser.FullName = request.FullName?.Trim() ?? existingUser.FullName;
             // Profile records are the source of truth; update both in the same transaction.

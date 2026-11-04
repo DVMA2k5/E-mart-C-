@@ -57,7 +57,7 @@ public static class VoucherWalletRegression
             var role = await db.Roles.SingleAsync(r => r.Name == "customer");
             for (var i = 1; i <= 3; i++)
             {
-                var user = new User { Username = "voucher-buyer-" + i, FullName = "Voucher buyer " + i,
+                var user = new User { Username = "098765430" + i, FullName = "Voucher buyer " + i, // username = phone, as for every customer
                     PasswordHash = "fixture", RoleEntity = role, IsActive = true, CreatedAt = DateTime.UtcNow,
                     Customer = new Customer { FullName = "Voucher buyer " + i, Phone = "098765430" + i,
                         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow } };

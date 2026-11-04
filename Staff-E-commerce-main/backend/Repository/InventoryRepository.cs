@@ -29,6 +29,37 @@ public sealed class InventoryRepository
         await _context.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Sets the counted stock and writes its history row in one transaction. The product row is locked first, so a
+    /// sale or purchase receipt running at the same moment either finishes before (and is counted) or waits.
+    /// </summary>
+    public async Task<(Product Product, int OldQuantity)?> AdjustStockAsync(int productId, int newQuantity, string reason, int? userId)
+    {
+        await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+        var product = await _context.Products
+            .FromSqlInterpolated($"SELECT * FROM products WITH (UPDLOCK, ROWLOCK) WHERE id = {productId}")
+            .Include(p => p.Category)
+            .Include(p => p.Unit)
+            .FirstOrDefaultAsync();
+        if (product == null) return null;
+
+        var oldQuantity = product.StockQuantity;
+        var now = DateTime.UtcNow;
+        product.StockQuantity = newQuantity;
+        product.UpdatedAt = now;
+        _context.InventoryAdjustments.Add(new InventoryAdjustment
+        {
+            ProductId = product.Id,
+            ChangeAmount = newQuantity - oldQuantity,
+            Reason = $"{reason} (từ {oldQuantity} thành {newQuantity})",
+            UserId = userId,
+            CreatedAt = now
+        });
+        await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
+        return (product, oldQuantity);
+    }
+
     public async Task<bool> ReduceInventoryAsync(List<(int ProductId, int Quantity)> requestedQuantities)
     {
         await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);

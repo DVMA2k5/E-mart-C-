@@ -194,9 +194,31 @@ public sealed class StorefrontRepository
     public Task<Order?> GetByCheckoutKeyAsync(string key) =>
         _context.Orders.FirstOrDefaultAsync(order => order.CheckoutKey == key);
 
+    // A product in a hidden category is not for sale either.
     public Task<Dictionary<int, Product>> GetTrackedActiveProductsByIdsAsync(List<int> productIds) =>
-        _context.Products.Where(product => productIds.Contains(product.Id) && product.IsActive)
+        _context.Products.Where(product => productIds.Contains(product.Id) && product.IsActive &&
+                (product.Category == null || product.Category.IsActive))
             .ToDictionaryAsync(product => product.Id);
+
+    /// <summary>
+    /// Whole storefront catalogue in one query: every active product whose category is visible,
+    /// including out-of-stock items so the app can label them "Hết hàng" instead of hiding them.
+    /// </summary>
+    public Task<List<Product>> GetSellableProductsAsync() =>
+        _context.Products.AsNoTracking()
+            .Include(product => product.Category)
+            .Include(product => product.Unit)
+            .Where(product => product.IsActive && (product.Category == null || product.Category.IsActive))
+            .OrderBy(product => product.ProductName).ThenBy(product => product.Id)
+            .ToListAsync();
+
+    /// <summary>Units sold per product in completed orders since <paramref name="sinceUtc"/>.</summary>
+    public Task<Dictionary<int, int>> GetSoldQuantitiesAsync(DateTime sinceUtc) =>
+        _context.OrderItems.AsNoTracking()
+            .Where(item => item.Order != null && item.Order.Status == "completed" && item.Order.CreatedAt >= sinceUtc)
+            .GroupBy(item => item.ProductId)
+            .Select(group => new { ProductId = group.Key, Quantity = group.Sum(item => item.Quantity) })
+            .ToDictionaryAsync(row => row.ProductId, row => row.Quantity);
 
     public Task<List<ProductPromotion>> GetTrackedProductPromotionsAsync(List<int> productIds) =>
         _context.ProductPromotions.Include(link => link.Promotion)

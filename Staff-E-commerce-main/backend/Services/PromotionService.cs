@@ -99,13 +99,13 @@ namespace backend.Services
             promotion.Code = $"PROMO-{Guid.NewGuid():N}".ToUpperInvariant();
             // Validation
             if (string.IsNullOrWhiteSpace(promotion.Name))
-                throw new ArgumentException("Name is required", nameof(promotion.Name));
+                throw new ArgumentException("Vui lòng nhập tên khuyến mãi.", nameof(promotion.Name));
             if (promotion.Type == "voucher" && string.IsNullOrWhiteSpace(promotion.VoucherDetails?.VoucherCode))
-                throw new ArgumentException("Voucher code is required");
+                throw new ArgumentException("Vui lòng nhập mã voucher.");
             if (promotion.Type == "product" && (promotion.ProductDetails == null || !promotion.ProductDetails.Any()))
-                throw new ArgumentException("Select at least one product");
+                throw new ArgumentException("Chọn ít nhất một sản phẩm.");
             if (!promotion.StartDate.HasValue || !promotion.EndDate.HasValue)
-                throw new ArgumentException("Start date and end date are required");
+                throw new ArgumentException("Vui lòng chọn ngày bắt đầu và ngày kết thúc.");
 
             if (string.IsNullOrWhiteSpace(promotion.Name))
                 promotion.Name = promotion.Code;
@@ -115,24 +115,26 @@ namespace backend.Services
             promotion.Status = promotion.Active ? "active" : "disabled";
 
             if (promotion.Value <= 0)
-                throw new ArgumentException("Value must be greater than 0", nameof(promotion.Value));
+                throw new ArgumentException("Mức giảm phải lớn hơn 0.", nameof(promotion.Value));
+            if (promotion.UsageLimit is <= 0)
+                throw new ArgumentException("Số lượt sử dụng phải lớn hơn 0 (để trống nếu không giới hạn).", nameof(promotion.UsageLimit));
 
             if (!new[] { "product", "event", "voucher" }.Contains(promotion.Type))
-                throw new ArgumentException("Type must be product, event, or voucher", nameof(promotion.Type));
+                throw new ArgumentException("Loại khuyến mãi không hợp lệ.", nameof(promotion.Type));
             if (!new[] { "percent", "fixed" }.Contains(promotion.DiscountType))
-                throw new ArgumentException("DiscountType must be percent or fixed", nameof(promotion.DiscountType));
+                throw new ArgumentException("Kiểu giảm giá phải là phần trăm hoặc số tiền cố định.", nameof(promotion.DiscountType));
             if (promotion.DiscountType == "percent" && promotion.Value > 100)
-                throw new ArgumentException("Percent value cannot exceed 100", nameof(promotion.Value));
+                throw new ArgumentException("Mức giảm theo phần trăm không được vượt quá 100%.", nameof(promotion.Value));
 
             if (promotion.StartDate.HasValue && promotion.EndDate.HasValue && promotion.StartDate > promotion.EndDate)
-                throw new ArgumentException("Start date must be before end date");
+                throw new ArgumentException("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.");
 
             if (promotion.Type == "voucher")
             {
                 promotion.VoucherDetails!.VoucherCode = promotion.VoucherDetails.VoucherCode.Trim().ToUpperInvariant();
                 var existing = await _promotionRepository.GetByCodeAsync(promotion.VoucherDetails.VoucherCode);
                 if (existing != null)
-                    throw new ArgumentException($"Voucher code '{promotion.VoucherDetails.VoucherCode}' already exists");
+                    throw new ArgumentException($"Mã voucher '{promotion.VoucherDetails.VoucherCode}' đã tồn tại.");
             }
 
             var created = await _promotionRepository.CreateAsync(promotion);
@@ -151,25 +153,27 @@ namespace backend.Services
 
             // Validation
             if (promotion.Value <= 0)
-                throw new ArgumentException("Value must be greater than 0", nameof(promotion.Value));
+                throw new ArgumentException("Mức giảm phải lớn hơn 0.", nameof(promotion.Value));
+            if (promotion.UsageLimit is <= 0)
+                throw new ArgumentException("Số lượt sử dụng phải lớn hơn 0 (để trống nếu không giới hạn).", nameof(promotion.UsageLimit));
 
             if (!new[] { "product", "event", "voucher" }.Contains(promotion.Type))
-                throw new ArgumentException("Type must be product, event, or voucher", nameof(promotion.Type));
+                throw new ArgumentException("Loại khuyến mãi không hợp lệ.", nameof(promotion.Type));
             if (!new[] { "percent", "fixed" }.Contains(promotion.DiscountType))
-                throw new ArgumentException("DiscountType must be percent or fixed", nameof(promotion.DiscountType));
+                throw new ArgumentException("Kiểu giảm giá phải là phần trăm hoặc số tiền cố định.", nameof(promotion.DiscountType));
             if (string.IsNullOrWhiteSpace(promotion.Name))
-                throw new ArgumentException("Name is required", nameof(promotion.Name));
+                throw new ArgumentException("Vui lòng nhập tên khuyến mãi.", nameof(promotion.Name));
             if (promotion.Type == "voucher" && string.IsNullOrWhiteSpace(promotion.VoucherDetails?.VoucherCode))
-                throw new ArgumentException("Voucher code is required");
+                throw new ArgumentException("Vui lòng nhập mã voucher.");
             if (promotion.Type == "product" && (promotion.ProductDetails == null || !promotion.ProductDetails.Any()))
-                throw new ArgumentException("Select at least one product");
+                throw new ArgumentException("Chọn ít nhất một sản phẩm.");
             if (!promotion.StartDate.HasValue || !promotion.EndDate.HasValue)
-                throw new ArgumentException("Start date and end date are required");
+                throw new ArgumentException("Vui lòng chọn ngày bắt đầu và ngày kết thúc.");
             if (promotion.DiscountType == "percent" && promotion.Value > 100)
-                throw new ArgumentException("Percent value cannot exceed 100", nameof(promotion.Value));
+                throw new ArgumentException("Mức giảm theo phần trăm không được vượt quá 100%.", nameof(promotion.Value));
 
             if (promotion.StartDate.HasValue && promotion.EndDate.HasValue && promotion.StartDate > promotion.EndDate)
-                throw new ArgumentException("Start date must be before end date");
+                throw new ArgumentException("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.");
 
             // Check if changing code conflicts with another promotion
             promotion.Code = existing.Code; // Internal identifier; customer-facing codes belong to vouchers only.
@@ -178,11 +182,13 @@ namespace backend.Services
                 promotion.VoucherDetails!.VoucherCode = promotion.VoucherDetails.VoucherCode.Trim().ToUpperInvariant();
                 var duplicate = await _promotionRepository.GetByCodeAsync(promotion.VoucherDetails.VoucherCode);
                 if (duplicate != null && duplicate.Id != promotion.Id)
-                    throw new ArgumentException($"Voucher code '{promotion.VoucherDetails.VoucherCode}' already exists");
+                    throw new ArgumentException($"Mã voucher '{promotion.VoucherDetails.VoucherCode}' đã tồn tại.");
             }
 
             promotion.CreatedAt = existing.CreatedAt;
             promotion.UsedCount = existing.UsedCount;
+            if (promotion.UsageLimit.HasValue && promotion.UsageLimit < existing.UsedCount)
+                throw new ArgumentException($"Số lượt sử dụng không được nhỏ hơn số lượt đã dùng ({existing.UsedCount}).", nameof(promotion.UsageLimit));
             promotion.UpdatedAt = DateTimeHelper.UtcNow;
             promotion.Name = string.IsNullOrWhiteSpace(promotion.Name) ? existing.Name : promotion.Name;
             promotion.StartDate ??= existing.StartDate;
@@ -555,6 +561,9 @@ namespace backend.Services
             await _wallet.LockAsync();
             var order = await _promotionRepository.GetOrderForUpdateAsync(orderId);
             if (order == null) return false;
+            // A cancelled or refunded order already released its promotion; applying again would burn a slot.
+            if (order.Status is "cancelled" or "refunded")
+                throw new InvalidOperationException("Đơn hàng đã hủy hoặc hoàn tiền, không thể áp dụng khuyến mãi.");
 
             if (order.PromotionId != promotionId)
                 throw new InvalidOperationException("Khuyến mãi không khớp với khuyến mãi của đơn hàng.");

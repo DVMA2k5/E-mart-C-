@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, RefreshCw, TrendingUp, Users, UserRound, Package, ReceiptText, ChevronLeft, ChevronRight } from "lucide-react";
+import { API_ORIGIN } from "../../api/apiClient";
 
-const API = "http://localhost:5099/api/revenue-analytics";
+const API = `${API_ORIGIN}/api/revenue-analytics`;
 const money = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
 const sections = [
   { id: "financial", title: "Tài chính", description: "Doanh thu, chi phí nhập hàng và lợi nhuận theo quý.", icon: TrendingUp },
@@ -62,6 +63,13 @@ export default function RevenueAnalytics() {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
+  const hasDateRange = Boolean(appliedFilters.from && appliedFilters.to);
+  const today = new Date();
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const revenueDay = appliedFilters.from || appliedFilters.to || todayIso;
+  const revenueLabel = hasDateRange
+    ? "Tổng doanh thu trong khoảng ngày"
+    : `Doanh thu ngày ${new Date(`${revenueDay}T00:00:00`).toLocaleDateString("vi-VN")}`;
   const params = filters => new URLSearchParams({ fromYear: filters.fromYear, toYear: filters.toYear, ...(filters.from && { from: filters.from }), ...(filters.to && { to: filters.to }) });
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -117,7 +125,7 @@ export default function RevenueAnalytics() {
         <label className="text-xs font-semibold text-slate-600">Đến năm<input type="number" min="2000" max="2200" step="1" inputMode="numeric" value={toYear} onChange={e => setToYear(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" /></label>
         <label className="text-xs font-semibold text-slate-600">Từ ngày<input type="date" value={from} onChange={e => setFrom(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" /></label>
         <label className="text-xs font-semibold text-slate-600">Đến ngày<input type="date" value={to} onChange={e => setTo(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" /></label>
-        <div className="rounded-md border border-indigo-100 bg-white px-3 py-2"><div className="text-xs font-medium text-slate-500">Doanh thu theo ngày</div><div className="mt-1 font-bold text-indigo-700">{money.format(report?.periodRevenue ?? 0)}</div></div>
+        <div className="rounded-md border border-indigo-100 bg-white px-3 py-2"><div className="text-xs font-medium text-slate-500">{revenueLabel}</div><div className="mt-1 font-bold text-indigo-700">{money.format(report?.periodRevenue ?? 0)}</div></div>
         <button onClick={applyFilters} disabled={loading} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">Áp dụng</button>
       </div>
     </header>

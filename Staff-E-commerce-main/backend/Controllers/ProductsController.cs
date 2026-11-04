@@ -3,6 +3,7 @@ using backend.Models;
 using backend.Services;
 using backend.DTO;
 using backend.Security;
+using backend.Helpers;
 
 namespace backend.Controllers
 {
@@ -82,7 +83,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -100,7 +101,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -136,7 +137,7 @@ namespace backend.Controllers
                     UpdatedAt = productDto.UpdatedAt ?? DateTime.UtcNow
                 };
 
-                var createdDto = await _productService.CreateProductAsync(product);
+                var createdDto = await _productService.CreateProductAsync(product, userId: CurrentUserId());
                 return CreatedAtAction(nameof(GetProduct), new { id = createdDto.Id }, createdDto);
             }
             catch (ValidationException vex)
@@ -154,6 +155,7 @@ namespace backend.Controllers
         {
             try
             {
+                // StockQuantity in the body is ignored: stock changes only through inventory adjustments.
                 var product = new Product
                 {
                     Id = id,
@@ -164,7 +166,6 @@ namespace backend.Controllers
                     SupplierId = productDto.SupplierId,
                     Price = productDto.Price,
                     Cost = productDto.Cost,
-                    StockQuantity = productDto.StockQuantity ?? 0,
                     UnitId = productDto.UnitId,
                     Description = productDto.Description,
                     ImageUrl = productDto.ImageUrl,
@@ -172,96 +173,65 @@ namespace backend.Controllers
                     UpdatedAt = DateTime.UtcNow
                 };
 
-                var updatedProduct = await _productService.UpdateProductAsync(product, requestedStockQuantity: productDto.StockQuantity);
+                var updatedProduct = await _productService.UpdateProductAsync(product);
                 return updatedProduct;
+            }
+            catch (ValidationException vex)
+            {
+                return BadRequest(new { errors = vex.Errors });
             }
             catch (ArgumentException ex)
             {
-                return NotFound(ex.Message);
-            }
-            catch (Exception)
-            {
-                return StatusCode(500, "Lỗi server khi cập nhật sản phẩm");
+                return NotFound(new { message = ex.Message });
             }
         }
 
-
+        /// <summary>Ngừng bán sản phẩm. Gọi lặp lại vẫn giữ trạng thái ngừng bán.</summary>
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteProduct(int id)
         {
             try
             {
                 var result = await _productService.DeleteProductAsync(id);
-                return result ? Ok("Xóa thành công") : NotFound("Không tìm thấy sản phẩm");
+                return result ? Ok(new { message = "Đã ngừng bán sản phẩm." }) : NotFound(new { message = "Không tìm thấy sản phẩm" });
             }
             catch (ArgumentException ex)
             {
-                return BadRequest(ex.Message);
+                return BadRequest(new { message = ex.Message });
             }
         }
 
+        /// <summary>Đặt trạng thái bán rõ ràng: isActive=true để bán lại, false để ngừng bán.</summary>
+        [HttpPatch("{id:int}/status")]
+        public async Task<IActionResult> SetProductStatus(int id, [FromQuery] bool isActive)
+        {
+            try
+            {
+                var result = await _productService.SetProductActiveAsync(id, isActive);
+                return result
+                    ? Ok(new { message = isActive ? "Đã mở bán lại sản phẩm." : "Đã ngừng bán sản phẩm.", isActive })
+                    : NotFound(new { message = "Không tìm thấy sản phẩm" });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Uploads a new image and returns its URL. The current product image is left untouched until the product
+        /// is saved with the new URL, so a failed or cancelled save never leaves the product with a broken image.
+        /// </summary>
         [HttpPost("upload-image")]
         public async Task<IActionResult> UploadImage([FromForm] IFormFile image, [FromQuery] int? productId)
         {
-            if (image == null || image.Length == 0)
-                return BadRequest(new { message = "No file uploaded" });
-
-            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
-            var extension = Path.GetExtension(image.FileName).ToLowerInvariant();
-            if (!allowedExtensions.Contains(extension))
-                return BadRequest(new { message = "Invalid file type" });
-
-            if (image.Length > 5 * 1024 * 1024)
-                return BadRequest(new { message = "File size exceeds 5MB" });
-
-            try
-            {
-                var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "assets", "images", "products");
-
-                if (!Directory.Exists(uploadsFolder))
-                    Directory.CreateDirectory(uploadsFolder);
-
-                // Nếu có productId, xóa TẤT CẢ ảnh cũ của product này (mọi extension)
-                if (productId.HasValue)
-                {
-                    var oldFiles = Directory.GetFiles(uploadsFolder, $"product-{productId.Value}.*");
-                    foreach (var oldFile in oldFiles)
-                    {
-                        try
-                        {
-                            System.IO.File.Delete(oldFile);
-                            Console.WriteLine($"Deleted old image: {oldFile}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Could not delete {oldFile}: {ex.Message}");
-                        }
-                    }
-                }
-
-                // Tạo tên file mới
-                var fileName = productId.HasValue
-                    ? $"product-{productId.Value}{extension}"
-                    : $"temp-{DateTime.UtcNow.Ticks}{extension}";
-
-                var filePath = Path.Combine(uploadsFolder, fileName);
-
-                // Lưu file mới
-                using (var stream = new FileStream(filePath, FileMode.Create))
-                {
-                    await image.CopyToAsync(stream);
-                }
-
-                var imageUrl = $"/assets/images/products/{fileName}";
-                Console.WriteLine($"Uploaded new image: {imageUrl}");
-
-                return Ok(new { imageUrl });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = "Error uploading file", error = ex.Message });
-            }
+            var error = await ProductImageStorage.ValidateAsync(image);
+            if (error != null) return BadRequest(new { message = error });
+            var imageUrl = await ProductImageStorage.SaveAsync(image, productId);
+            return Ok(new { imageUrl });
         }
+
+        private int? CurrentUserId() => int.TryParse(User.FindFirst("uid")?.Value, out var id) ? id : null;
 
 
         // ĐỪNG XÓA LÀM ƠN = lẤY DANH SÁCH SẢN PHẨM CÒN HÀNG TRONG CỬA HÀNG
@@ -291,7 +261,7 @@ namespace backend.Controllers
             catch (Exception ex)
             {
                 // Lỗi server
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -310,7 +280,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 

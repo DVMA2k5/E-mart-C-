@@ -8,6 +8,8 @@ namespace backend.DTO
         public int Skipped { get; set; }
         public List<ImportErrorDTO> Errors { get; set; } = new List<ImportErrorDTO>();
         public bool HasErrors => Errors.Any();
+        /// <summary>True when a system error rolled back the whole file: nothing from this import was saved.</summary>
+        public bool RolledBack { get; set; }
     }
 }
 

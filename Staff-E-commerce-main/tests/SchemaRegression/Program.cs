@@ -20,7 +20,7 @@ try
 {
     await AuthorizationSchemaInitializer.InitializeAsync(services);
     await CheckColumns();
-    Check(await Scalar("SELECT COUNT(*) AS Value FROM sys.tables WHERE schema_id = SCHEMA_ID('dbo')") == 25, "25 current tables created from an absent database");
+    Check(await Scalar("SELECT COUNT(*) AS Value FROM sys.tables WHERE schema_id = SCHEMA_ID('dbo')") == 26, "26 current tables (incl. customer_vouchers) created from an absent database");
     foreach (var resource in PermissionCatalog.Resources.Keys)
     foreach (var op in resource is "reports" or "audit" or "invoices" ? new[] { "read" } : new[] { "read", "write" })
         Check(await db.Permissions.AnyAsync(p => p.Code == resource + "." + op), "permission " + resource + "." + op);

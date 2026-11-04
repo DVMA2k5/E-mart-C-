@@ -30,7 +30,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -54,7 +54,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -76,7 +76,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -98,7 +98,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -123,7 +123,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -151,7 +151,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -173,7 +173,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -195,7 +195,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -213,7 +213,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -228,7 +228,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -243,7 +243,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -280,7 +280,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -299,7 +299,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 

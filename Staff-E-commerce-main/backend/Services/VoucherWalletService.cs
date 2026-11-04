@@ -66,16 +66,51 @@ public sealed class VoucherWalletService(AppDbContext db, BusMemoryCache<Promoti
         return result;
     }
 
+    /// <summary>
+    /// Voucher hunt page: every active Public voucher (plus event/product offers). Only-code vouchers never appear
+    /// here; they show up only through <see cref="LookupByCodeAsync"/>. A Public voucher that cannot be saved right
+    /// now (claim window not open/closed, all claimed) is still listed, with the reason in ClaimIssue.
+    /// </summary>
     public async Task<List<PromotionDTO>> DiscoverAsync(int customerId)
     {
         var today = DateTimeHelper.VietnamToday;
-        var promotions = await db.Promotions.AsNoTracking().Include(p => p.VoucherDetails)
-            .Where(p => p.Type == "voucher" && p.Status == "active" && p.VoucherDetails!.Visibility == "public" &&
-                p.VoucherDetails.ClaimStartDate <= today && p.VoucherDetails.ClaimEndDate >= today && p.EndDate >= today)
-            .OrderBy(p => p.VoucherDetails!.ClaimEndDate).ToListAsync();
-        var owned = await db.CustomerVouchers.Where(c => c.CustomerId == customerId).Select(c => c.PromotionId).ToListAsync();
-        var ids = owned.ToHashSet();
-        return promotions.Select(p => { var dto = PromotionService.MapToDTO(p); dto.IsClaimed = ids.Contains(p.Id); return dto; }).ToList();
+        var promotions = await db.Promotions.AsNoTracking()
+            .Include(p => p.VoucherDetails)
+            .Include(p => p.EventDetails)
+            .Include(p => p.ProductDetails)
+            .Where(p => !p.IsDeleted && p.Status == "active" && p.EndDate >= today &&
+                (p.Type != "voucher"
+                    ? p.StartDate <= today
+                    : p.VoucherDetails!.Visibility == "public" &&
+                      (p.StartDate <= today || p.VoucherDetails.ClaimStartDate <= today)))
+            .OrderBy(p => p.EndDate).ToListAsync();
+        var owned = (await db.CustomerVouchers.Where(c => c.CustomerId == customerId).Select(c => c.PromotionId).ToListAsync()).ToHashSet();
+        return promotions.Select(p => ToDiscoveryDto(p, owned.Contains(p.Id))).ToList();
+    }
+
+    /// <summary>
+    /// Reveals one voucher (Public or Only-code) by its exact code so the customer can see it before saving.
+    /// Returns null when no usable voucher has that code.
+    /// </summary>
+    public async Task<PromotionDTO?> LookupByCodeAsync(int customerId, string code)
+    {
+        var normalized = code.Trim().ToUpperInvariant();
+        if (normalized.Length is 0 or > 50) return null;
+        var today = DateTimeHelper.VietnamToday;
+        var promotion = await db.Promotions.AsNoTracking().Include(p => p.VoucherDetails)
+            .SingleOrDefaultAsync(p => p.Type == "voucher" && !p.IsDeleted && p.Status == "active" && p.EndDate >= today &&
+                p.VoucherDetails!.VoucherCode == normalized);
+        if (promotion == null) return null;
+        var owned = await db.CustomerVouchers.AnyAsync(c => c.CustomerId == customerId && c.PromotionId == promotion.Id);
+        return ToDiscoveryDto(promotion, owned);
+    }
+
+    private static PromotionDTO ToDiscoveryDto(Promotion promotion, bool owned)
+    {
+        var dto = PromotionService.MapToDTO(promotion);
+        dto.IsClaimed = owned;
+        if (promotion.Type == "voucher") dto.ClaimIssue = owned ? "Bạn đã lưu mã này." : ClaimIssue(promotion);
+        return dto;
     }
 
     public async Task<List<PromotionDTO>> WalletAsync(int customerId) => (await db.CustomerVouchers

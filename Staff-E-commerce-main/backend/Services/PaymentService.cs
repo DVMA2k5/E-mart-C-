@@ -17,25 +17,13 @@ namespace backend.Services
         private readonly PosCheckoutService _checkout;
         private readonly RealtimeNotificationService _realtime;
         private readonly VoucherWalletService _vouchers;
-
-        // Hàm lưu một payment nếu là thanh toán trực tiếp 
-        // Lưu Payment (Cash, Card, ECard,...)
-        public async Task<Payment> CreatePaymentAsync(Payment payment)
-        {
-            if (await _paymentRepo.IsLockedPosOrderAsync(payment.OrderId))
-                throw new ArgumentException("Đơn POS phải thanh toán qua nghiệp vụ chốt đơn.");
-            // The POS request does not send CreatedAt. Avoid DateTime.MinValue,
-            // which SQL Server's datetime column cannot store.
-            if (payment.CreatedAt == default)
-                payment.CreatedAt = DateTime.UtcNow;
-
-            return await _paymentRepo.AddPaymentAsync(payment);
-        }
+        private readonly PaymentSimulator _simulator;
 
         public PaymentService(PaymentRepository paymentRepo, OrderRepository orderRepo, ActivityLogService logService,
             IConfiguration config, InvoiceService invoiceService, PosCheckoutService checkout,
-            RealtimeNotificationService realtime, VoucherWalletService vouchers)
+            RealtimeNotificationService realtime, VoucherWalletService vouchers, PaymentSimulator simulator)
         {
+            _simulator = simulator;
             _paymentRepo = paymentRepo;
             _orderRepo = orderRepo;
             _logService = logService;
@@ -46,11 +34,7 @@ namespace backend.Services
             _vouchers = vouchers;
         }
 
-        private string SignSHA256(string message, string key)
-        {
-            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
-            return BitConverter.ToString(hmac.ComputeHash(Encoding.UTF8.GetBytes(message))).Replace("-", "").ToLower();
-        }
+        private static string SignSHA256(string message, string key) => PaymentSimulator.Sign(message, key);
 
         public async Task<MomoPaymentResponseDTO> CreatePaymentAsync(MomoPaymentRequestDTO req)
         {
@@ -61,10 +45,10 @@ namespace backend.Services
             req.Amount = order.TotalAmount;
             if (req.Amount != decimal.Truncate(req.Amount))
                 throw new ArgumentException("Thanh toán MoMo yêu cầu số tiền nguyên đồng. Vui lòng kiểm tra giá sản phẩm.");
-            string endpoint = _config["Momo:Endpoint"];
-            string partnerCode = _config["Momo:PartnerCode"];
-            string accessKey = _config["Momo:AccessKey"];
-            string secretKey = _config["Momo:SecretKey"];
+            string endpoint = _config["Momo:Endpoint"] ?? "";
+            string partnerCode = _simulator.PartnerCode;
+            string accessKey = _simulator.AccessKey;
+            string secretKey = _simulator.SecretKey;
             string redirectUrl = req.ReturnUrl;
             string ipnUrl = req.NotifyUrl;
 
@@ -72,6 +56,20 @@ namespace backend.Services
             // MoMo yêu cầu orderId và requestId dạng string
             string orderId = $"order_{req.OrderId}_{Guid.NewGuid():N}";
             string requestId = "req_" + Guid.NewGuid().ToString("N");
+
+            if (_simulator.Enabled)
+            {
+                // Coursework mode: record the attempt and hand back the local simulator page instead of calling MoMo.
+                await _paymentRepo.AddPaymentAsync(new Payment { OrderId = req.OrderId, Amount = req.Amount, Method = "other", TransactionRef = orderId, Status = "pending", CreatedAt = DateTime.UtcNow });
+                return new MomoPaymentResponseDTO
+                {
+                    PayUrl = _simulator.MomoPageUrl(orderId),
+                    OrderId = orderId,
+                    RequestId = requestId,
+                    Success = true,
+                    Message = "Thanh toán MoMo giả lập"
+                };
+            }
             string orderInfo = $"Thanh toán đơn hàng {req.OrderId}";
             string amountStr = Math.Round(req.Amount).ToString("0");
 
@@ -138,27 +136,14 @@ namespace backend.Services
 
         public async Task<bool> HandleMomoCallbackAsync(MomoIpnCallbackDTO callback)
         {
-            var accessKey = _config["Momo:AccessKey"];
-            var secretKey = _config["Momo:SecretKey"];
+            var accessKey = _simulator.AccessKey;
+            var secretKey = _simulator.SecretKey;
             if (string.IsNullOrWhiteSpace(accessKey) || string.IsNullOrWhiteSpace(secretKey) ||
                 string.IsNullOrWhiteSpace(callback.OrderId) || callback.Amount is not long receivedAmount)
                 return false;
 
             // Signature kiểm tra callback
-            string rawSignature =
-                $"accessKey={accessKey}" +
-                $"&amount={callback.Amount}" +
-                $"&extraData={callback.ExtraData}" +
-                $"&message={callback.Message}" +
-                $"&orderId={callback.OrderId}" +
-                $"&orderInfo={callback.OrderInfo}" +
-                $"&orderType={callback.OrderType}" +
-                $"&partnerCode={callback.PartnerCode}" +
-                $"&payType={callback.PayType}" +
-                $"&requestId={callback.RequestId}" +
-                $"&responseTime={callback.ResponseTime}" +
-                $"&resultCode={callback.ResultCode}" +
-                $"&transId={callback.TransId}";
+            string rawSignature = PaymentSimulator.MomoCallbackRawSignature(accessKey, callback);
 
             var expected = SignSHA256(rawSignature, secretKey);
             if (string.IsNullOrWhiteSpace(callback.Signature)) return false;
@@ -166,8 +151,8 @@ namespace backend.Services
             var expectedBytes = Encoding.UTF8.GetBytes(expected);
             if (actualBytes.Length != expectedBytes.Length ||
                 !CryptographicOperations.FixedTimeEquals(actualBytes, expectedBytes)) return false;
-            if (!string.IsNullOrWhiteSpace(_config["Momo:PartnerCode"]) &&
-                !string.Equals(callback.PartnerCode, _config["Momo:PartnerCode"], StringComparison.Ordinal)) return false;
+            if (!string.IsNullOrWhiteSpace(_simulator.PartnerCode) &&
+                !string.Equals(callback.PartnerCode, _simulator.PartnerCode, StringComparison.Ordinal)) return false;
 
             var snapshot = await _paymentRepo.GetByTransactionRefAsync(callback.OrderId);
             if (snapshot == null || snapshot.Amount != receivedAmount) return false;
@@ -201,10 +186,27 @@ namespace backend.Services
                 await transaction.CommitAsync();
                 return true;
             }
-            if (payment.Order.Status is "cancelled" or "refunded") return false;
             if (payment.Status == "completed" && payment.Order.PaymentStatus == "paid")
             {
                 await transaction.CommitAsync();
+                return true;
+            }
+            if (payment.Status == "refund_required")
+            {
+                await transaction.CommitAsync();
+                return true;
+            }
+            if (payment.Status == "pending" &&
+                (payment.Order.Status is "cancelled" or "refunded" || payment.Order.PaymentStatus != "pending"))
+            {
+                // Money arrived for an order that can no longer take it (cancelled, or already paid by another
+                // attempt). Keep a reconciliation trail and acknowledge, so MoMo stops retrying the IPN.
+                payment.Status = "refund_required";
+                await _paymentRepo.SaveChangesAsync();
+                await transaction.CommitAsync();
+                await _logService.LogAsync(payment.Order.UserId, "PAYMENT_REFUND_REQUIRED", "Payment", payment.Id.ToString(),
+                    $"Đơn {payment.Order.OrderNumber}: nhận {receivedAmount:0} qua MoMo ({callback.OrderId}) nhưng đơn không còn chờ thanh toán. Cần hoàn tiền cho khách.", "system");
+                await _realtime.BroadcastToWeb("PaymentRefundRequired", new { orderId = payment.Order.Id, amount = receivedAmount }, "payments.read");
                 return true;
             }
             if (payment.Status != "pending" || payment.Order.PaymentStatus != "pending") return false;
@@ -218,6 +220,7 @@ namespace backend.Services
             await transaction.CommitAsync();
 
             await _logService.LogAsync(payment.Order.UserId, "PAYMENT_SUCCESS", "Payment", payment.Id.ToString(), null, "system");
+            await _logService.LogAsync(null, "payment_received", "orders", payment.Order.Id.ToString(), $"MoMo {callback.OrderId}", "system");
             await _realtime.BroadcastToWeb("OrderStatusChanged", new
             {
                 orderId = payment.Order.Id,

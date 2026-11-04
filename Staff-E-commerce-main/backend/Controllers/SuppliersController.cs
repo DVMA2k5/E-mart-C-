@@ -1,3 +1,4 @@
+using backend.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using backend.DTO;
 using backend.Models;
@@ -75,7 +76,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 

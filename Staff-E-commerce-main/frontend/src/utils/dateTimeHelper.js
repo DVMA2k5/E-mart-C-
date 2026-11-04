@@ -4,17 +4,26 @@
  * Vietnam timezone is UTC+7.
  */
 
-const VIETNAM_UTC_OFFSET = 7;
+const vietnamParts = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+});
 
 /**
  * Convert UTC date to Vietnam time
+ * The API sends UTC instants ("...Z"). The returned Date's local getters (getDate/getHours...) show the
+ * Vietnamese wall-clock time, whatever time zone the browser itself is in. Adding 7 hours by hand gave the
+ * wrong day on machines already set to Vietnam time.
  * @param {string|Date} utcDate - UTC date string or Date object
  * @returns {Date} Date in Vietnam timezone
  */
 export const toVietnamTime = (utcDate) => {
   if (!utcDate) return null;
   const date = new Date(utcDate);
-  return new Date(date.getTime() + VIETNAM_UTC_OFFSET * 60 * 60 * 1000);
+  if (Number.isNaN(date.getTime())) return null;
+  const part = Object.fromEntries(vietnamParts.formatToParts(date).map(({ type, value }) => [type, Number(value)]));
+  return new Date(part.year, part.month - 1, part.day, part.hour, part.minute, part.second);
 };
 
 /**
@@ -22,8 +31,7 @@ export const toVietnamTime = (utcDate) => {
  * @returns {Date} Current date in Vietnam timezone (time set to 00:00:00)
  */
 export const getVietnamToday = () => {
-  const now = new Date();
-  const vnNow = new Date(now.getTime() + VIETNAM_UTC_OFFSET * 60 * 60 * 1000);
+  const vnNow = toVietnamTime(new Date());
   return new Date(vnNow.getFullYear(), vnNow.getMonth(), vnNow.getDate());
 };
 

@@ -1,5 +1,6 @@
 using backend.Data;
 using backend.DTO;
+using backend.Helpers;
 using Microsoft.EntityFrameworkCore;
 
 namespace backend.Repository
@@ -25,21 +26,21 @@ namespace backend.Repository
             if (fromDate.HasValue)
             {
                 // Normalize to start of day
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(oi => oi.Order!.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
                 // Normalize to end of day
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(oi => oi.Order!.CreatedAt <= endDate);
             }
 
             var results = await query
                 .Select(oi => new SalesReportDTO
                 {
-                    Date = oi.Order!.CreatedAt,
+                    Date = oi.Order!.CreatedAt.AddHours(7),
                     OrderNumber = oi.Order.OrderNumber,
                     CustomerName = oi.Order.Customer != null ? oi.Order.Customer.FullName : null,
                     ProductName = oi.Product != null ? oi.Product.ProductName : "",
@@ -85,14 +86,14 @@ namespace backend.Repository
             if (fromDate.HasValue)
             {
                 // Normalize to start of day
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(o => o.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
                 // Normalize to end of day
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(o => o.CreatedAt <= endDate);
             }
 
@@ -111,13 +112,13 @@ namespace backend.Repository
 
             if (fromDate.HasValue)
             {
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 productsSoldQuery = productsSoldQuery.Where(oi => oi.Order!.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 productsSoldQuery = productsSoldQuery.Where(oi => oi.Order!.CreatedAt <= endDate);
             }
 
@@ -141,19 +142,19 @@ namespace backend.Repository
             if (fromDate.HasValue)
             {
                 // Normalize to start of day
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(o => o.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
                 // Normalize to end of day
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(o => o.CreatedAt <= endDate);
             }
 
             var results = await query
-                .GroupBy(o => o.CreatedAt.Date)
+                .GroupBy(o => o.CreatedAt.AddHours(7).Date) // group by Vietnamese day, not UTC
                 .Select(g => new RevenueByDayDTO
                 {
                     Date = g.Key,
@@ -232,13 +233,13 @@ namespace backend.Repository
 
             if (fromDate.HasValue)
             {
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(oi => oi.Order!.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(oi => oi.Order!.CreatedAt <= endDate);
             }
 
@@ -276,13 +277,13 @@ namespace backend.Repository
 
             if (fromDate.HasValue)
             {
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(o => o.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(o => o.CreatedAt <= endDate);
             }
 
@@ -321,13 +322,13 @@ namespace backend.Repository
 
             if (fromDate.HasValue)
             {
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(o => o.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(o => o.CreatedAt <= endDate);
             }
 

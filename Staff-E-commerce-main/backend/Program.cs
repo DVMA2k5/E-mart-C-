@@ -32,6 +32,9 @@ builder.Services.AddDataProtection()
 // Configure Services
 // -------------------------
 builder.Services.AddScoped<PermissionFilter>();
+builder.Services.AddScoped<ActorPermissionService>();
+builder.Services.AddScoped<PaymentSimulator>();
+builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddScoped<AccountMutationFilter>();
 builder.Services.AddScoped<ReadCacheInvalidationFilter>();
 builder.Services.AddScoped<ReadCacheInvalidationService>();
@@ -47,6 +50,7 @@ builder.Services.AddControllers(options =>
         options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        options.JsonSerializerOptions.Converters.Add(new backend.Helpers.UtcDateTimeJsonConverter());
 
         // Nếu muốn, có thể dùng ReferenceHandler.Preserve
         // options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.Preserve;
@@ -54,7 +58,8 @@ builder.Services.AddControllers(options =>
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR().AddJsonProtocol(options =>
+    options.PayloadSerializerOptions.Converters.Add(new backend.Helpers.UtcDateTimeJsonConverter()));
 builder.Services.AddAuthorization(options =>
 {
     // Yêu cầu đăng nhập cho tất cả endpoint trừ khi đánh dấu [AllowAnonymous]
@@ -144,7 +149,8 @@ builder.Services.Configure<FormOptions>(options =>
 });
 
 // Authentication JWT
-var key = builder.Configuration["Jwt:Key"];
+var key = JwtKeyStore.Resolve(builder.Configuration, builder.Environment.ContentRootPath);
+builder.Configuration["Jwt:Key"] = key; // JwtService signs with the same resolved key.
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -178,11 +184,31 @@ builder.Services.AddAuthentication(options =>
 // -------------------------
 // Configure CORS for React
 // -------------------------
+// Cors:AllowedOrigins (exact origins) is used when configured, e.g. for a deployed site. Without it only this
+// machine and private LAN addresses are accepted, so the admin site/Expo web still work from another PC on the LAN.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()?
+    .Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .Select(origin => origin.Trim().TrimEnd('/'))
+    .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+static bool IsLocalOrLanOrigin(string origin)
+{
+    if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
+        return false;
+    if (uri.IsLoopback) return true;
+    if (!System.Net.IPAddress.TryParse(uri.Host, out var ip) ||
+        ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
+    var b = ip.GetAddressBytes();
+    return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReact", policy =>
     {
-        policy.SetIsOriginAllowed(_ => true)
+        policy.SetIsOriginAllowed(origin => allowedOrigins.Count > 0
+                ? allowedOrigins.Contains(origin.TrimEnd('/'))
+                : IsLocalOrLanOrigin(origin))
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -223,6 +249,38 @@ app.UseStaticFiles(new StaticFileOptions
     ServeUnknownFileTypes = false
 });
 
+// -------------------------
+// Serve the built admin SPA (frontend/dist) when present. Public files, so this runs before authentication;
+// otherwise the authorization fallback policy answers 401 for index.html and the JS bundle.
+// -------------------------
+var frontendDist = Path.Combine(Directory.GetCurrentDirectory(), "../frontend/dist");
+if (Directory.Exists(frontendDist))
+{
+    var spaFiles = new PhysicalFileProvider(Path.GetFullPath(frontendDist));
+    // Client-side routes (/dashboard, /pos...) have no file extension: answer them with index.html.
+    app.Use(async (context, next) =>
+    {
+        var path = context.Request.Path;
+        if (HttpMethods.IsGet(context.Request.Method) && context.GetEndpoint() == null &&
+            !Path.HasExtension(path.Value) &&
+            !path.StartsWithSegments("/api") && !path.StartsWithSegments("/hub") && !path.StartsWithSegments("/swagger"))
+            context.Request.Path = "/index.html";
+        await next();
+    });
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = spaFiles, RequestPath = "" });
+}
+
+// A missing image or bundle file is a 404, not a 401 from the authorization fallback policy.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/assets") && context.GetEndpoint() == null)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    await next();
+});
+
 // Xác thực JWT
 app.UseAuthentication();
 app.UseAuthorization();
@@ -233,47 +291,5 @@ app.UseHttpsRedirection();
 
 app.MapControllers();
 app.MapHub<NotificationHub>("/hub/notifications");
-
-// -------------------------
-// Serve frontend SPA (Vite)
-// -------------------------
-var frontendDist = Path.Combine(Directory.GetCurrentDirectory(), "../frontend/dist");
-if (Directory.Exists(frontendDist))
-{
-    var fileProvider = new PhysicalFileProvider(frontendDist);
-
-    app.UseDefaultFiles(new DefaultFilesOptions
-    {
-        FileProvider = fileProvider,
-        RequestPath = ""
-    });
-    app.UseStaticFiles(new StaticFileOptions
-    {
-        FileProvider = fileProvider,
-        RequestPath = ""
-    });
-
-    // Fallback SPA routing (cho các route không phải API và không có file extension)
-    app.Use(async (context, next) =>
-    {
-        await next();
-
-        if (context.Response.StatusCode == 404 &&
-            !Path.HasExtension(context.Request.Path.Value) &&
-            !context.Request.Path.Value.StartsWith("/api"))
-        {
-            context.Request.Path = "/index.html";
-            context.Response.StatusCode = 200;
-            await next();
-        }
-    });
-
-    // Serve fallback file
-    app.UseStaticFiles(new StaticFileOptions
-    {
-        FileProvider = fileProvider,
-        RequestPath = ""
-    });
-}
 
 app.Run();

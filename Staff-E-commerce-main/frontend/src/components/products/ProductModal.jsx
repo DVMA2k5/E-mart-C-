@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from "react";
 import CustomSelect from "../ui/CustomSelect";
-import { request } from "../../api/apiClient";
+import { request, API_ORIGIN } from "../../api/apiClient";
+
+const DEFAULT_IMAGE = `${API_ORIGIN}/assets/images/products/default.jpg`;
+// Fall back once; if the fallback also fails, stop instead of retrying in a loop.
+const showFallbackImage = (event) => {
+  event.currentTarget.onerror = null;
+  event.currentTarget.src = DEFAULT_IMAGE;
+};
 import { getAllCategories } from "../../api/categoryApi";
 import ProductDescriptionEditor, { ProductDescriptionContent } from "./ProductDescription";
 
@@ -21,6 +28,7 @@ const ProductModal = ({
   const [formData, setFormData] = useState({});
   const [errors, setErrors] = useState({});
   const [uploading, setUploading] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [descriptionLoading, setDescriptionLoading] = useState(false);
   const [descriptionError, setDescriptionError] = useState("");
 
@@ -217,6 +225,7 @@ const ProductModal = ({
     if (!validate()) return;
 
     let finalImageUrl = formData.imageUrl;
+    setSaveError("");
 
     // Nếu có file upload từ máy
     if (formData.imageFile) {
@@ -225,9 +234,11 @@ const ProductModal = ({
         const productId = mode === "edit" && product?.id ? product.id : null;
         const uploadedUrl = await uploadImage(formData.imageFile, productId);
         finalImageUrl = uploadedUrl;
+        // Remember the uploaded file so pressing Save again after a failed save does not upload it twice.
+        setFormData((prev) => ({ ...prev, imageFile: null, imageUrl: uploadedUrl }));
       } catch (error) {
         console.error("Lỗi upload ảnh:", error);
-        alert(error.message || "Lỗi upload ảnh. Vui lòng thử lại.");
+        setSaveError(error.message || "Lỗi upload ảnh. Vui lòng thử lại.");
         return;
       } finally {
         setUploading(false);
@@ -257,8 +268,13 @@ const ProductModal = ({
       isActive: formData.isActive !== undefined ? formData.isActive : (product?.isActive !== undefined ? product.isActive : true),
     };
     delete saveData.imageFile;
+    if (mode !== "create") delete saveData.stockQuantity; // stock is adjusted in Kho hàng, not here
 
-    onSave?.(saveData, mode);
+    try {
+      await onSave?.(saveData, mode);
+    } catch (error) {
+      setSaveError(error.message || "Không lưu được sản phẩm.");
+    }
   };
 
   // Hàm upload ảnh với productId
@@ -278,12 +294,12 @@ const ProductModal = ({
   // Hàm getImageUrl để hiển thị ảnh
   const getImageUrl = (imageUrl) => {
     if (!imageUrl) {
-      return "http://localhost:5099/assets/images/products/default.jpg";
+      return DEFAULT_IMAGE;
     }
 
     // Nếu là đường dẫn tương đối từ backend
     if (imageUrl.startsWith("/assets/")) {
-      return `http://localhost:5099${imageUrl}`;
+      return `${API_ORIGIN}${imageUrl}`;
     }
 
     // Nếu là blob URL (preview khi chọn file từ máy)
@@ -296,7 +312,7 @@ const ProductModal = ({
       return imageUrl;
     }
 
-    return "http://localhost:5099/assets/images/products/default.jpg";
+    return DEFAULT_IMAGE;
   };
 
   function getImageSource() {
@@ -305,16 +321,9 @@ const ProductModal = ({
       return getImageUrl(formData.imageUrl);
     }
 
-    // 2) Nếu có product.id, thử load ảnh theo pattern product-{id}.jpg
-    if (product?.id) {
-      // Thêm timestamp để force reload ảnh mới sau khi upload
-      return `http://localhost:5099/assets/images/products/product-${
-        product.id
-      }.jpg?t=${Date.now()}`;
-    }
-
-    // 3) Fallback - ảnh mặc định
-    return "http://localhost:5099/assets/images/products/default.jpg";
+    // 2) Fallback - ảnh mặc định. Uploads get unique file names, so no cache-busting timestamp is needed
+    // (a new timestamp on every render made the browser re-download the image constantly).
+    return DEFAULT_IMAGE;
   }
 
   const isView = mode === "view";
@@ -326,10 +335,10 @@ const ProductModal = ({
           <h3 className="text-lg font-semibold">{modalTitle}</h3>
           {onDelete && mode !== "create" && (
             <button
-              className="text-red-600 text-sm hover:text-red-800"
+              className={`text-sm ${product?.isActive === false ? "text-emerald-700 hover:text-emerald-900" : "text-red-600 hover:text-red-800"}`}
               onClick={onDelete}
             >
-              Xóa
+              {product?.isActive === false ? "Mở bán lại" : "Ngừng bán"}
             </button>
           )}
         </div>
@@ -348,11 +357,7 @@ const ProductModal = ({
                     src={getImageSource()}
                     alt={formData.productName}
                     className="w-full h-full object-cover rounded"
-                    onError={(e) => {
-                      // fallback cuối nếu ảnh không tồn tại
-                      e.target.src =
-                        "http://localhost:5099/assets/images/products/default.jpg";
-                    }}
+                    onError={showFallbackImage}
                   />
                 </div>
                 <label className="text-xs text-gray-600 mb-2 block">
@@ -367,10 +372,7 @@ const ProductModal = ({
                       src={getImageUrl(formData.imageUrl)}
                       alt={formData.productName || "Preview"}
                       className="w-full h-full object-cover rounded"
-                      onError={(e) => {
-                        e.target.src =
-                          "http://localhost:5099/assets/images/products/default.jpg";
-                      }}
+                      onError={showFallbackImage}
                     />
                   ) : (
                     <div className="text-gray-400 text-sm">Chưa có ảnh</div>
@@ -563,10 +565,17 @@ const ProductModal = ({
 
               <div>
                 <label className="text-xs text-gray-600">Số lượng tồn *</label>
-                {isView ? (
-                  <div className="p-2 border rounded bg-gray-50">
-                    {Number(formData.stockQuantity ?? 0).toLocaleString("vi-VN")}
-                  </div>
+                {isView || mode !== "create" ? (
+                  <>
+                    <div className="p-2 border rounded bg-gray-50">
+                      {Number(formData.stockQuantity ?? 0).toLocaleString("vi-VN")}
+                    </div>
+                    {!isView && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Đổi số tồn tại mục Kho hàng (điều chỉnh có lý do) hoặc qua phiếu nhập để giữ lịch sử.
+                      </p>
+                    )}
+                  </>
                 ) : (
                   <>
                     <input
@@ -756,10 +765,14 @@ const ProductModal = ({
                 })()}
               </div>
 
+              {saveError && (
+                <p role="alert" className="col-span-2 rounded bg-red-50 p-2 text-sm text-red-700">{saveError}</p>
+              )}
+
               {/* --- BUTTONS --- */}
               <div className="col-span-2 flex items-center justify-end gap-2">
-                {isView && onCreatePurchaseOrder && (
-                  <button type="button" className="mr-auto px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => onCreatePurchaseOrder(product)}>
+                {mode !== "create" && onCreatePurchaseOrder && (
+                  <button type="button" className="mr-auto inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2" onClick={() => onCreatePurchaseOrder(product)}>
                     Nhập hàng từ nhà cung cấp
                   </button>
                 )}

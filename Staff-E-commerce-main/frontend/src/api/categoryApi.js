@@ -45,13 +45,6 @@ export async function toggleCategoryStatus(categoryId, isActive) {
   });
 }
 
-// Xóa category
-export async function deleteCategory(categoryId) {
-  return request(`/categories/${categoryId}`, {
-    method: "DELETE",
-  });
-}
-
 // Lấy tất cả categories (không phân trang)
 export async function getAllCategories() {
   const data = await request("/categories/all");
@@ -64,6 +57,5 @@ export default {
   createCategory,
   updateCategory,
   toggleCategoryStatus,
-  deleteCategory,
   getAllCategories,
 };

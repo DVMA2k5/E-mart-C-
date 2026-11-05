@@ -1,9 +1,8 @@
+using backend.Helpers;
 using backend.DTO;
 using backend.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using backend.Models;
-using backend.Hubs;
 
 namespace backend.Controllers
 {
@@ -12,15 +11,15 @@ namespace backend.Controllers
     public class OrdersController : ControllerBase
     {
         private readonly OrderService _orderService;
-        private readonly IHubContext<OrderHub>? _orderHub;
+        private readonly RealtimeNotificationService _realtime;
         private readonly PosCheckoutService _checkout;
         private readonly PaymentService _payments;
         private readonly IConfiguration _config;
 
-        public OrdersController(OrderService orderService, PosCheckoutService checkout, PaymentService payments, IConfiguration config, IHubContext<OrderHub>? orderHub = null)
+        public OrdersController(OrderService orderService, PosCheckoutService checkout, PaymentService payments, IConfiguration config, RealtimeNotificationService realtime)
         {
             _orderService = orderService;
-            _orderHub = orderHub;
+            _realtime = realtime;
             _checkout = checkout;
             _payments = payments;
             _config = config;
@@ -38,7 +37,7 @@ namespace backend.Controllers
             catch (Exception ex)
             {
                 Console.WriteLine($"Lỗi tạo order: {ex}");
-                return StatusCode(500, new { success = false, message = ex.Message });
+                return this.ServerError(ex);
             }
         }
 
@@ -75,8 +74,28 @@ namespace backend.Controllers
                 if (savedOrder == null)
                     return StatusCode(500, "Failed to save order");
 
+                await _realtime.BroadcastToWeb("NewOrderPlaced", new
+                {
+                    orderId = savedOrder.Id,
+                    orderNumber = savedOrder.OrderNumber,
+                    orderType = "pos",
+                    customerName = savedOrder.CustomerName,
+                    totalAmount = savedOrder.TotalAmount,
+                    itemCount = savedOrder.Items.Sum(item => item.Quantity),
+                    paymentMethod = savedOrder.PaymentMethod,
+                    createdAt = savedOrder.CreatedAt
+                });
+                await _realtime.BroadcastStock("StockUpdated", new
+                {
+                    productIds = savedOrder.Items.Select(item => item.ProductId).Distinct().ToArray(),
+                    orderId = savedOrder.Id,
+                    source = "pos-checkout",
+                    changedAt = DateTime.UtcNow
+                });
+
                 return Ok(savedOrder);
             }
+            catch (BusinessRuleException ex) { return StatusCode(ex.StatusCode, new { message = ex.Message }); }
             catch (ArgumentException ex)
             {
                 return BadRequest(new { message = ex.Message });
@@ -84,8 +103,8 @@ namespace backend.Controllers
             catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Create order failed: {ex}");
-                return StatusCode(500, new { message = "Không thể tạo đơn hàng. Vui lòng thử lại." });
+                // Lock time-out → 503 + Retry-After: the POS keeps its saved request and resends the same key.
+                return this.ServerError(ex);
             }
         }
 
@@ -157,6 +176,8 @@ namespace backend.Controllers
         {
             if (!string.IsNullOrEmpty(orderType) && orderType != "mobile" && orderType != "pos")
                 return BadRequest(new { message = "Kênh bán không hợp lệ." });
+            pageNumber = Math.Max(pageNumber, 1);
+            pageSize = Math.Clamp(pageSize, 1, 100);
             var result = await _orderService.GetPagedOrdersAsync(
                 pageNumber, pageSize, status, startDate, endDate, search, orderType
             );
@@ -202,8 +223,7 @@ namespace backend.Controllers
             catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Complete pending order failed: {ex}");
-                return StatusCode(500, new { message = "Không thể hoàn thành đơn hàng." });
+                return this.ServerError(ex);
             }
         }
 
@@ -215,10 +235,34 @@ namespace backend.Controllers
             int pageNumber = 1,
             int pageSize = 20,
             string? status = null,
-            string? search = null)
+            string? search = null,
+            DateTime? fromDate = null,
+            DateTime? toDate = null)
         {
-            var result = await _orderService.GetOnlineOrdersAsync(pageNumber, pageSize, status, search);
+            if (fromDate.HasValue && toDate.HasValue && fromDate.Value.Date > toDate.Value.Date)
+                return BadRequest(new { message = "Ngày bắt đầu phải trước hoặc bằng ngày kết thúc." });
+            var result = await _orderService.GetOnlineOrdersAsync(pageNumber, pageSize, status, search, null, fromDate, toDate);
             return Ok(result);
+        }
+
+        /// <summary>Lịch sử thay đổi trạng thái của một đơn: ai làm, lúc nào.</summary>
+        [HttpGet("{orderId:int}/history")]
+        public async Task<IActionResult> GetOrderHistory(int orderId) => Ok(await _orderService.GetOrderHistoryAsync(orderId));
+
+        /// <summary>Nhân viên xác nhận đã nhận chuyển khoản cho đơn online thanh toán bằng VietQR.</summary>
+        [HttpPost("{orderId:int}/confirm-transfer")]
+        public async Task<IActionResult> ConfirmOnlineTransfer(int orderId, [FromBody] OnlineTransferConfirmation? request)
+        {
+            try
+            {
+                var reference = string.IsNullOrWhiteSpace(request?.Reference) ? $"BANK-{orderId}" : request!.Reference!;
+                var userId = int.TryParse(User.FindFirst("uid")?.Value, out var id) ? id : (int?)null;
+                return await _orderService.ConfirmOnlineTransferAsync(orderId, reference, userId)
+                    ? Ok(new { success = true, message = "Đã ghi nhận chuyển khoản." })
+                    : NotFound(new { message = "Không tìm thấy đơn hàng online." });
+            }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         }
 
         /// <summary>
@@ -233,16 +277,12 @@ namespace backend.Controllers
                 if (!result)
                     return Conflict(new { message = "Đơn hàng không thể xác nhận (không tồn tại hoặc không ở trạng thái pending)." });
 
-                if (_orderHub != null)
-                {
-                    _ = _orderHub.Clients.All.SendAsync("OrderStatusChanged", new { orderId, status = "processing" });
-                }
-
                 return Ok(new { success = true, message = "Đã xác nhận đơn hàng." });
             }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                return this.ServerError(ex);
             }
         }
 
@@ -258,16 +298,12 @@ namespace backend.Controllers
                 if (!result)
                     return Conflict(new { message = "Đơn hàng không thể từ chối (không tồn tại hoặc không ở trạng thái pending/processing)." });
 
-                if (_orderHub != null)
-                {
-                    _ = _orderHub.Clients.All.SendAsync("OrderStatusChanged", new { orderId, status = "cancelled" });
-                }
-
                 return Ok(new { success = true, message = "Đã từ chối đơn hàng." });
             }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                return this.ServerError(ex);
             }
         }
 
@@ -283,26 +319,26 @@ namespace backend.Controllers
                 if (!result)
                     return Conflict(new { message = "Đơn hàng không thể chuyển sang trạng thái giao hàng." });
 
-                if (_orderHub != null)
-                {
-                    _ = _orderHub.Clients.All.SendAsync("OrderStatusChanged", new { orderId, status = "completed" });
-                }
-
                 return Ok(new { success = true, message = "Đã hoàn thành giao hàng." });
             }
             catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                return this.ServerError(ex);
             }
         }
 
         [HttpPost("{orderId}/refund")]
-        public async Task<IActionResult> MarkOrderRefunded(int orderId)
+        public async Task<IActionResult> MarkOrderRefunded(int orderId, [FromBody] PosPaymentConfirmation request)
         {
-            var result = await _orderService.MarkOrderRefundedAsync(orderId);
-            return result ? Ok(new { success = true, message = "Đơn hàng và hóa đơn đã được đánh dấu hoàn tiền." })
-                : Conflict(new { message = "Chỉ đơn đã thanh toán mới có thể đánh dấu hoàn tiền." });
+            try
+            {
+                var result = await _orderService.MarkOrderRefundedAsync(orderId, request.Amount, request.Reference);
+                return result ? Ok(new { success = true, message = "Đơn hàng và hóa đơn đã được đánh dấu hoàn tiền." })
+                    : Conflict(new { message = "Số tiền không khớp hoặc đơn chưa đủ điều kiện hoàn tiền." });
+            }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         }
 
         [HttpGet("{orderId}/items")]
@@ -315,7 +351,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = ex.Message });
+                return this.ServerError(ex);
             }
         }
     }

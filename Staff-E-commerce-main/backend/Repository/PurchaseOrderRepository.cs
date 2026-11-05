@@ -1,6 +1,9 @@
 using backend.Data;
+using backend.DTO;
 using backend.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using System.Data;
 
 namespace backend.Repository;
 
@@ -10,25 +13,76 @@ public class PurchaseOrderRepository
 
     public PurchaseOrderRepository(AppDbContext context) => _context = context;
 
-    public async Task<(List<PurchaseOrder> Items, int TotalItems)> GetPagedAsync(int page, int pageSize, string? search, string? status, int? supplierId)
+    public Task<Supplier?> GetActiveSupplierAsync(int supplierId)
     {
-        var query = _context.PurchaseOrders.Include(po => po.Supplier).Include(po => po.User).Include(po => po.Details).AsQueryable();
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            var keyword = search.Trim();
-            query = query.Where(po => po.PoCode.Contains(keyword) || po.Supplier!.Name.Contains(keyword));
-        }
-        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(po => po.Status == status);
-        if (supplierId.HasValue) query = query.Where(po => po.SupplierId == supplierId.Value);
+        return _context.Suppliers.SingleOrDefaultAsync(item => item.Id == supplierId && item.IsActive);
+    }
 
-        var totalItems = await query.CountAsync();
-        var items = await query.OrderByDescending(po => po.CreatedAt).ThenByDescending(po => po.Id)
-            .Skip((page - 1) * pageSize).Take(pageSize).AsNoTracking().ToListAsync();
-        return (items, totalItems);
+    public Task<int> CountActiveProductsAsync(IEnumerable<int> productIds)
+    {
+        var ids = productIds.Distinct().ToList();
+        return _context.Products.CountAsync(product => ids.Contains(product.Id) && product.IsActive);
+    }
+
+    public Task<List<PurchaseOrderListDTO>> GetAllForCacheAsync()
+    {
+        return _context.PurchaseOrders.AsNoTracking()
+            .OrderByDescending(po => po.CreatedAt).ThenByDescending(po => po.Id)
+            .Select(po => new PurchaseOrderListDTO
+            {
+                Id = po.Id,
+                PoCode = po.PoCode,
+                SupplierId = po.SupplierId,
+                SupplierName = po.Supplier != null ? po.Supplier.Name : string.Empty,
+                UserName = po.User != null ? po.User.FullName : string.Empty,
+                EmployeeId = po.EmployeeId,
+                EmployeeName = po.Employee != null ? po.Employee.FullName : null,
+                TotalAmount = po.Details.Sum(detail => (decimal?)(detail.Quantity * detail.ImportPrice)) ?? 0m,
+                TotalQuantity = po.Details.Sum(detail => (int?)detail.Quantity) ?? 0,
+                Status = po.Status,
+                CreatedAt = po.CreatedAt
+            })
+            .ToListAsync();
     }
 
     public Task<PurchaseOrder?> GetByIdAsync(int id) => _context.PurchaseOrders
-        .Include(po => po.Supplier).Include(po => po.User)
+        .Include(po => po.Supplier).Include(po => po.User).Include(po => po.Employee)
         .Include(po => po.Details).ThenInclude(detail => detail.Product)
         .FirstOrDefaultAsync(po => po.Id == id);
+
+    public async Task<PurchaseOrder> CreateAsync(PurchaseOrder purchaseOrder)
+    {
+        _context.PurchaseOrders.Add(purchaseOrder);
+        await _context.SaveChangesAsync();
+        return purchaseOrder;
+    }
+
+    public Task<int?> GetEmployeeIdForUserAsync(int userId) => _context.Users
+        .Where(user => user.Id == userId).Select(user => user.EmployeeId).SingleOrDefaultAsync();
+
+    public Task<IDbContextTransaction> BeginSerializableTransactionAsync() =>
+        _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+    public Task LockAsync(int id)
+    {
+        var resource = $"purchase-order-{id}";
+        return _context.Database.ExecuteSqlInterpolatedAsync($"""
+            DECLARE @result INT;
+            EXEC @result = sys.sp_getapplock @Resource = {resource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 10000;
+            IF @result < 0 THROW 51000, 'Purchase order is busy. Please retry.', 1;
+            """);
+    }
+
+    public Task<PurchaseOrder?> GetForUpdateAsync(int id) => _context.PurchaseOrders
+        .Include(po => po.Details).FirstOrDefaultAsync(po => po.Id == id);
+
+    public Task<Dictionary<int, Product>> GetProductsForUpdateAsync(IEnumerable<int> productIds)
+    {
+        var ids = productIds.Distinct().ToList();
+        return _context.Products.Where(product => ids.Contains(product.Id)).ToDictionaryAsync(product => product.Id);
+    }
+
+    public void AddInventoryAdjustment(InventoryAdjustment adjustment) => _context.InventoryAdjustments.Add(adjustment);
+    public void AddActivityLog(ActivityLog activityLog) => _context.ActivityLogs.Add(activityLog);
+    public Task SaveChangesAsync() => _context.SaveChangesAsync();
 }

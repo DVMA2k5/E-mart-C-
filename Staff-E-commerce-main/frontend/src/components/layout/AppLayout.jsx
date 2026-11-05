@@ -4,6 +4,7 @@ import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import GlobalSpinner from "../ui/GlobalSpinner";
+import SessionExpiryWarning from "../auth/SessionExpiryWarning";
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -33,15 +34,16 @@ export default function AppLayout() {
       {sidebarEl}
 
       {/* Page content */}
-      <div className="flex-1 md:ml-64 flex flex-col min-h-0">
+      <div className="flex-1 min-w-0 md:ml-64 flex flex-col min-h-0">
         {topbarEl}
 
         {/* main area: Outlet is where router will render the active route content */}
-        <main className="p-4 overflow-auto">
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto p-2 sm:p-3">
           <Outlet />
         </main>
       </div>
       {/* <GlobalSpinner /> */}
+      <SessionExpiryWarning />
     </div>
   );
 }

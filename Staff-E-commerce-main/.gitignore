@@ -23,3 +23,7 @@
 backend/Logs/*.log
 backend/request_log.txt
 backend/server.log
+## Local secrets (never commit)
+backend/.aspnet-keys/
+backend/.local-secrets/
+backend/Logs/

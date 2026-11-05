@@ -5,19 +5,39 @@ import OrderTable from "../../components/orders/OrderTable";
 import { useOrders } from "../../hook/useOrders";
 import { useDebouncedSearch } from "../../hook/useDebouncedSearch";
 import { orderStatusLabels } from "../../utils/orderStatus";
+import { useRealtimeNotifications } from "../../hooks/useRealtimeNotifications";
+import TableDisplayControls from "../../components/ui/TableDisplayControls";
 
 export default function OrdersPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const openedOrderRef = useRef(null);
   const [searchInput, setSearchInput] = useState("");
+  const [compact, setCompact] = useState(true);
   const {
-    currentOrder, closeOrderModal, listOrders, currentPage, totalPages, setCurrentPage,
+    currentOrder, closeOrderModal, listOrders, currentPage, totalPages, setCurrentPage, pageSize, setPageSize,
     selectedStatus, setSelectedStatus, selectedStartDate, setSelectedStartDate,
     selectedOrderType, setSelectedOrderType,
     selectedEndDate, setSelectedEndDate, searchKeyword, setSearchKeyword,
     loading, opening, error, loadOrdersAdvanced, showOrderById,
   } = useOrders();
+  useRealtimeNotifications({
+    NewOrderPlaced: () => loadOrdersAdvanced({ silent: true }),
+    OrderStatusChanged: () => loadOrdersAdvanced({ silent: true }),
+  });
+  useEffect(() => {
+    const refreshVisibleOrders = () => {
+      if (document.visibilityState === "visible") loadOrdersAdvanced({ silent: true });
+    };
+    const timer = window.setInterval(refreshVisibleOrders, 3000);
+    window.addEventListener("focus", refreshVisibleOrders);
+    document.addEventListener("visibilitychange", refreshVisibleOrders);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshVisibleOrders);
+      document.removeEventListener("visibilitychange", refreshVisibleOrders);
+    };
+  }, [loadOrdersAdvanced]);
   useDebouncedSearch(searchInput, searchKeyword, (keyword) => { setSearchKeyword(keyword); setCurrentPage(1); });
   useEffect(() => {
     const orderId = location.state?.orderId;
@@ -26,7 +46,11 @@ export default function OrdersPage() {
     showOrderById(orderId);
     navigate(location.pathname, { replace: true, state: null });
   }, [location, navigate, showOrderById]);
-  return <main className="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
+  const toggleOrderDetail = (orderId) => {
+    if (currentOrder?.id === orderId) closeOrderModal();
+    else showOrderById(orderId);
+  };
+  return <section className="space-y-3 p-1 sm:p-2">
     <h1 className="text-2xl font-bold">Lịch sử đơn hàng</h1>
     <div className="flex flex-wrap items-end gap-3 rounded-xl border bg-white p-4">
       <label className="min-w-48 flex-1 text-sm">Tìm đơn hàng<input type="search" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Mã đơn, khách hàng hoặc nhân viên" className="mt-1 block w-full rounded-lg border px-3 py-2" /></label>
@@ -38,7 +62,11 @@ export default function OrdersPage() {
     </div>
     {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">{error}</p>}
     {opening && <p role="status" className="text-sm text-gray-500">Đang mở chi tiết đơn…</p>}
-    <OrderTable listOrders={listOrders} showOrder={showOrderById} loading={loading} currentPage={currentPage} totalPages={totalPages} onPrev={() => setCurrentPage((p) => Math.max(1, p - 1))} onNext={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} />
-    {currentOrder && <OrdersForm currentOrder={currentOrder} onClose={closeOrderModal} />}
-  </main>;
+    <TableDisplayControls pageSize={pageSize} compact={compact} onCompactChange={setCompact} disabled={loading}
+      onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }} />
+    <div className={`grid items-start gap-3 ${currentOrder ? "xl:grid-cols-[minmax(0,1.75fr)_minmax(320px,0.8fr)]" : "grid-cols-1"}`}>
+      <OrderTable compact={compact} pageSize={pageSize} selectedOrderId={currentOrder?.id} listOrders={listOrders} showOrder={toggleOrderDetail} loading={loading} currentPage={currentPage} totalPages={totalPages} onPrev={() => setCurrentPage((p) => Math.max(1, p - 1))} onNext={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} />
+      {currentOrder && <OrdersForm currentOrder={currentOrder} />}
+    </div>
+  </section>;
 }

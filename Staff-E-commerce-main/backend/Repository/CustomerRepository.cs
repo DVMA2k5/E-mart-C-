@@ -23,6 +23,7 @@ namespace backend.Repository
         public async Task<List<Customer>> GetAllAsync()
         {
             return await _context.Customers
+                .AsNoTracking()
                 .OrderBy(c => c.FullName)
                 .ToListAsync();
         }
@@ -81,94 +82,57 @@ namespace backend.Repository
             return await _context.Customers.AnyAsync(c => c.Id == id);
         }
 
+        public Task<bool> HasLoginAccountAsync(int customerId) =>
+            _context.Users.AnyAsync(user => user.CustomerId == customerId);
 
-        public async Task<List<Customer>> GetPaginatedAsync(int page, int pageSize)
+        /// <summary>True when deleting the profile would orphan orders, invoices, vouchers or reward points.</summary>
+        public async Task<bool> HasBusinessHistoryAsync(int customerId) =>
+            await _context.Orders.AnyAsync(order => order.CustomerId == customerId) ||
+            await _context.Invoices.AnyAsync(invoice => invoice.CustomerId == customerId) ||
+            await _context.CustomerVouchers.AnyAsync(voucher => voucher.CustomerId == customerId) ||
+            await _context.Customers.AnyAsync(customer => customer.Id == customerId && customer.RewardPoints > 0);
+
+        public Task<bool> PhoneTakenAsync(string phone, int excludeId) =>
+            _context.Customers.AnyAsync(customer => customer.Id != excludeId && customer.Phone == phone);
+
+        public async Task<bool> EmailTakenAsync(string email, int excludeId) =>
+            await _context.Customers.AnyAsync(customer => customer.Id != excludeId && customer.Email == email) ||
+            await _context.Users.AnyAsync(user => user.Email == email && user.CustomerId != excludeId);
+
+        /// <summary>Keeps the linked login account showing the same name and e-mail as the customer profile.</summary>
+        public async Task SyncLinkedAccountAsync(Customer customer)
         {
-            return await _context.Set<Customer>()
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync();
-        }
-
-        public async Task<int> CountAsync()
-        {
-            return await _context.Set<Customer>().CountAsync();
-        }
-
-        public async Task<List<Customer>> SearchByNameAsync(string keyword)
-        {
-            return await _context.Set<Customer>()
-                .Where(c => c.FullName.Contains(keyword))
-                .ToListAsync();
-        }
-
-        public async Task<List<Customer>> findCustomersByFilteredAndPaginatedAsync(
-            int skip,
-            int pageSize,
-            string? keyword = null,
-            string? status = null)
-        {
-            var query = _context.Set<Customer>().AsQueryable();
-
-            if (!string.IsNullOrWhiteSpace(keyword))
+            var account = await _context.Users.FirstOrDefaultAsync(user => user.CustomerId == customer.Id);
+            if (account == null) return;
+            account.FullName = customer.FullName;
+            account.Email = customer.Email;
+            // Customers sign in with their phone, so the username follows a phone change.
+            var phone = customer.Phone?.Trim();
+            if (!string.IsNullOrEmpty(phone) && account.Username != phone &&
+                !await _context.Users.AnyAsync(user => user.Username == phone && user.Id != account.Id))
             {
-                var trimmedKeyword = keyword.Trim();
-                query = query.Where(c =>
-        c.FullName.Contains(trimmedKeyword) ||
-        (c.Phone != null && c.Phone.Contains(trimmedKeyword)) ||
-        (c.Email != null && c.Email.Contains(trimmedKeyword)) ||
-        (c.Address != null && c.Address.Contains(trimmedKeyword)));
+                account.Username = phone;
+                account.SessionVersion++; // old tokens carry the old username
             }
-
-            if (!string.IsNullOrWhiteSpace(status))
-            {
-                if (status.ToLower() == "active")
-                {
-                    query = query.Where(c => c.IsActive);
-                }
-                else if (status.ToLower() == "inactive")
-                {
-                    query = query.Where(c => !c.IsActive);
-                }
-            }
-
-            return await query
-                .OrderByDescending(c => c.CreatedAt)
-                .Skip(skip)
-                .Take(pageSize)
-                .ToListAsync();
+            account.UpdatedAt = DateTime.UtcNow;
         }
 
-        public async Task<int> CountFilteredAndPaginatedAsync(
-            string? keyword = null,
-            string? status = null)
+        public async Task<Customer> UpdateActiveAsync(Customer customer, bool isActive)
         {
-            var query = _context.Set<Customer>().AsQueryable();
-
-            if (!string.IsNullOrWhiteSpace(keyword))
+            customer.IsActive = isActive;
+            customer.UpdatedAt = DateTime.UtcNow;
+            var account = await _context.Users.FirstOrDefaultAsync(user => user.CustomerId == customer.Id);
+            if (account != null)
             {
-                var trimmedKeyword = keyword.Trim();
-                query = query.Where(c =>
-        c.FullName.Contains(trimmedKeyword) ||
-        (c.Phone != null && c.Phone.Contains(trimmedKeyword)) ||
-        (c.Email != null && c.Email.Contains(trimmedKeyword)) ||
-        (c.Address != null && c.Address.Contains(trimmedKeyword)));
+                account.IsActive = isActive;
+                account.UpdatedAt = DateTime.UtcNow;
             }
-
-            if (!string.IsNullOrWhiteSpace(status))
-            {
-                if (status.ToLower() == "active")
-                {
-                    query = query.Where(c => c.IsActive);
-                }
-                else if (status.ToLower() == "inactive")
-                {
-                    query = query.Where(c => !c.IsActive);
-                }
-            }
-
-            return await query.CountAsync();
-
+            await _context.SaveChangesAsync();
+            return customer;
         }
+
+
+        public async Task<int> CountAsync() =>
+            await _context.Customers.CountAsync();
     }
 }

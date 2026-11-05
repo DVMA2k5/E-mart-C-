@@ -19,8 +19,8 @@ export default function AuditPage() {
         page,
         totalPages,
         fetchListActivity,
-  
-   
+        loading,
+        error,
 
         
     } = useAudit();
@@ -116,6 +116,13 @@ export default function AuditPage() {
                 
             </div>
             
+            {error && (
+                <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                    <span>{error}</span>
+                    <button type="button" onClick={() => fetchListActivity(page)} className="rounded border border-red-300 px-3 py-1 font-semibold hover:bg-red-100">Thử lại</button>
+                </div>
+            )}
+            {loading && <p className="mb-2 text-sm text-gray-500">Đang tải nhật ký…</p>}
             <AuditTable openAuditDetailModal={openAuditDetailModal} listActivityLog={listActivityLog} setSelectedActivityLog={setSelectedActivityLog} page={page} totalPages={totalPages} fetchListActivity ={fetchListActivity } />
             {showAuditDetailModal&&<AuditDetail onClose={closeAuditDetailModal} selectedActivityLog={selectedActivityLog}/>}
 

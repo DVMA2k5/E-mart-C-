@@ -2,6 +2,8 @@ using backend.Data;
 using backend.DTO;
 using backend.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using System.Data;
 
 namespace backend.Repository
 {
@@ -22,6 +24,132 @@ namespace backend.Repository
             return await _context.Orders
                 .Include(o => o.OrderItems) // nếu bạn có navigation
                 .FirstOrDefaultAsync(o => o.Id == id);
+        }
+
+        public Task<Order?> GetForDisplayAsync(int id) => _context.Orders
+            .Include(o => o.Customer).Include(o => o.User).Include(o => o.Promotion)
+            .FirstOrDefaultAsync(o => o.Id == id);
+
+        public Task<bool> IsPosOrderAsync(int orderId) => _context.Orders
+            .AnyAsync(o => o.Id == orderId && o.OrderType == "pos");
+
+        public Task<Order?> GetStatusSnapshotAsync(int orderId) => _context.Orders
+            .AsNoTracking().FirstOrDefaultAsync(o => o.Id == orderId);
+
+        public Task<List<Order>> GetAllOnlineOrdersAsync()
+        {
+            return _context.Orders.AsNoTracking()
+                .Include(o => o.Customer).Include(o => o.Promotion)
+                .Include(o => o.OrderItems).ThenInclude(oi => oi.Product)
+                .Where(o => o.OrderType == "mobile")
+                .OrderByDescending(o => o.CreatedAt).ThenByDescending(o => o.Id)
+                .ToListAsync();
+        }
+
+        /// <summary>Filters and pages online orders in SQL so the list stays fast as the order history grows.</summary>
+        public async Task<(List<Order> Items, int TotalItems)> GetOnlineOrdersPageAsync(
+            int pageNumber, int pageSize, string? status, string? search, int? orderId, DateTime? fromUtc, DateTime? toUtc)
+        {
+            var query = _context.Orders.AsNoTracking().Where(o => o.OrderType == "mobile");
+            if (orderId.HasValue) query = query.Where(o => o.Id == orderId.Value);
+            if (!string.IsNullOrWhiteSpace(status)) query = query.Where(o => o.Status == status);
+            if (fromUtc.HasValue) query = query.Where(o => o.CreatedAt >= fromUtc.Value);
+            if (toUtc.HasValue) query = query.Where(o => o.CreatedAt < toUtc.Value);
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var keyword = search.Trim();
+                query = query.Where(o => o.OrderNumber.Contains(keyword) ||
+                    (o.RecipientName != null && o.RecipientName.Contains(keyword)) ||
+                    (o.RecipientPhone != null && o.RecipientPhone.Contains(keyword)) ||
+                    (o.Customer != null && (o.Customer.FullName.Contains(keyword) || (o.Customer.Phone != null && o.Customer.Phone.Contains(keyword)))));
+            }
+            var totalItems = await query.CountAsync();
+            var items = await query
+                .Include(o => o.Customer).Include(o => o.Promotion)
+                .Include(o => o.OrderItems).ThenInclude(oi => oi.Product)
+                .OrderByDescending(o => o.CreatedAt).ThenByDescending(o => o.Id)
+                .Skip((pageNumber - 1) * pageSize).Take(pageSize)
+                .AsSplitQuery()
+                .ToListAsync();
+            return (items, totalItems);
+        }
+
+        public Task<IDbContextTransaction> BeginSerializableTransactionAsync() =>
+            _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+        public Task LockOrderAsync(int orderId)
+        {
+            var resource = $"order-lifecycle-{orderId}";
+            return _context.Database.ExecuteSqlInterpolatedAsync($"""
+                DECLARE @result INT;
+                EXEC @result = sys.sp_getapplock @Resource = {resource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 10000;
+                IF @result < 0 THROW 51000, 'Order is busy. Please retry.', 1;
+                """);
+        }
+
+        public Task<Order?> GetOnlineOrderForLifecycleAsync(int orderId) => _context.Orders
+            .Include(order => order.OrderItems)
+            .Include(order => order.Customer)
+            .Include(order => order.Payments)
+            .FirstOrDefaultAsync(order => order.Id == orderId && order.OrderType == "mobile");
+
+        public Task<Order?> GetOrderForLifecycleAsync(int orderId) => _context.Orders
+            .Include(order => order.OrderItems)
+            .Include(order => order.Customer)
+            .Include(order => order.Payments)
+            .FirstOrDefaultAsync(order => order.Id == orderId);
+
+        public Task<List<PromotionRedemption>> GetPromotionRedemptionsAsync(int orderId) =>
+            _context.PromotionRedemptions.Include(redemption => redemption.Promotion)
+                .Where(redemption => redemption.OrderId == orderId).ToListAsync();
+
+        public void RemovePromotionRedemptions(IEnumerable<PromotionRedemption> redemptions) =>
+            _context.PromotionRedemptions.RemoveRange(redemptions);
+
+        public void AddPayment(Payment payment) => _context.Payments.Add(payment);
+        public void AddActivityLog(ActivityLog log) => _context.ActivityLogs.Add(log);
+
+        /// <summary>Status history of one order, oldest first, with the name of whoever made each change.</summary>
+        public Task<List<OrderHistoryEntryDTO>> GetOrderHistoryAsync(int orderId)
+        {
+            var key = orderId.ToString();
+            return _context.ActivityLogs.AsNoTracking()
+                .Where(log => log.EntityType == "orders" && log.EntityId == key)
+                .OrderBy(log => log.CreatedAt).ThenBy(log => log.Id)
+                .Select(log => new OrderHistoryEntryDTO
+                {
+                    Action = log.Action,
+                    Note = log.Payload,
+                    UserId = log.UserId,
+                    UserName = log.User != null ? log.User.FullName ?? log.User.Username : null,
+                    CreatedAt = log.CreatedAt
+                })
+                .ToListAsync();
+        }
+        public void AddInventoryAdjustment(InventoryAdjustment adjustment) => _context.InventoryAdjustments.Add(adjustment);
+        public Task SaveChangesAsync() => _context.SaveChangesAsync();
+
+        public async Task<bool> RestoreStockAsync(int productId, int quantity, DateTime updatedAt)
+        {
+            var updated = await _context.Products.Where(product => product.Id == productId)
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(product => product.StockQuantity, product => product.StockQuantity + quantity)
+                    .SetProperty(product => product.UpdatedAt, updatedAt));
+            return updated == 1;
+        }
+
+        public Task<bool> TransactionReferenceExistsAsync(string reference) =>
+            _context.Payments.AnyAsync(payment => payment.TransactionRef == reference);
+
+        public async Task<List<OnlineOrderItemDTO>> GetOrderItemsAsync(int orderId)
+        {
+            return await _context.OrderItems.Include(oi => oi.Product).Where(oi => oi.OrderId == orderId)
+                .Select(oi => new OnlineOrderItemDTO
+                {
+                    Id = oi.Id, ProductId = oi.ProductId, ProductName = oi.Product != null ? oi.Product.ProductName : "",
+                    Sku = oi.Product != null ? oi.Product.Sku : null, ImageUrl = oi.Product != null ? oi.Product.ImageUrl : null,
+                    Quantity = oi.Quantity, UnitPrice = oi.UnitPrice, TotalPrice = oi.TotalPrice
+                }).ToListAsync();
         }
 
         // 2. Cập nhật trạng thái đơn hàng (VD: pending → paid → completed)
@@ -66,179 +194,89 @@ namespace backend.Repository
             return order;
         }
 
-        /*Tìm kiếm kết hợp phân trang*/
-
-        public async Task<(List<OrderDTO> Data, int TotalItems)> SearchPagingAsync(
-            int pageNumber,
-            int pageSize,
-            string? status,
-            DateTime? startDate,
-            DateTime? endDate,
-            string? search,
-            string? orderType = null
-        )
+        public Task<List<OrderDTO>> GetAllForCacheAsync()
         {
-            var query = _context.Orders
-                .Include(o => o.Customer)
-                .Include(o => o.User)
-                .Include(o => o.Promotion)
-                .AsQueryable();
-
-            // === LỌC TRẠNG THÁI ===
-            if (!string.IsNullOrEmpty(status))
-                query = query.Where(o => o.Status == status);
-
-            if (!string.IsNullOrEmpty(orderType))
-                query = query.Where(o => o.OrderType == orderType);
-
-            // === LỌC TỪ NGÀY ===
-            if (startDate.HasValue)
-            {
-                var start = startDate.Value.Date; // 00:00:00
-                query = query.Where(o => o.CreatedAt >= start);
-            }
-
-            // === LỌC ĐẾN NGÀY ===
-            if (endDate.HasValue)
-            {
-                var end = endDate.Value.Date.AddDays(1).AddTicks(-1); // 23:59:59.9999999
-                query = query.Where(o => o.CreatedAt <= end);
-            }
-
-            // === TÌM KIẾM THEO TÊN ===
-            if (!string.IsNullOrEmpty(search))
-            {
-                string keyword = $"%{search}%";
-
-                query = query.Where(o =>
-                    EF.Functions.Like(o.OrderNumber, keyword) ||
-                    (o.Customer != null && EF.Functions.Like(o.Customer.FullName, keyword)) ||
-                    (o.User != null && EF.Functions.Like(o.User.FullName, keyword))
-                );
-            }
-
-            // === ĐẾM TỔNG ===
-            int totalItems = await query.CountAsync();
-
-            // === TRẢ VỀ DATA THEO TRANG ===
-            var data = await query
-                .OrderByDescending(o => o.CreatedAt)
-                .ThenByDescending(o => o.Id)
-
-                .Skip((pageNumber - 1) * pageSize)
-                .Take(pageSize)
+            return _context.Orders.AsNoTracking()
+                .Include(o => o.Customer).Include(o => o.User).Include(o => o.Promotion)
+                .OrderByDescending(o => o.CreatedAt).ThenByDescending(o => o.Id)
                 .Select(o => new OrderDTO
                 {
-                    Id = o.Id,
-                    OrderNumber = o.OrderNumber,
-                    CustomerId = o.CustomerId,
-                    UserId = o.UserId,
-                    Status = o.Status,
-                    OrderType = o.OrderType,
-                    IsPosCheckout = o.CheckoutKey != null,
-                    PaymentStatus = o.PaymentStatus,
-                    PaymentMethod = o.PaymentMethod,
-                    Subtotal = o.Subtotal,
-                    Discount = o.Discount,
-                    TotalAmount = o.TotalAmount,
-                    PromotionId = o.PromotionId,
-                    Note = o.Note,
-                    RecipientName = o.RecipientName,
-                    RecipientPhone = o.RecipientPhone,
-                    ShippingAddress = o.ShippingAddress,
-                    CreatedAt = o.CreatedAt,
-                    UpdatedAt = o.UpdatedAt,
+                    Id = o.Id, OrderNumber = o.OrderNumber, CustomerId = o.CustomerId, UserId = o.UserId,
+                    Status = o.Status, OrderType = o.OrderType, IsPosCheckout = o.CheckoutKey != null,
+                    PaymentStatus = o.PaymentStatus, PaymentMethod = o.PaymentMethod, Subtotal = o.Subtotal,
+                    Discount = o.Discount, TotalAmount = o.TotalAmount, PromotionId = o.PromotionId,
+                    TotalQuantity = o.OrderItems.Sum(item => (int?)item.Quantity) ?? 0,
+                    Note = o.Note, RecipientName = o.RecipientName, RecipientPhone = o.RecipientPhone,
+                    ShippingAddress = o.ShippingAddress, CreatedAt = o.CreatedAt, UpdatedAt = o.UpdatedAt,
                     CustomerName = o.Customer != null ? o.Customer.FullName : null,
                     UserName = o.User != null ? o.User.FullName : null,
                     PromotionCode = o.Promotion != null ? o.Promotion.Code : null
-                })
-                .ToListAsync();
-
-            return (data, totalItems);
+                }).ToListAsync();
         }
 
-
-        /// <summary>
-        /// Cập nhật user xử lý đơn hàng theo user_id bạn truyền vào.
-        /// </summary>
-        public async Task<bool> UpdateOrderUserAsync(int orderId, int? newUserId)
+        public async Task<(List<OrderDTO> Items, int TotalItems)> GetPagedOrdersAsync(
+            int pageNumber, int pageSize, string? status, DateTime? startDate,
+            DateTime? endDate, string? search, string? orderType)
         {
-            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
-            if (order == null)
-                return false;
+            IQueryable<Order> query = _context.Orders.AsNoTracking()
+                .Include(order => order.Customer)
+                .Include(order => order.User)
+                .Include(order => order.Promotion);
 
-            order.UserId = newUserId;
-            order.UpdatedAt = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
-            return true;
-        }
-
-        // HỦY ĐƠN
-        public async Task<bool> CancelOrderAsync(int orderId)
-        {
-            // Lấy Order + Items + Payment (nếu cần) bằng Include
-            var order = await _context.Orders
-                .Include(o => o.OrderItems)
-                .FirstOrDefaultAsync(o => o.Id == orderId);
-
-            if (order == null)
-                return false;
-
-            if (!order.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            using var transaction = await _context.Database.BeginTransactionAsync();
-            try
+            if (!string.IsNullOrWhiteSpace(status))
+                query = query.Where(order => order.Status == status);
+            if (!string.IsNullOrWhiteSpace(orderType))
+                query = query.Where(order => order.OrderType == orderType);
+            if (startDate.HasValue)
+                query = query.Where(order => order.CreatedAt >= startDate.Value.Date);
+            if (endDate.HasValue)
             {
-                var now = DateTime.UtcNow;
+                var endExclusive = endDate.Value.Date.AddDays(1);
+                query = query.Where(order => order.CreatedAt < endExclusive);
+            }
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var keyword = search.Trim();
+                query = query.Where(order => order.OrderNumber.Contains(keyword) ||
+                    (order.Customer != null && order.Customer.FullName.Contains(keyword)) ||
+                    (order.User != null && order.User.FullName.Contains(keyword)));
+            }
 
-                // Hủy đơn
-                order.Status = "cancelled";
-                order.UpdatedAt = now;
-
-                // Lấy danh sách productId cần update để giảm truy vấn
-                var productIds = order.OrderItems.Select(i => i.ProductId).ToList();
-
-                var inventories = await _context.Inventory
-                    .Where(i => productIds.Contains(i.ProductId))
-                    .ToListAsync();
-
-                // Update tồn kho
-                foreach (var item in order.OrderItems)
+            var totalItems = await query.CountAsync();
+            var items = await query
+                .OrderByDescending(order => order.CreatedAt)
+                .ThenByDescending(order => order.Id)
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .Select(order => new OrderDTO
                 {
-                    var inv = inventories.FirstOrDefault(i => i.ProductId == item.ProductId);
-                    if (inv != null)
-                    {
-                        inv.Quantity += item.Quantity;
-                        inv.UpdatedAt = now;
-                    }
-                }
+                    Id = order.Id,
+                    OrderNumber = order.OrderNumber,
+                    CustomerId = order.CustomerId,
+                    UserId = order.UserId,
+                    Status = order.Status,
+                    OrderType = order.OrderType,
+                    IsPosCheckout = order.CheckoutKey != null,
+                    PaymentStatus = order.PaymentStatus,
+                    PaymentMethod = order.PaymentMethod,
+                    Subtotal = order.Subtotal,
+                    Discount = order.Discount,
+                    TotalAmount = order.TotalAmount,
+                    TotalQuantity = order.OrderItems.Sum(item => (int?)item.Quantity) ?? 0,
+                    PromotionId = order.PromotionId,
+                    Note = order.Note,
+                    RecipientName = order.RecipientName,
+                    RecipientPhone = order.RecipientPhone,
+                    ShippingAddress = order.ShippingAddress,
+                    CreatedAt = order.CreatedAt,
+                    UpdatedAt = order.UpdatedAt,
+                    CustomerName = order.Customer != null ? order.Customer.FullName : null,
+                    UserName = order.User != null ? order.User.FullName : null,
+                    PromotionCode = order.Promotion != null ? order.Promotion.Code : null
+                }).ToListAsync();
 
-                await _context.SaveChangesAsync();
-                await transaction.CommitAsync();
-                return true;
-            }
-            catch
-            {
-                await transaction.RollbackAsync();
-                throw;
-            }
+            return (items, totalItems);
         }
-
-        public async Task<bool> CompletePendingOrderAsync(int orderId, int userId)
-        {
-            var now = DateTime.UtcNow;
-            var updated = await _context.Orders
-                .Where(order => order.Id == orderId && order.Status == "pending")
-                .ExecuteUpdateAsync(update => update
-                    .SetProperty(order => order.Status, "completed")
-                    .SetProperty(order => order.UserId, (int?)userId)
-                    .SetProperty(order => order.UpdatedAt, now));
-
-            return updated == 1;
-        }
-
 
 
     }

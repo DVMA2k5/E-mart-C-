@@ -1,6 +1,8 @@
 using backend.DTO;
 using backend.Models;
 using backend.Repository;
+using backend.Security;
+using System.Security.Claims;
 
 namespace backend.Services
 {
@@ -14,47 +16,98 @@ namespace backend.Services
         }
 
         private readonly UserRepository _userRepository;
+        private readonly BusMemoryCache<UserDTO> _cache;
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly ActorPermissionService _actor;
+        private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
-        public UserService(UserRepository userRepository)
+        public UserService(UserRepository userRepository, BusMemoryCache<UserDTO> cache, IHttpContextAccessor httpContextAccessor,
+            ActorPermissionService actor)
         {
             _userRepository = userRepository;
+            _cache = cache;
+            _httpContextAccessor = httpContextAccessor;
+            _actor = actor;
+        }
+
+        /// <summary>
+        /// Non-admins may only hand out roles whose rights they already hold, may not change their own role
+        /// and may not reset another person's password (that would let staff sign in as a customer).
+        /// </summary>
+        private async Task EnsureNonAdminMayAssignAsync(Role role, User? target, bool settingPassword)
+        {
+            if (_actor.IsAdmin) return;
+            if (target != null && target.Id == _actor.UserId && target.RoleId != role.Id)
+                throw new UnauthorizedAccessException("Bạn không thể tự đổi vai trò của chính mình.");
+            if (target != null && settingPassword && target.Id != _actor.UserId)
+                throw new UnauthorizedAccessException("Chỉ quản trị viên được đặt lại mật khẩu cho tài khoản khác.");
+            if (target != null && target.RoleId == role.Id) return;
+            var issue = await _actor.GrantIssueAsync(await _actor.GetRolePermissionCodesAsync(role.Id));
+            if (issue != null) throw new UnauthorizedAccessException(issue);
         }
 
         public async Task<List<UserDTO>> GetAllUsersAsync()
         {
-            var users = await _userRepository.GetAllAsync();
-            return users.Select(MapToUserDto).ToList();
+            var (users, _) = await _cache.GetOrCreateAsync(async () =>
+            {
+                var loaded = await _userRepository.GetAllAsync();
+                return loaded.Select(MapToUserDto).ToList();
+            }, CacheTtl);
+            return users.ToList();
         }
 
         public async Task<PaginationResult<UserDTO>> GetPaginatedAsync(int page, int pageSize, string? role = null, bool? isActive = null, string? search = null)
         {
-            var result = await _userRepository.GetPaginatedAsync(page, pageSize, role, isActive, search);
+            var all = await GetAllUsersAsync();
+            IEnumerable<UserDTO> filtered = all;
+            if (string.Equals(role?.Trim(), "internal", StringComparison.OrdinalIgnoreCase))
+                filtered = filtered.Where(user => string.Equals(user.Role, "admin", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(user.Role, "staff", StringComparison.OrdinalIgnoreCase));
+            else if (!string.IsNullOrWhiteSpace(role))
+                filtered = filtered.Where(user => string.Equals(user.Role, role.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (isActive.HasValue)
+                filtered = filtered.Where(user => (user.IsActive && !user.IsLocked) == isActive.Value);
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var keyword = search.Trim();
+                filtered = filtered.Where(user => user.Username.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                    (user.FullName?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (user.Email?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+            var totalItems = filtered.Count();
+            var totalPages = Math.Max(1, (int)Math.Ceiling(totalItems / (double)pageSize));
+            page = Math.Min(Math.Max(page, 1), totalPages);
+            var items = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
             return new PaginationResult<UserDTO>
             {
-                Items = result.Items.Select(MapToUserDto).ToList(),
-                TotalItems = result.TotalItems,
-                CurrentPage = result.CurrentPage,
-                PageSize = result.PageSize,
-                TotalPages = result.TotalPages,
-                HasPrevious = result.HasPrevious,
-                HasNext = result.HasNext
+                Items = items,
+                TotalItems = totalItems,
+                CurrentPage = page,
+                PageSize = pageSize,
+                TotalPages = totalPages,
+                HasPrevious = page > 1,
+                HasNext = page < totalPages
             };
         }
 
         public async Task<PaginationResult<UserDTO>> GetStaffPaginatedAsync(int page, int pageSize)
         {
-            var result = await _userRepository.GetStaffPaginatedAsync(page, pageSize);
+            var all = await GetAllUsersAsync();
+            var filtered = all.Where(user => !string.Equals(user.Role, "admin", StringComparison.OrdinalIgnoreCase)).ToList();
+            var totalItems = filtered.Count;
+            var totalPages = Math.Max(1, (int)Math.Ceiling(totalItems / (double)pageSize));
+            page = Math.Min(Math.Max(page, 1), totalPages);
 
             return new PaginationResult<UserDTO>
             {
-                Items = result.Items.Select(MapToUserDto).ToList(),
-                TotalItems = result.TotalItems,
-                CurrentPage = result.CurrentPage,
-                PageSize = result.PageSize,
-                TotalPages = result.TotalPages,
-                HasPrevious = result.HasPrevious,
-                HasNext = result.HasNext
+                Items = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
+                TotalItems = totalItems,
+                CurrentPage = page,
+                PageSize = pageSize,
+                TotalPages = totalPages,
+                HasPrevious = page > 1,
+                HasNext = page < totalPages
             };
         }
 
@@ -64,16 +117,21 @@ namespace backend.Services
             return user == null ? null : MapToUserDto(user);
         }
 
+        public Task<UserAccessDTO?> GetAccessAsync(int id) => _userRepository.GetAccessAsync(id);
+
         public async Task<UserDTO?> CreateUserAsync(UserDTO request)
         {
             if (string.IsNullOrWhiteSpace(request.Password))
                 throw new ArgumentException("Password is required", nameof(request.Password));
 
+            await ApplyCustomerUsernameAsync(request);
             await ValidateAccountAsync(request);
             var roleName = NormalizeRole(request.Role);
+            EnsureAdminActorForAdminAccount(roleName);
             var role = await _userRepository.GetRoleByNameAsync(roleName);
             if (role == null || !role.IsActive)
                 throw new ArgumentException($"Role '{roleName}' does not exist or is inactive.", nameof(request.Role));
+            await EnsureNonAdminMayAssignAsync(role, null, settingPassword: false);
             if (request.EmployeeId.HasValue && roleName == "customer")
                 throw new ArgumentException("Tài khoản khách hàng không được gắn hồ sơ nhân viên.", nameof(request.EmployeeId));
             if (request.CustomerId.HasValue && roleName != "customer")
@@ -114,7 +172,22 @@ namespace backend.Services
             };
 
             var createdUser = await _userRepository.AddAsync(user);
+            _cache.Clear();
             return MapToUserDto(createdUser);
+        }
+
+        /// <summary>
+        /// Customers always sign in with their phone number, so a customer account's username is the phone of its
+        /// customer profile, whatever was typed in the admin form.
+        /// </summary>
+        private async Task ApplyCustomerUsernameAsync(UserDTO request)
+        {
+            if (NormalizeRole(request.Role) != "customer" || !request.CustomerId.HasValue) return;
+            var customer = await _userRepository.GetCustomerAsync(request.CustomerId.Value)
+                ?? throw new ArgumentException("Hồ sơ khách hàng không tồn tại.", nameof(request.CustomerId));
+            if (string.IsNullOrWhiteSpace(customer.Phone))
+                throw new ArgumentException("Hồ sơ khách hàng chưa có số điện thoại để làm tên đăng nhập.", nameof(request.CustomerId));
+            request.Username = customer.Phone.Trim();
         }
 
         public async Task<UserDTO?> UpdateUserAsync(int id, UserDTO request)
@@ -122,12 +195,16 @@ namespace backend.Services
             var existingUser = await _userRepository.GetByIdAsync(id);
             if (existingUser == null) return null;
 
+            await ApplyCustomerUsernameAsync(request);
             await ValidateAccountAsync(request, id);
 
             existingUser.Username = request.Username.Trim();
-            var role = await _userRepository.GetRoleByNameAsync(NormalizeRole(request.Role));
+            var requestedRole = NormalizeRole(request.Role);
+            EnsureAdminActorForAdminAccount(existingUser.RoleEntity.Name, requestedRole);
+            var role = await _userRepository.GetRoleByNameAsync(requestedRole);
             if (role == null || !role.IsActive)
                 throw new ArgumentException($"Role '{request.Role}' does not exist or is inactive.", nameof(request.Role));
+            await EnsureNonAdminMayAssignAsync(role, existingUser, !string.IsNullOrWhiteSpace(request.Password));
 
             var employee = request.EmployeeId.HasValue
                 ? await _userRepository.GetEmployeeAsync(request.EmployeeId.Value)
@@ -162,6 +239,7 @@ namespace backend.Services
             }
 
             var updatedUser = await _userRepository.UpdateAsync(existingUser);
+            _cache.Clear();
             return MapToUserDto(updatedUser);
         }
 
@@ -169,8 +247,10 @@ namespace backend.Services
         {
             var existingUser = await _userRepository.GetByIdAsync(id);
             if (existingUser == null) return null;
+            EnsureAdminActorForAdminAccount(existingUser.RoleEntity.Name);
 
-            existingUser.Username = request.Username.Trim();
+            // A customer's username stays their phone number; only staff/admin may rename themselves.
+            if (existingUser.CustomerId == null) existingUser.Username = request.Username.Trim();
             existingUser.Email = request.Email?.Trim();
             existingUser.FullName = request.FullName?.Trim() ?? existingUser.FullName;
             // Profile records are the source of truth; update both in the same transaction.
@@ -189,6 +269,7 @@ namespace backend.Services
             existingUser.UpdatedAt = DateTime.UtcNow;
 
             var updatedUser = await _userRepository.UpdateAsync(existingUser);
+            _cache.Clear();
             return MapToUserDto(updatedUser);
         }
 
@@ -205,6 +286,7 @@ namespace backend.Services
             existingUser.UpdatedAt = DateTime.UtcNow;
 
             var updatedUser = await _userRepository.UpdateAsync(existingUser);
+            _cache.Clear();
             return MapToUserDto(updatedUser);
         }
 
@@ -221,13 +303,27 @@ namespace backend.Services
             existingUser.UpdatedAt = DateTime.UtcNow;
 
             await _userRepository.UpdateAsync(existingUser);
+            _cache.Clear();
             return ChangePasswordResult.Success;
         }
 
         public async Task<bool> DeleteUserAsync(int id)
         {
+            var existing = await _userRepository.GetByIdAsync(id);
+            if (existing == null) return false;
+            EnsureAdminActorForAdminAccount(existing.RoleEntity.Name);
             // The repository rejects deletion once the account has activity.
-            return await _userRepository.DeleteAsync(id);
+            var deleted = await _userRepository.DeleteAsync(id);
+            if (deleted) _cache.Clear();
+            return deleted;
+        }
+
+        private void EnsureAdminActorForAdminAccount(params string?[] roles)
+        {
+            if (roles.All(role => !string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase))) return;
+            var actorRole = _httpContextAccessor.HttpContext?.User.FindFirst(ClaimTypes.Role)?.Value;
+            if (!string.Equals(actorRole, "admin", StringComparison.OrdinalIgnoreCase))
+                throw new UnauthorizedAccessException("Chỉ quản trị viên được tạo hoặc thay đổi tài khoản admin.");
         }
 
         private async Task ValidateAccountAsync(UserDTO request, int? excludeId = null)

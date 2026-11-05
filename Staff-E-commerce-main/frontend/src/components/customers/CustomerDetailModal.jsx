@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { getCustomerById } from "../../api/customerApi";
 
-export default function CustomerDetailModal({ onClose, customerId }) {
+export default function CustomerDetailModal({ onClose, customerId, embedded = false }) {
   const [customer, setCustomer] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -13,13 +14,7 @@ export default function CustomerDetailModal({ onClose, customerId }) {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(
-          `http://localhost:5099/api/customers/${customerId}`
-        );
-        if (!response.ok) {
-          throw new Error("Failed to fetch customer details");
-        }
-        const data = await response.json();
+        const data = await getCustomerById(customerId);
         setCustomer(data);
       } catch (err) {
         setError(err.message || "Error loading customer details");
@@ -34,19 +29,19 @@ export default function CustomerDetailModal({ onClose, customerId }) {
   if (!customerId) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4">
+    <div className={embedded ? "management-detail-panel w-full" : "fixed inset-0 z-40 flex items-center justify-center bg-black/50"}>
+      <div className={embedded ? "w-full rounded-xl border bg-white shadow-sm" : "bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4"}>
         {/* Header */}
         <div className="flex justify-between items-center p-6 border-b border-gray-200">
           <h2 className="text-2xl font-bold text-gray-800">
             Chi Tiết Khách Hàng
           </h2>
-          <button
+          {!embedded && <button
             onClick={onClose}
             className="p-1 hover:bg-gray-100 rounded-lg transition"
           >
             <X size={24} className="text-gray-600" />
-          </button>
+          </button>}
         </div>
 
         {/* Body */}
@@ -151,14 +146,14 @@ export default function CustomerDetailModal({ onClose, customerId }) {
         </div>
 
         {/* Footer */}
-        <div className="border-t border-gray-200 p-6 flex justify-end gap-3">
+        {!embedded && <div className="border-t border-gray-200 p-6 flex justify-end gap-3">
           <button
             onClick={onClose}
             className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition"
           >
             Đóng
           </button>
-        </div>
+        </div>}
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+using backend.Helpers;
 using backend.Services;
 using backend.DTO;
 using backend.Models;
@@ -34,7 +35,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -56,9 +57,9 @@ namespace backend.Controllers
             {
                 return NotFound(new { message = ex.Message });
             }
-            catch (Exception ex)
+            catch (InvalidOperationException ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return BadRequest(new { message = ex.Message });
             }
         }
 
@@ -72,21 +73,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
-            }
-        }
-
-        [HttpPost("reduce-multiple")]
-        public async Task<IActionResult> ReduceMultipleInventory([FromBody] List<ReduceInventoryDto> items)
-        {
-            try
-            {
-                await _inventoryService.ReduceInventoryAsync(items);
-                return Ok(new { message = "Cập nhật kho thành công" });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new { message = ex.Message });
+                return this.ServerError(ex);
             }
         }
 
@@ -104,7 +91,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
     }

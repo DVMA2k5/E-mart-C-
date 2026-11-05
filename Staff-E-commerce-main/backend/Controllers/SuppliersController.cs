@@ -1,3 +1,4 @@
+using backend.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using backend.DTO;
 using backend.Models;
@@ -75,7 +76,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Server error: {ex.Message}");
+                return this.ServerError(ex);
             }
         }
 
@@ -104,9 +105,9 @@ namespace backend.Controllers
             {
                 return BadRequest(ex.Message);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                return StatusCode(500, "Server error updating supplier");
+                return this.ServerError(ex);
             }
         }
 

@@ -5,7 +5,6 @@ import {
   createCategory,
   updateCategory,
   toggleCategoryStatus,
-  deleteCategory,
 } from "../../api/categoryApi";
 
 // Async thunks
@@ -68,18 +67,6 @@ export const toggleStatus = createAsyncThunk(
       return data;
     } catch (error) {
       return rejectWithValue(error.message || "Error toggling status");
-    }
-  }
-);
-
-export const removeCategory = createAsyncThunk(
-  "categories/removeCategory",
-  async (categoryId, { rejectWithValue }) => {
-    try {
-      const data = await deleteCategory(categoryId);
-      return data;
-    } catch (error) {
-      return rejectWithValue(error.message || "Error deleting category");
     }
   }
 );
@@ -161,7 +148,7 @@ const categorySlice = createSlice({
       })
       .addCase(fetchCategoryById.fulfilled, (state, action) => {
         state.loading = false;
-        state.currentCategory = action.payload.data;
+        state.currentCategory = action.payload?.data ?? action.payload;
       })
       .addCase(fetchCategoryById.rejected, (state, action) => {
         state.loading = false;
@@ -177,7 +164,11 @@ const categorySlice = createSlice({
       .addCase(createNewCategory.fulfilled, (state, action) => {
         state.loading = false;
         state.successMessage = "Tạo danh mục thành công";
-        state.items.unshift(action.payload.data);
+        const category = action.payload?.data ?? action.payload;
+        if (category?.id) {
+          state.items = [category, ...state.items.filter((item) => item.id !== category.id)];
+          state.pagination.totalItems += 1;
+        }
       })
       .addCase(createNewCategory.rejected, (state, action) => {
         state.loading = false;
@@ -193,13 +184,12 @@ const categorySlice = createSlice({
       .addCase(updateCategoryInfo.fulfilled, (state, action) => {
         state.loading = false;
         state.successMessage = "Cập nhật danh mục thành công";
-        const index = state.items.findIndex(
-          (item) => item.id === action.payload.data.id
-        );
+        const category = action.payload?.data ?? action.payload;
+        const index = state.items.findIndex((item) => item.id === category?.id);
         if (index !== -1) {
-          state.items[index] = action.payload.data;
+          state.items[index] = category;
         }
-        state.currentCategory = action.payload.data;
+        state.currentCategory = category;
       })
       .addCase(updateCategoryInfo.rejected, (state, action) => {
         state.loading = false;
@@ -226,22 +216,6 @@ const categorySlice = createSlice({
         state.error = action.payload;
       });
 
-    // Delete Category
-    builder
-      .addCase(removeCategory.pending, (state) => {
-        state.loading = true;
-      })
-      .addCase(removeCategory.fulfilled, (state, action) => {
-        state.loading = false;
-        state.successMessage = "Xóa danh mục thành công";
-        state.items = state.items.filter(
-          (item) => item.id !== action.payload.data.id
-        );
-      })
-      .addCase(removeCategory.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      });
   },
 });
 

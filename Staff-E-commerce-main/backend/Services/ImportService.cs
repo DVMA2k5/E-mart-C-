@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using backend.Data;
 using backend.DTO;
 using backend.Models;
 using backend.Repository;
@@ -15,19 +14,16 @@ namespace backend.Services
     {
         private readonly ProductRepository _productRepo;
         private readonly CustomerRepository _customerRepo;
-        private readonly InventoryRepository _inventoryRepo;
-        private readonly AppDbContext _context;
+        private readonly ImportRepository _importRepository;
 
         public ImportService(
             ProductRepository productRepo,
             CustomerRepository customerRepo,
-            InventoryRepository inventoryRepo,
-            AppDbContext context)
+            ImportRepository importRepository)
         {
             _productRepo = productRepo;
             _customerRepo = customerRepo;
-            _inventoryRepo = inventoryRepo;
-            _context = context;
+            _importRepository = importRepository;
 
             // EPPlus license context (non-commercial use)
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
@@ -81,7 +77,7 @@ namespace backend.Services
             }
 
             // Process rows in transaction
-            using var transaction = await _context.Database.BeginTransactionAsync();
+            await using var transaction = await _importRepository.BeginTransactionAsync();
             try
             {
                 for (int i = 0; i < rows.Count; i++)
@@ -116,16 +112,7 @@ namespace backend.Services
                     {
                         // Create new product
                         var product = MapToProduct(row);
-                        var created = await _productRepo.CreateAsync(product);
-
-                        // Create inventory record
-                        var inventory = new Inventory
-                        {
-                            ProductId = created.Id,
-                            Quantity = 0,
-                            UpdatedAt = DateTime.UtcNow
-                        };
-                        await _inventoryRepo.CreateAsync(inventory);
+                        await _productRepo.CreateAsync(product);
 
                         result.Created++;
                     }
@@ -136,11 +123,16 @@ namespace backend.Services
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
+                // Nothing was committed, so the counters must not claim rows were created or updated.
+                result.RolledBack = true;
+                result.Skipped += result.Created + result.Updated;
+                result.Created = 0;
+                result.Updated = 0;
                 result.Errors.Add(new ImportErrorDTO
                 {
                     RowNumber = 0,
                     Field = "System",
-                    Message = $"Lỗi hệ thống: {ex.Message}"
+                    Message = $"Lỗi hệ thống, toàn bộ file chưa được lưu: {ex.Message}"
                 });
             }
 
@@ -195,7 +187,7 @@ namespace backend.Services
             }
 
             // Process rows in transaction
-            using var transaction = await _context.Database.BeginTransactionAsync();
+            await using var transaction = await _importRepository.BeginTransactionAsync();
             try
             {
                 for (int i = 0; i < rows.Count; i++)
@@ -228,6 +220,7 @@ namespace backend.Services
                     {
                         // Update existing customer
                         UpdateCustomerFromImport(existing, row);
+                        await _customerRepo.SyncLinkedAccountAsync(existing);
                         await _customerRepo.UpdateAsync(existing);
                         result.Updated++;
                     }
@@ -245,11 +238,16 @@ namespace backend.Services
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
+                // Nothing was committed, so the counters must not claim rows were created or updated.
+                result.RolledBack = true;
+                result.Skipped += result.Created + result.Updated;
+                result.Created = 0;
+                result.Updated = 0;
                 result.Errors.Add(new ImportErrorDTO
                 {
                     RowNumber = 0,
                     Field = "System",
-                    Message = $"Lỗi hệ thống: {ex.Message}"
+                    Message = $"Lỗi hệ thống, toàn bộ file chưa được lưu: {ex.Message}"
                 });
             }
 
@@ -497,6 +495,7 @@ namespace backend.Services
                 Description = dto.Description,
                 ImageUrl = dto.ImageUrl,
                 IsActive = dto.IsActive,
+                StockQuantity = 0,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };

@@ -1,5 +1,6 @@
 using backend.Data;
 using backend.DTO;
+using backend.Helpers;
 using Microsoft.EntityFrameworkCore;
 
 namespace backend.Repository
@@ -25,21 +26,21 @@ namespace backend.Repository
             if (fromDate.HasValue)
             {
                 // Normalize to start of day
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(oi => oi.Order!.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
                 // Normalize to end of day
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(oi => oi.Order!.CreatedAt <= endDate);
             }
 
             var results = await query
                 .Select(oi => new SalesReportDTO
                 {
-                    Date = oi.Order!.CreatedAt,
+                    Date = oi.Order!.CreatedAt.AddHours(7),
                     OrderNumber = oi.Order.OrderNumber,
                     CustomerName = oi.Order.Customer != null ? oi.Order.Customer.FullName : null,
                     ProductName = oi.Product != null ? oi.Product.ProductName : "",
@@ -59,20 +60,18 @@ namespace backend.Repository
 
         public async Task<List<InventoryReportDTO>> GetInventoryReportAsync()
         {
-            var results = await _context.Inventory
-                .Include(i => i.Product)
-                    .ThenInclude(p => p!.Category)
-                .Where(i => i.Product != null)
-                .Select(i => new InventoryReportDTO
+            var results = await _context.Products
+                .Include(product => product.Category)
+                .Select(product => new InventoryReportDTO
                 {
-                    ProductName = i.Product!.ProductName,
-                    Sku = i.Product.Sku,
-                    CategoryName = i.Product.Category != null ? i.Product.Category.Name : null,
-                    Quantity = i.Quantity,
-                    UnitCost = i.Product.Cost ?? 0,
-                    TotalValue = i.Quantity * (i.Product.Cost ?? 0),
-                    UnitPrice = i.Product.Price,
-                    LastUpdated = i.UpdatedAt
+                    ProductName = product.ProductName,
+                    Sku = product.Sku,
+                    CategoryName = product.Category != null ? product.Category.Name : null,
+                    Quantity = product.StockQuantity,
+                    UnitCost = product.Cost ?? 0,
+                    TotalValue = product.StockQuantity * (product.Cost ?? 0),
+                    UnitPrice = product.Price,
+                    LastUpdated = product.UpdatedAt
                 })
                 .OrderByDescending(i => i.TotalValue)
                 .ToListAsync();
@@ -87,14 +86,14 @@ namespace backend.Repository
             if (fromDate.HasValue)
             {
                 // Normalize to start of day
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(o => o.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
                 // Normalize to end of day
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(o => o.CreatedAt <= endDate);
             }
 
@@ -113,13 +112,13 @@ namespace backend.Repository
 
             if (fromDate.HasValue)
             {
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 productsSoldQuery = productsSoldQuery.Where(oi => oi.Order!.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 productsSoldQuery = productsSoldQuery.Where(oi => oi.Order!.CreatedAt <= endDate);
             }
 
@@ -143,19 +142,19 @@ namespace backend.Repository
             if (fromDate.HasValue)
             {
                 // Normalize to start of day
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(o => o.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
                 // Normalize to end of day
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(o => o.CreatedAt <= endDate);
             }
 
             var results = await query
-                .GroupBy(o => o.CreatedAt.Date)
+                .GroupBy(o => o.CreatedAt.AddHours(7).Date) // group by Vietnamese day, not UTC
                 .Select(g => new RevenueByDayDTO
                 {
                     Date = g.Key,
@@ -170,16 +169,14 @@ namespace backend.Repository
 
         public async Task<List<HighValueInventoryDTO>> GetHighValueInventoryAsync(int limit = 100)
         {
-            var results = await _context.Inventory
-                .Include(i => i.Product)
-                .Where(i => i.Product != null) 
-                .Select(i => new HighValueInventoryDTO
+            var results = await _context.Products
+                .Select(product => new HighValueInventoryDTO
                 {
-                    ProductId = i.ProductId,
-                    ProductName = i.Product!.ProductName,
-                    Sku = i.Product.Sku,
-                    Quantity = i.Quantity,
-                    TotalValue = i.Quantity * (i.Product.Cost ?? (i.Product.Price > 0 ? i.Product.Price : 0)) // Dùng Price nếu Cost = null, nếu cả 2 = 0 thì = 0
+                    ProductId = product.Id,
+                    ProductName = product.ProductName,
+                    Sku = product.Sku,
+                    Quantity = product.StockQuantity,
+                    TotalValue = product.StockQuantity * (product.Cost ?? (product.Price > 0 ? product.Price : 0))
                 })
                 .OrderByDescending(i => i.TotalValue)
                 .ThenByDescending(i => i.Quantity) // Sắp xếp theo số lượng nếu giá trị bằng nhau
@@ -236,13 +233,13 @@ namespace backend.Repository
 
             if (fromDate.HasValue)
             {
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(oi => oi.Order!.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(oi => oi.Order!.CreatedAt <= endDate);
             }
 
@@ -280,13 +277,13 @@ namespace backend.Repository
 
             if (fromDate.HasValue)
             {
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(o => o.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(o => o.CreatedAt <= endDate);
             }
 
@@ -325,13 +322,13 @@ namespace backend.Repository
 
             if (fromDate.HasValue)
             {
-                var startDate = fromDate.Value.Date;
+                var startDate = DateTimeHelper.ToUtc(fromDate.Value.Date); // Vietnamese calendar day -> UTC
                 query = query.Where(o => o.CreatedAt >= startDate);
             }
 
             if (toDate.HasValue)
             {
-                var endDate = toDate.Value.Date.AddDays(1).AddTicks(-1);
+                var endDate = DateTimeHelper.ToUtc(toDate.Value.Date.AddDays(1)).AddTicks(-1);
                 query = query.Where(o => o.CreatedAt <= endDate);
             }
 

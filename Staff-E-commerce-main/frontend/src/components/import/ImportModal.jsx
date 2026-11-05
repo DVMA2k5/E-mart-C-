@@ -255,6 +255,11 @@ export default function ImportModal({ isOpen, onClose, onSuccess, type = "produc
           {/* Import Result */}
           {result && !importing && (
             <div className="mt-4 space-y-4">
+              {result.rolledBack && (
+                <div className="rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-700">
+                  Có lỗi hệ thống nên toàn bộ file chưa được lưu. Hãy sửa lỗi bên dưới rồi import lại.
+                </div>
+              )}
               {/* Summary */}
               <div className="grid grid-cols-4 gap-4">
                 <div className="p-4 bg-emerald-50 rounded-lg text-center">

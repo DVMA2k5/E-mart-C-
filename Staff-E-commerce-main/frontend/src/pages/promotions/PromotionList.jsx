@@ -25,8 +25,9 @@ export default function PromotionList() {
   const [editingPromotion, setEditingPromotion] = useState(null);
   const [statsLocal, setStatsLocal] = useState(null);
 
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("promotions.write");
 
   const dispatch = useDispatch();
   const {
@@ -138,7 +139,7 @@ export default function PromotionList() {
             <h1 className="text-2xl font-bold text-gray-900">
               Quản lý Khuyến mãi
             </h1>
-            {!isStaff && (
+            {!readOnly && (
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-all shadow-lg hover:shadow-xl"
@@ -393,7 +394,7 @@ export default function PromotionList() {
           <>
             <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
+                <table className="management-table min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -412,7 +413,7 @@ export default function PromotionList() {
                         Thời gian
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Lượt dùng
+                        Lượt nhận / dùng
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Trạng thái
@@ -426,7 +427,9 @@ export default function PromotionList() {
                     {filteredItems.map((promo, idx) => (
                       <tr
                         key={promo.id}
-                        className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}
+                        onClick={() => setSelectedPromotionId(promo.id)}
+                        title="Bấm để xem chi tiết"
+                        className={`cursor-pointer hover:bg-primary-50/60 ${idx % 2 === 0 ? "bg-white" : "bg-gray-50"}`}
                       >
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className="text-sm font-medium text-gray-900 font-mono bg-primary-50 px-2 py-1 rounded">
@@ -464,13 +467,14 @@ export default function PromotionList() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center text-sm">
                             <span className="font-medium text-gray-900">
-                              {promo.usedCount}
+                              {promo.type === "voucher" ? promo.claimedCount || 0 : promo.usedCount}
                             </span>
                             <span className="text-gray-400 mx-1">/</span>
                             <span className="text-gray-500">
-                              {promo.usageLimit ?? "∞"}
+                              {promo.type === "voucher" ? promo.claimLimit ?? "∞" : promo.usageLimit ?? "∞"}
                             </span>
                           </div>
+                          {promo.type === "voucher" && <div className="mt-1 text-xs text-gray-500">Đã nhận · Đã dùng: {promo.usedCount || 0}<br />{promo.visibility === "only-code" ? "Only-code" : "Public"}{promo.sendToCustomers ? " · Cấp sẵn" : ""}</div>}
                           {promo.usageLimit && (
                             <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
                               <div
@@ -488,7 +492,7 @@ export default function PromotionList() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           {getStatusBadge(promo)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm" onClick={(event) => event.stopPropagation()}>
                           <div className="flex items-center justify-end gap-2">
                             <button
                               onClick={() => setSelectedPromotionId(promo.id)}
@@ -496,7 +500,7 @@ export default function PromotionList() {
                             >
                               Chi tiết
                             </button>
-                            {!isStaff && (
+                            {!readOnly && (
                               <>
                                 <button
                                   onClick={() => handleToggle(promo.id)}

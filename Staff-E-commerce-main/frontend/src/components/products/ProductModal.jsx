@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from "react";
 import CustomSelect from "../ui/CustomSelect";
-import { request } from "../../api/apiClient";
+import { request, API_ORIGIN } from "../../api/apiClient";
+
+const DEFAULT_IMAGE = `${API_ORIGIN}/assets/images/products/default.jpg`;
+// Fall back once; if the fallback also fails, stop instead of retrying in a loop.
+const showFallbackImage = (event) => {
+  event.currentTarget.onerror = null;
+  event.currentTarget.src = DEFAULT_IMAGE;
+};
 import { getAllCategories } from "../../api/categoryApi";
 import ProductDescriptionEditor, { ProductDescriptionContent } from "./ProductDescription";
 
@@ -11,13 +18,17 @@ const ProductModal = ({
   onSave,
   onCancel,
   onDelete,
+  onCreatePurchaseOrder,
   saving = false,
   categories = [],
   suppliers = [],
   units = [],
+  embedded = false,
 }) => {
   const [formData, setFormData] = useState({});
   const [errors, setErrors] = useState({});
+  const [uploading, setUploading] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [descriptionLoading, setDescriptionLoading] = useState(false);
   const [descriptionError, setDescriptionError] = useState("");
 
@@ -71,6 +82,7 @@ const ProductModal = ({
       setFormData({
         productName: "",
         price: "",
+        stockQuantity: 0,
         discountPrice: null,
         sku: "",
         unitId: "",
@@ -88,6 +100,7 @@ const ProductModal = ({
         id: p.id,
         productName: p.productName || p.product_name || p.name || "",
         price: p.price !== undefined && p.price !== null ? p.price : "",
+        stockQuantity: p.stockQuantity ?? p.inventory?.quantity ?? 0,
         discountPrice: p.discountPrice ?? p.DiscountPrice ?? null,
         sku: p.sku || p.barcode || "",
         unitId: p.unitId || p.unit?.id || p.unit_id || "",
@@ -117,6 +130,7 @@ const ProductModal = ({
               id: detail.id,
               productName: prev.productName || detail.productName || "",
               price: prev.price !== "" && prev.price !== undefined ? prev.price : detail.price,
+              stockQuantity: detail.stockQuantity ?? detail.inventory?.quantity ?? prev.stockQuantity ?? 0,
               discountPrice: detail.discountPrice ?? detail.DiscountPrice ?? null,
               sku: prev.sku || detail.sku || detail.barcode || "",
               unitId: prev.unitId || detail.unitId || detail.unit?.id || "",
@@ -158,6 +172,11 @@ const ProductModal = ({
       : (mode === "edit" ? product?.price : "");
     if (!priceVal || isNaN(priceVal) || Number(priceVal) <= 0) {
       newErrors.price = "Giá phải là số lớn hơn 0";
+    }
+
+    const stockValue = Number(formData.stockQuantity ?? 0);
+    if (!Number.isInteger(stockValue) || stockValue < 0) {
+      newErrors.stockQuantity = "Số lượng tồn phải là số nguyên không âm";
     }
 
     if (mode === "create") {
@@ -202,21 +221,27 @@ const ProductModal = ({
   };
 
   const handleSave = async () => {
-    if (mode === "view") return;
+    if (mode === "view" || saving || uploading) return;
     if (!validate()) return;
 
     let finalImageUrl = formData.imageUrl;
+    setSaveError("");
 
     // Nếu có file upload từ máy
     if (formData.imageFile) {
+      setUploading(true);
       try {
         const productId = mode === "edit" && product?.id ? product.id : null;
         const uploadedUrl = await uploadImage(formData.imageFile, productId);
         finalImageUrl = uploadedUrl;
+        // Remember the uploaded file so pressing Save again after a failed save does not upload it twice.
+        setFormData((prev) => ({ ...prev, imageFile: null, imageUrl: uploadedUrl }));
       } catch (error) {
         console.error("Lỗi upload ảnh:", error);
-        alert("Lỗi upload ảnh. Vui lòng thử lại.");
+        setSaveError(error.message || "Lỗi upload ảnh. Vui lòng thử lại.");
         return;
+      } finally {
+        setUploading(false);
       }
     }
 
@@ -233,6 +258,7 @@ const ProductModal = ({
       id: mode === "edit" ? (product?.id || formData.id) : undefined,
       productName: resolvedName,
       price: resolvedPrice,
+      stockQuantity: Number(formData.stockQuantity ?? product?.stockQuantity ?? product?.inventory?.quantity ?? 0),
       sku: resolvedSku,
       unitId: resolvedUnitId,
       categoryId: resolvedCategoryId,
@@ -241,8 +267,14 @@ const ProductModal = ({
       description: formData.description !== undefined ? formData.description : (product?.description || ""),
       isActive: formData.isActive !== undefined ? formData.isActive : (product?.isActive !== undefined ? product.isActive : true),
     };
+    delete saveData.imageFile;
+    if (mode !== "create") delete saveData.stockQuantity; // stock is adjusted in Kho hàng, not here
 
-    onSave?.(saveData, mode);
+    try {
+      await onSave?.(saveData, mode);
+    } catch (error) {
+      setSaveError(error.message || "Không lưu được sản phẩm.");
+    }
   };
 
   // Hàm upload ảnh với productId
@@ -251,29 +283,23 @@ const ProductModal = ({
     formData.append("image", file);
 
     // Thêm productId vào query string nếu có
-    const url = productId
-      ? `http://localhost:5099/api/products/upload-image?productId=${productId}`
-      : "http://localhost:5099/api/products/upload-image";
-
-    const response = await fetch(url, {
+    const query = productId ? `?productId=${encodeURIComponent(productId)}` : "";
+    const data = await request(`/products/upload-image${query}`, {
       method: "POST",
       body: formData,
     });
-
-    if (!response.ok) throw new Error("Upload failed");
-    const data = await response.json();
     return data.imageUrl;
   };
 
   // Hàm getImageUrl để hiển thị ảnh
   const getImageUrl = (imageUrl) => {
     if (!imageUrl) {
-      return "http://localhost:5099/assets/images/products/default.jpg";
+      return DEFAULT_IMAGE;
     }
 
     // Nếu là đường dẫn tương đối từ backend
     if (imageUrl.startsWith("/assets/")) {
-      return `http://localhost:5099${imageUrl}`;
+      return `${API_ORIGIN}${imageUrl}`;
     }
 
     // Nếu là blob URL (preview khi chọn file từ máy)
@@ -286,7 +312,7 @@ const ProductModal = ({
       return imageUrl;
     }
 
-    return "http://localhost:5099/assets/images/products/default.jpg";
+    return DEFAULT_IMAGE;
   };
 
   function getImageSource() {
@@ -295,39 +321,31 @@ const ProductModal = ({
       return getImageUrl(formData.imageUrl);
     }
 
-    // 2) Nếu có product.id, thử load ảnh theo pattern product-{id}.jpg
-    if (product?.id) {
-      // Thêm timestamp để force reload ảnh mới sau khi upload
-      return `http://localhost:5099/assets/images/products/product-${
-        product.id
-      }.jpg?t=${Date.now()}`;
-    }
-
-    // 3) Fallback - ảnh mặc định
-    return "http://localhost:5099/assets/images/products/default.jpg";
+    // 2) Fallback - ảnh mặc định. Uploads get unique file names, so no cache-busting timestamp is needed
+    // (a new timestamp on every render made the browser re-download the image constantly).
+    return DEFAULT_IMAGE;
   }
 
-  const isEditing = mode === "edit" || mode === "create";
   const isView = mode === "view";
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-md w-full max-w-4xl p-4 shadow-lg">
+    <div className={embedded ? "w-full" : "fixed inset-0 z-40 flex items-center justify-center bg-black/50"}>
+      <div className={embedded ? "w-full rounded-xl border bg-white p-4 shadow-sm" : "bg-white rounded-md w-full max-w-4xl p-4 shadow-lg"}>
         <div className="flex justify-between items-center mb-3">
           <h3 className="text-lg font-semibold">{modalTitle}</h3>
           {onDelete && mode !== "create" && (
             <button
-              className="text-red-600 text-sm hover:text-red-800"
+              className={`text-sm ${product?.isActive === false ? "text-emerald-700 hover:text-emerald-900" : "text-red-600 hover:text-red-800"}`}
               onClick={onDelete}
             >
-              Xóa
+              {product?.isActive === false ? "Mở bán lại" : "Ngừng bán"}
             </button>
           )}
         </div>
 
-        <div className="flex gap-4">
+        <div className={embedded ? "space-y-4" : "flex gap-4"}>
           {/* --- CỘT TRÁI: ẢNH SẢN PHẨM --- */}
-          <div className="w-1/3">
+          <div className={embedded ? "w-full" : "w-1/3"}>
             <label className="text-xs text-gray-600 mb-2 block">
               Hình ảnh sản phẩm
             </label>
@@ -339,11 +357,7 @@ const ProductModal = ({
                     src={getImageSource()}
                     alt={formData.productName}
                     className="w-full h-full object-cover rounded"
-                    onError={(e) => {
-                      // fallback cuối nếu ảnh không tồn tại
-                      e.target.src =
-                        "http://localhost:5099/assets/images/products/default.jpg";
-                    }}
+                    onError={showFallbackImage}
                   />
                 </div>
                 <label className="text-xs text-gray-600 mb-2 block">
@@ -358,10 +372,7 @@ const ProductModal = ({
                       src={getImageUrl(formData.imageUrl)}
                       alt={formData.productName || "Preview"}
                       className="w-full h-full object-cover rounded"
-                      onError={(e) => {
-                        e.target.src =
-                          "http://localhost:5099/assets/images/products/default.jpg";
-                      }}
+                      onError={showFallbackImage}
                     />
                   ) : (
                     <div className="text-gray-400 text-sm">Chưa có ảnh</div>
@@ -460,7 +471,7 @@ const ProductModal = ({
               </div>
             )}
           </div>
-          <div className="w-2/3">
+          <div className={embedded ? "w-full" : "w-2/3"}>
             <div className="grid grid-cols-2 gap-3">
               {/* --- TÊN SẢN PHẨM --- */}
               <div>
@@ -550,6 +561,34 @@ const ProductModal = ({
                 <p className="mt-1 text-xs text-gray-500">
                   Giá này được tính tự động từ khuyến mãi theo sản phẩm đang hoạt động.
                 </p>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-600">Số lượng tồn *</label>
+                {isView || mode !== "create" ? (
+                  <>
+                    <div className="p-2 border rounded bg-gray-50">
+                      {Number(formData.stockQuantity ?? 0).toLocaleString("vi-VN")}
+                    </div>
+                    {!isView && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Đổi số tồn tại mục Kho hàng (điều chỉnh có lý do) hoặc qua phiếu nhập để giữ lịch sử.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      className={`w-full border px-2 py-1 rounded ${errors.stockQuantity ? "border-red-500" : ""}`}
+                      value={formData.stockQuantity ?? 0}
+                      onChange={(event) => handleFieldChange("stockQuantity", event.target.value)}
+                    />
+                    {errors.stockQuantity && <p className="text-xs text-red-500 mt-1">{errors.stockQuantity}</p>}
+                  </>
+                )}
               </div>
 
               {/* --- ĐƠN VỊ --- */}
@@ -726,18 +765,29 @@ const ProductModal = ({
                 })()}
               </div>
 
+              {saveError && (
+                <p role="alert" className="col-span-2 rounded bg-red-50 p-2 text-sm text-red-700">{saveError}</p>
+              )}
+
               {/* --- BUTTONS --- */}
               <div className="col-span-2 flex items-center justify-end gap-2">
-                <button className="px-3 py-1 rounded border" onClick={onCancel}>
-                  Hủy
-                </button>
+                {mode !== "create" && onCreatePurchaseOrder && (
+                  <button type="button" className="mr-auto inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2" onClick={() => onCreatePurchaseOrder(product)}>
+                    Nhập hàng từ nhà cung cấp
+                  </button>
+                )}
+                {(!embedded || !isView) && (
+                  <button className="px-3 py-1 rounded border" onClick={onCancel}>
+                    {isView ? "Đóng" : "Hủy"}
+                  </button>
+                )}
                 {!isView && (
                   <button
                     className="px-3 py-1 rounded bg-primary-600 text-white hover:bg-primary-700"
                     onClick={handleSave}
-                    disabled={saving}
+                    disabled={saving || uploading}
                   >
-                    {saving
+                    {uploading ? "Đang tải ảnh..." : saving
                       ? "Đang lưu..."
                       : mode === "create"
                       ? "Thêm mới"

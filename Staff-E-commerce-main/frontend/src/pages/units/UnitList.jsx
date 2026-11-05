@@ -12,8 +12,9 @@ import { useAuth } from "../../hook/useAuth";
 
 export default function UnitList() {
   // Get current user and role
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("units.write");
 
   const [units, setUnits] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,6 +28,8 @@ export default function UnitList() {
     unit: null,
   });
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({ code: "", name: "", isActive: true });
 
   // Search & Filter
   const [search, setSearch] = useState("");
@@ -51,12 +54,12 @@ export default function UnitList() {
     fetchUnits();
   }, [fetchUnits]);
 
-  // Open modal
-  const openModal = useCallback((mode, unit = null) => {
+  // Chỉ dùng modal cho thao tác tạo mới. Chỉnh sửa được thực hiện ngay trên dòng.
+  const openCreateModal = useCallback(() => {
     setModalState({
       open: true,
-      mode,
-      unit: unit || {},
+      mode: "create",
+      unit: {},
     });
   }, []);
 
@@ -71,7 +74,7 @@ export default function UnitList() {
 
   // Handle save (create/edit)
   const handleSave = async (unitData, mode) => {
-    if (isStaff) {
+    if (readOnly) {
       setNotification({
         type: "error",
         message: "Bạn không có quyền thực hiện thao tác này",
@@ -112,7 +115,7 @@ export default function UnitList() {
 
   // Handle delete
   const handleDelete = async (id, productCount) => {
-    if (isStaff) {
+    if (readOnly) {
       setNotification({
         type: "error",
         message: "Bạn không có quyền xóa đơn vị",
@@ -149,7 +152,7 @@ export default function UnitList() {
 
   // Handle toggle active
   const handleToggleActive = async (id) => {
-    if (isStaff) {
+    if (readOnly) {
       setNotification({
         type: "error",
         message: "Bạn không có quyền thay đổi trạng thái",
@@ -170,6 +173,47 @@ export default function UnitList() {
         type: "error",
         message: error.message || "Có lỗi xảy ra",
       });
+    }
+  };
+
+  const startInlineEdit = (unit) => {
+    setEditingId(unit.id);
+    setEditForm({
+      code: unit.code || "",
+      name: unit.name || "",
+      isActive: Boolean(unit.isActive),
+    });
+  };
+
+  const cancelInlineEdit = () => {
+    setEditingId(null);
+    setEditForm({ code: "", name: "", isActive: true });
+  };
+
+  const saveInlineEdit = async (unit) => {
+    const code = editForm.code.trim();
+    const name = editForm.name.trim();
+    if (!code || !name) {
+      setNotification({ type: "error", message: "Mã và tên đơn vị không được để trống" });
+      return;
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(code)) {
+      setNotification({ type: "error", message: "Mã chỉ được chứa chữ, số, gạch dưới hoặc gạch ngang" });
+      return;
+    }
+
+    setSaving(true);
+    setNotification(null);
+    try {
+      await updateUnit(unit.id, { ...unit, code, name, isActive: editForm.isActive });
+      cancelInlineEdit();
+      await fetchUnits();
+      setNotification({ type: "success", message: "Cập nhật đơn vị thành công" });
+    } catch (error) {
+      console.error("Inline edit error:", error);
+      setNotification({ type: "error", message: error.message || "Cập nhật đơn vị thất bại" });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -210,9 +254,9 @@ export default function UnitList() {
               Quản lý các đơn vị đo lường sản phẩm
             </p>
           </div>
-          {!isStaff && (
+          {!readOnly && (
             <button
-              onClick={() => openModal("create")}
+              onClick={openCreateModal}
               className="bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700 flex items-center gap-2 transition"
             >
               <svg
@@ -335,7 +379,7 @@ export default function UnitList() {
                 : "Chưa có đơn vị nào"}
             </div>
           ) : (
-            <table className="min-w-full divide-y divide-gray-200">
+            <table className="management-table min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -360,44 +404,82 @@ export default function UnitList() {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredUnits.map((unit, index) => (
-                  <tr key={unit.id} className="hover:bg-gray-50 transition">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                  <tr key={unit.id} className="hover:bg-primary-50/60 transition">
+                    <td className="px-6 py-4 text-sm text-gray-700">
                       {index + 1}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {unit.code}
+                    <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                      {editingId === unit.id ? (
+                        <input
+                          value={editForm.code}
+                          onChange={(event) => setEditForm((current) => ({ ...current, code: event.target.value }))}
+                          maxLength={20}
+                          className="w-full min-w-20 rounded border border-gray-300 px-2 py-1 focus:border-primary-500 focus:outline-none"
+                          aria-label="Mã đơn vị"
+                        />
+                      ) : unit.code}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                      {unit.name}
+                    <td className="px-6 py-4 text-sm text-gray-700">
+                      {editingId === unit.id ? (
+                        <input
+                          value={editForm.name}
+                          onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))}
+                          maxLength={100}
+                          className="w-full min-w-24 rounded border border-gray-300 px-2 py-1 focus:border-primary-500 focus:outline-none"
+                          aria-label="Tên đơn vị"
+                        />
+                      ) : unit.name}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-primary-600 font-semibold">
+                    <td className="px-6 py-4 text-sm text-center text-primary-600 font-semibold">
                       {unit.productCount || 0}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      <button
-                        onClick={() => handleToggleActive(unit.id)}
-                        disabled={isStaff}
-                        className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
-                          unit.isActive
-                            ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
-                            : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-                        } ${isStaff ? "opacity-50 cursor-not-allowed" : ""}`}
-                      >
-                        {unit.isActive ? "Đang dùng" : "Ngừng dùng"}
-                      </button>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center text-sm">
-                      <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => openModal("view", unit)}
-                          className="px-3 py-1 bg-primary-100 text-primary-800 rounded hover:bg-primary-200 transition"
+                    <td className="px-6 py-4 text-center">
+                      {editingId === unit.id ? (
+                        <select
+                          value={String(editForm.isActive)}
+                          onChange={(event) => setEditForm((current) => ({ ...current, isActive: event.target.value === "true" }))}
+                          className="rounded border border-gray-300 px-2 py-1 focus:border-primary-500 focus:outline-none"
                         >
-                          Chi tiết
+                          <option value="true">Đang dùng</option>
+                          <option value="false">Ngừng dùng</option>
+                        </select>
+                      ) : (
+                        <button
+                          onClick={() => handleToggleActive(unit.id)}
+                          disabled={readOnly}
+                          className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
+                            unit.isActive
+                              ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                              : "bg-gray-100 text-gray-800 hover:bg-gray-200"
+                          } ${readOnly ? "opacity-50 cursor-not-allowed" : ""}`}
+                        >
+                          {unit.isActive ? "Đang dùng" : "Ngừng dùng"}
                         </button>
-                        {!isStaff && (
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-center text-sm">
+                      <div className="flex items-center justify-center gap-2">
+                        {!readOnly && (editingId === unit.id ? (
                           <>
                             <button
-                              onClick={() => openModal("edit", unit)}
+                              onClick={() => saveInlineEdit(unit)}
+                              disabled={saving}
+                              className="px-3 py-1 bg-emerald-100 text-emerald-800 rounded hover:bg-emerald-200 disabled:opacity-50 transition"
+                            >
+                              Lưu
+                            </button>
+                            <button
+                              onClick={cancelInlineEdit}
+                              disabled={saving}
+                              className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 transition"
+                            >
+                              Hủy
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => startInlineEdit(unit)}
                               className="px-3 py-1 bg-amber-100 text-amber-800 rounded hover:bg-amber-200 transition"
                             >
                               Sửa
@@ -420,7 +502,7 @@ export default function UnitList() {
                               Xóa
                             </button>
                           </>
-                        )}
+                        ))}
                       </div>
                     </td>
                   </tr>
@@ -438,14 +520,14 @@ export default function UnitList() {
       </div>
 
       {/* Modal */}
-      {modalState.open && (
+      {modalState.open && modalState.mode === "create" && (
         <UnitModal
-          mode={isStaff ? "view" : modalState.mode}
+          mode="create"
           unit={modalState.unit}
           onSave={handleSave}
           onCancel={closeModal}
           onDelete={() => {
-            if (modalState.unit?.id && !isStaff) {
+            if (modalState.unit?.id && !readOnly) {
               handleDelete(modalState.unit.id, modalState.unit.productCount);
             }
           }}

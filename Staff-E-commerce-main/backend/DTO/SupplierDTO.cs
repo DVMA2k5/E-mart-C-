@@ -6,6 +6,7 @@ namespace backend.DTO
     public class SupplierDTO
     {
         public int Id { get; set; }
+        public string SupplierCode { get; set; } = string.Empty;
 
         [JsonPropertyName("name")]
         public string Name { get; set; } = string.Empty;
@@ -15,6 +16,8 @@ namespace backend.DTO
         public string? Email { get; set; }
         public string? Address { get; set; }
         public bool IsActive { get; set; } = true;
+        public int ProductCount { get; set; }
+        public decimal TotalImportedValue { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

@@ -27,10 +27,9 @@ public static class OrderDeliveryRegression
             structured.RecipientName = "Người nhận mới"; structured.RecipientPhone = "0901234567"; structured.ShippingAddress = "Địa chỉ đã tách";
             db.Orders.AddRange(old, noNote, malformed, counter, structured);
             var buyer = new Customer { FullName = "Chủ tài khoản", Phone = "0988888811", Address = "Địa chỉ hồ sơ cũ", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
-            var user = new User { Username = "delivery_buyer", FullName = buyer.FullName, PasswordHash = "unused", Customer = buyer,
+            var user = new User { Username = "0988888811", FullName = buyer.FullName, PasswordHash = "unused", Customer = buyer,
                 RoleEntity = await db.Roles.SingleAsync(r => r.Name == "customer"), IsActive = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
-            var product = new Product { ProductName = "Delivery item", Price = 20000, IsActive = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
-                Inventory = new Inventory { Quantity = 10, UpdatedAt = DateTime.UtcNow } };
+            var product = new Product { ProductName = "Delivery item", Price = 20000, StockQuantity = 10, IsActive = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
             db.Users.Add(user); db.Products.Add(product);
             await db.SaveChangesAsync();
             (legacyId, noNoteId, malformedId, counterId, structuredId, buyerId, productId) = (old.Id, noNote.Id, malformed.Id, counter.Id, structured.Id, buyer.Id, product.Id);
@@ -71,7 +70,7 @@ public static class OrderDeliveryRegression
         }
         await Call(HttpMethod.Get, "/api/orders/search?orderType=invalid", adminToken, expected: HttpStatusCode.BadRequest);
 
-        var body = new { fullName = "Người nhận khác", phone = "0912345678", address = "99 Đường Giao Hàng\nPhường Mới", note = plainNote,
+        var body = new { requestId = Guid.NewGuid().ToString(), fullName = "Người nhận khác", phone = "0912345678", address = "99 Đường Giao Hàng\nPhường Mới", note = plainNote,
             paymentMethod = "cod", pointsUsed = 0, items = new[] { new { productId, quantity = 1 } } };
         var placed = await Call(HttpMethod.Post, "/api/storefront/orders", buyerToken, body);
         var orderId = placed.GetProperty("id").GetInt32();
@@ -108,7 +107,7 @@ public static class OrderDeliveryRegression
             using var response = await client.SendAsync(request);
             var text = await response.Content.ReadAsStringAsync();
             Check(response.StatusCode == expected, $"{path}: {response.StatusCode} {text}");
-            using var json = JsonDocument.Parse(text);
+            using var json = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "null" : text);
             return json.RootElement.Clone();
         }
     }

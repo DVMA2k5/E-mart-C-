@@ -10,6 +10,21 @@ namespace backend.DTO
         public decimal Value { get; set; }
         public decimal MinOrderAmount { get; set; }
         public string? VoucherCode { get; set; }
+        public string Visibility { get; set; } = "public";
+        public bool SendToCustomers { get; set; }
+        public DateTime? ClaimStartDate { get; set; }
+        public DateTime? ClaimEndDate { get; set; }
+        public int? ClaimLimit { get; set; }
+        public int ClaimedCount { get; set; }
+        public bool IsClaimed { get; set; }
+        /// <summary>Why the customer cannot save this voucher right now (null when they can).</summary>
+        public string? ClaimIssue { get; set; }
+        public int? ClaimId { get; set; }
+        public DateTime? ClaimedAt { get; set; }
+        public DateTime? UsedAt { get; set; }
+        public string? WalletStatus { get; set; }
+        public int? ReservedOrderId { get; set; }
+        public string? OrderNumber { get; set; }
         public List<int> ProductIds { get; set; } = new();
         public decimal? MaxDiscount { get; set; }
         public DateTime? StartDate { get; set; }

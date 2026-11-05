@@ -12,14 +12,13 @@ namespace backend.Services
         private readonly IConfiguration _config;
         private readonly string _projectRootLogs; // Đường dẫn tuyệt đối đến backend/Logs
 
-        public ActivityLogService(ActivityLogRepository logRepo, IConfiguration config)
+        public ActivityLogService(ActivityLogRepository logRepo, IConfiguration config, IHostEnvironment environment)
         {
             _logRepo = logRepo;
             _config = config;
 
-            // Tính đường dẫn gốc dự án (lên 3 cấp từ bin/Debug/net8.0)
-            string binDir = AppContext.BaseDirectory;
-            _projectRootLogs = Path.GetFullPath(Path.Combine(binDir, "..", "..", "..", "Logs"));
+            // Logs live in <content root>/Logs (the backend folder), wherever the compiled dll is placed.
+            _projectRootLogs = Path.Combine(environment.ContentRootPath, "Logs");
 
             // Tạo thư mục Logs ở gốc dự án
             if (!Directory.Exists(_projectRootLogs))
@@ -30,7 +29,7 @@ namespace backend.Services
         }
 
         public async Task LogAsync(
-            int userId,
+            int? userId,
             string action,
             string entityType,
             string entityId,

@@ -4,19 +4,20 @@ import { useDispatch, useSelector } from "react-redux";
 import {
   fetchCustomers,
   setCurrentPage,
+  setPageSize,
   setSearchTerm,
   setStatusFilter,
-  toggleStatus,
   resetFilters,
+  mergeRealtimeCustomer,
 } from "../../features/customers/customerSlice";
 import Pagination from "../../components/ui/Pagination";
+import TableDisplayControls from "../../components/ui/TableDisplayControls";
 import CustomerDetailModal from "../../components/customers/CustomerDetailModal";
 import CustomerEditModal from "../../components/customers/CustomerEditModal";
 import CustomerAddModal from "../../components/customers/CustomerAddModal";
 import {
   Search,
   Edit2,
-  Eye,
   RotateCcw,
   Tag,
   CheckCircle,
@@ -24,10 +25,12 @@ import {
   XCircle,
   Trash2,
   Upload,
+  Power,
 } from "lucide-react";
 import ImportModal from "../../components/import/ImportModal";
-import { getCustomers, deleteCustomer } from "../../api/customerApi";
+import { getCustomers, deleteCustomer, toggleCustomerStatus } from "../../api/customerApi";
 import { useAuth } from "../../hook/useAuth";
+import { useRealtimeNotifications } from "../../hooks/useRealtimeNotifications";
 
 const CustomerList = () => {
   const dispatch = useDispatch();
@@ -39,19 +42,55 @@ const CustomerList = () => {
     filters,
   } = useSelector((state) => state.customers);
 
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("customers.write");
 
   const [localSearchTerm, setLocalSearchTerm] = useState(filters.search || "");
+  const [compact, setCompact] = useState(true);
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [actionNotice, setActionNotice] = useState(null);
   const [stats, setStats] = useState({
     total: 0,
     active: 0,
     inactive: 0,
   });
+
+  useRealtimeNotifications({
+    CustomerCreated: (customer) => {
+      dispatch(mergeRealtimeCustomer(customer));
+      refreshCustomerData();
+    },
+    CustomerUpdated: (customer) => {
+      dispatch(mergeRealtimeCustomer(customer));
+      refreshCustomerData();
+    },
+  });
+
+  function refreshCustomerData() {
+    dispatch(fetchCustomers({
+      page: pagination.currentPage,
+      pageSize: pagination.pageSize,
+      search: filters.search,
+      status: filters.status,
+    }));
+    Promise.all([
+      getCustomers(1, 1, "", "all"),
+      getCustomers(1, 1, "", "active"),
+      getCustomers(1, 1, "", "inactive"),
+    ]).then(([totalData, activeData, inactiveData]) => {
+      setStats({ total: totalData.totalItems || 0, active: activeData.totalItems || 0, inactive: inactiveData.totalItems || 0 });
+    }).catch((error) => console.error("Error refreshing customer stats:", error));
+  }
+
+  useEffect(() => {
+    if (!actionNotice) return undefined;
+    const timer = window.setTimeout(() => setActionNotice(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [actionNotice]);
 
   // Fetch stats (total, active, inactive) on mount
   useEffect(() => {
@@ -72,11 +111,13 @@ const CustomerList = () => {
       }
     };
     fetchStats();
+    const refreshTimer = window.setInterval(fetchStats, 15000);
+    return () => window.clearInterval(refreshTimer);
   }, []);
 
   // Fetch customers when filters or pagination changes
   useEffect(() => {
-    dispatch(
+    const refreshCustomers = () => dispatch(
       fetchCustomers({
         page: pagination.currentPage,
         pageSize: pagination.pageSize,
@@ -84,6 +125,10 @@ const CustomerList = () => {
         status: filters.status,
       })
     );
+    refreshCustomers();
+    // Fallback when the SignalR connection is not available; the list endpoint reads SQL directly.
+    const refreshTimer = window.setInterval(refreshCustomers, 3000);
+    return () => window.clearInterval(refreshTimer);
   }, [
     dispatch,
     pagination.currentPage,
@@ -100,58 +145,13 @@ const CustomerList = () => {
     dispatch(setStatusFilter(status));
   };
 
-  const handleToggleStatus = async (customerId) => {
-    const customer = customers.find((c) => c.id === customerId);
-    if (customer) {
-      try {
-        console.log(
-          "Toggling status for customer:",
-          customerId,
-          "Current status:",
-          customer.isActive
-        );
-        const result = await dispatch(
-          toggleStatus({ customerId, isActive: !customer.isActive })
-        ).unwrap();
-        console.log("Toggle status result:", result);
-
-        // Small delay to ensure backend has processed the change
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        // Refetch customers after toggle status
-        console.log("Refetching customers...");
-        await dispatch(
-          fetchCustomers({
-            page: pagination.currentPage,
-            pageSize: pagination.pageSize,
-            search: filters.search,
-            status: filters.status,
-          })
-        ).unwrap();
-        console.log("Customers refetched successfully");
-
-        // Update stats
-        const [totalData, activeData, inactiveData] = await Promise.all([
-          getCustomers(1, 1, "", "all"),
-          getCustomers(1, 1, "", "active"),
-          getCustomers(1, 1, "", "inactive"),
-        ]);
-        setStats({
-          total: totalData.totalItems || 0,
-          active: activeData.totalItems || 0,
-          inactive: inactiveData.totalItems || 0,
-        });
-      } catch (error) {
-        console.error("Error toggling status:", error);
-      }
-    }
-  };
-
   const handleView = (customerId) => {
-    setSelectedCustomerId(customerId);
+    setEditingCustomerId(null);
+    setSelectedCustomerId((current) => current === customerId ? null : customerId);
   };
 
   const handleEdit = (customerId) => {
+    setSelectedCustomerId(null);
     setEditingCustomerId(customerId);
   };
 
@@ -159,14 +159,44 @@ const CustomerList = () => {
     if (!window.confirm("Xóa hồ sơ khách hàng này?")) return;
     try {
       await deleteCustomer(customerId);
-      await dispatch(fetchCustomers({
+      const result = await dispatch(fetchCustomers({
         page: pagination.currentPage,
         pageSize: pagination.pageSize,
         search: filters.search,
         status: filters.status,
-      }));
+      })).unwrap();
+      if (result.items.length === 0 && pagination.currentPage > 1) {
+        dispatch(setCurrentPage(pagination.currentPage - 1));
+      }
+      const [totalData, activeData, inactiveData] = await Promise.all([
+        getCustomers(1, 1, "", "all"),
+        getCustomers(1, 1, "", "active"),
+        getCustomers(1, 1, "", "inactive"),
+      ]);
+      setStats({ total: totalData.totalItems || 0, active: activeData.totalItems || 0, inactive: inactiveData.totalItems || 0 });
+      setActionNotice({ type: "success", message: "Đã xóa khách hàng." });
     } catch (error) {
-      console.error("Error deleting customer:", error);
+      setActionNotice({ type: "error", message: error.message || "Không thể xóa khách hàng." });
+    }
+  };
+
+  const handleToggleCustomerStatus = async (customer) => {
+    const nextActive = !customer.isActive;
+    const action = nextActive ? "mở khóa" : "khóa";
+    if (!window.confirm(`Bạn có chắc muốn ${action} tài khoản khách hàng ${customer.fullName}?`)) return;
+    try {
+      await toggleCustomerStatus(customer.id, nextActive);
+      const [listResult, totalData, activeData, inactiveData] = await Promise.all([
+        dispatch(fetchCustomers({ page: pagination.currentPage, pageSize: pagination.pageSize, search: filters.search, status: filters.status })).unwrap(),
+        getCustomers(1, 1, "", "all"),
+        getCustomers(1, 1, "", "active"),
+        getCustomers(1, 1, "", "inactive"),
+      ]);
+      if (listResult.items.length === 0 && pagination.currentPage > 1) dispatch(setCurrentPage(pagination.currentPage - 1));
+      setStats({ total: totalData.totalItems || 0, active: activeData.totalItems || 0, inactive: inactiveData.totalItems || 0 });
+      setActionNotice({ type: "success", message: `Đã ${action} khách hàng.` });
+    } catch (error) {
+      setActionNotice({ type: "error", message: error.message || `Không thể ${action} khách hàng.` });
     }
   };
 
@@ -188,11 +218,11 @@ const CustomerList = () => {
   }
 
   return (
-    <div className="p-6">
+    <div className="p-1 sm:p-2">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-800">Quản Lý Khách Hàng</h1>
-        <div className="flex gap-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-2xl font-bold text-gray-800">Quản Lý Khách Hàng</h1>
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setIsImportModalOpen(true)}
             className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-2"
@@ -208,58 +238,59 @@ const CustomerList = () => {
           </button>
         </div>
       </div>
+      {actionNotice && <div role={actionNotice.type === "error" ? "alert" : "status"} className={`fixed right-4 top-4 z-50 max-w-md rounded-lg border p-3 shadow-lg ${actionNotice.type === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{actionNotice.message}<button type="button" className="ml-3 underline" onClick={() => setActionNotice(null)}>Đóng</button></div>}
 
       {/* Statistics */}
-      <div className="mb-6 grid grid-cols-4 gap-4">
+      <div className="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
         <div
-          className="p-4 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+          className="grid grid-cols-[auto_1fr] items-center gap-x-3 p-3 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
           onClick={() => handleStatusFilter("all")}
         >
-          <div className="flex items-center gap-3 mb-2">
+          <div className="row-span-2">
             <div className="p-2 bg-primary-100 rounded-lg">
               <Tag className="w-5 h-5 text-primary-600" />
             </div>
           </div>
-          <p className="text-sm text-gray-600 mb-1">Tổng số</p>
-          <p className="text-2xl font-bold text-gray-800">{stats.total}</p>
+          <p className="text-sm text-gray-600">Tổng số</p>
+          <p className="text-xl font-bold text-gray-800">{stats.total}</p>
         </div>
         <div
-          className="p-4 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+          className="grid grid-cols-[auto_1fr] items-center gap-x-3 p-3 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
           onClick={() => handleStatusFilter("active")}
         >
-          <div className="flex items-center gap-3 mb-2">
+          <div className="row-span-2">
             <div className="p-2 bg-emerald-100 rounded-lg">
               <CheckCircle className="w-5 h-5 text-emerald-600" />
             </div>
           </div>
-          <p className="text-sm text-gray-600 mb-1">Đang hoạt động</p>
-          <p className="text-2xl font-bold text-gray-800">{stats.active}</p>
+          <p className="text-sm text-gray-600">Đang hoạt động</p>
+          <p className="text-xl font-bold text-gray-800">{stats.active}</p>
         </div>
-        <div className="p-4 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-3 mb-2">
+        <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 p-3 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow">
+          <div className="row-span-2">
             <div className="p-2 bg-red-100 rounded-lg">
               <Clock className="w-5 h-5 text-red-600" />
             </div>
           </div>
-          <p className="text-sm text-gray-600 mb-1">Hết hạn</p>
-          <p className="text-2xl font-bold text-gray-800">0</p>
+          <p className="text-sm text-gray-600">Hết hạn</p>
+          <p className="text-xl font-bold text-gray-800">0</p>
         </div>
         <div
-          className="p-4 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+          className="grid grid-cols-[auto_1fr] items-center gap-x-3 p-3 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
           onClick={() => handleStatusFilter("inactive")}
         >
-          <div className="flex items-center gap-3 mb-2">
+          <div className="row-span-2">
             <div className="p-2 bg-gray-100 rounded-lg">
               <XCircle className="w-5 h-5 text-gray-600" />
             </div>
           </div>
-          <p className="text-sm text-gray-600 mb-1">Không hoạt động</p>
-          <p className="text-2xl font-bold text-gray-800">{stats.inactive}</p>
+          <p className="text-sm text-gray-600">Không hoạt động</p>
+          <p className="text-xl font-bold text-gray-800">{stats.inactive}</p>
         </div>
       </div>
 
       {/* Search and Filter */}
-      <div className="mb-6 flex gap-4">
+      <div className="mb-3 flex flex-wrap gap-2">
         <div className="flex-1 relative">
           <input
             type="text"
@@ -290,9 +321,15 @@ const CustomerList = () => {
       </div>
 
       {/* Table */}
+      <div className={`grid items-start gap-3 ${selectedCustomerId || editingCustomerId ? "xl:grid-cols-[minmax(0,1.75fr)_minmax(320px,0.8fr)]" : "grid-cols-1"}`}>
+      <section className="min-w-0">
+      <div className="mb-2">
+        <TableDisplayControls pageSize={pagination.pageSize} compact={compact} onCompactChange={setCompact} disabled={loading}
+          onPageSizeChange={(size) => dispatch(setPageSize(size))} />
+      </div>
       <div className="overflow-hidden border border-gray-300 rounded-lg">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-max">
+        <div className="management-table-scroll" key={`${pagination.currentPage}-${pagination.pageSize}-${filters.search}-${filters.status}`}>
+          <table className="management-table w-full min-w-full" data-compact={compact}>
             <thead className="bg-gray-100 border-b border-gray-300">
               <tr>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
@@ -338,7 +375,9 @@ const CustomerList = () => {
                 customers.map((customer) => (
                   <tr
                     key={customer.id}
-                    className="border-b border-gray-200 hover:bg-gray-50"
+                    onClick={() => handleView(customer.id)}
+                    title="Bấm để xem chi tiết"
+                    className={`cursor-pointer border-b border-gray-200 hover:bg-primary-50/60 ${selectedCustomerId === customer.id ? "bg-primary-50" : ""}`}
                   >
                     <td className="px-6 py-3">
                       <div>
@@ -354,6 +393,7 @@ const CustomerList = () => {
                               : "";
                             return formattedDate;
                           })()}
+                          <span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${customer.isActive ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-600"}`}>{customer.isActive ? "Đang hoạt động" : "Không hoạt động"}</span>
                         </p>
                       </div>
                     </td>
@@ -369,16 +409,9 @@ const CustomerList = () => {
                     <td className="px-6 py-3 text-sm text-gray-600">
                       {customer.address || "-"}
                     </td>
-                    <td className="px-6 py-3 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => handleView(customer.id)}
-                          className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition"
-                          title="Xem chi tiết"
-                        >
-                          <Eye size={18} />
-                        </button>
-                        {!isStaff && (
+                    <td className="px-6 py-3 text-center" onClick={(event) => event.stopPropagation()}>
+                      <div className="table-actions flex items-center justify-center gap-2">
+                        {!readOnly && (
                           <>
                             <button
                               onClick={() => handleEdit(customer.id)}
@@ -386,6 +419,13 @@ const CustomerList = () => {
                               title="Sửa"
                             >
                               <Edit2 size={18} />
+                            </button>
+                            <button
+                              onClick={() => handleToggleCustomerStatus(customer)}
+                              className={`p-2 rounded-lg transition ${customer.isActive ? "text-amber-600 hover:bg-amber-50" : "text-emerald-600 hover:bg-emerald-50"}`}
+                              title={customer.isActive ? "Khóa tài khoản" : "Mở khóa tài khoản"}
+                            >
+                              <Power size={18} />
                             </button>
                             <button
                               onClick={() => handleDelete(customer.id)}
@@ -407,12 +447,12 @@ const CustomerList = () => {
       </div>
 
       {/* Pagination */}
-      <div className="mt-6">
+      <div className="mt-3">
         <Pagination meta={pagination} onPageChange={handlePageChange} />
-        <div className="mt-4 text-sm text-gray-600">
+        <div className="mt-2 text-sm text-gray-600">
           Hiển thị{" "}
           <strong>
-            {(pagination.currentPage - 1) * pagination.pageSize + 1} -{" "}
+            {pagination.totalItems ? (pagination.currentPage - 1) * pagination.pageSize + 1 : 0} -{" "}
             {Math.min(
               pagination.currentPage * pagination.pageSize,
               pagination.totalItems
@@ -421,44 +461,18 @@ const CustomerList = () => {
           / {pagination.totalItems} khách hàng
         </div>
       </div>
+      </section>
+
+      {selectedCustomerId && <CustomerDetailModal embedded customerId={selectedCustomerId} onClose={() => setSelectedCustomerId(null)} />}
+      {editingCustomerId && <CustomerEditModal embedded customerId={editingCustomerId} onClose={() => setEditingCustomerId(null)} onSave={async () => {
+        await dispatch(fetchCustomers({ page: pagination.currentPage, pageSize: pagination.pageSize, search: filters.search, status: filters.status })).unwrap();
+        const [totalData, activeData, inactiveData] = await Promise.all([getCustomers(1, 1, "", "all"), getCustomers(1, 1, "", "active"), getCustomers(1, 1, "", "inactive")]);
+        setStats({ total: totalData.totalItems || 0, active: activeData.totalItems || 0, inactive: inactiveData.totalItems || 0 });
+        setActionNotice({ type: "success", message: "Đã cập nhật thông tin khách hàng." });
+      }} />}
+      </div>
 
       {/* Customer Detail Modal */}
-      {selectedCustomerId && (
-        <CustomerDetailModal
-          customerId={selectedCustomerId}
-          onClose={() => setSelectedCustomerId(null)}
-        />
-      )}
-
-      {/* Customer Edit Modal */}
-      {editingCustomerId && (
-        <CustomerEditModal
-          customerId={editingCustomerId}
-          onClose={() => setEditingCustomerId(null)}
-          onSave={async () => {
-            // Refresh customer list after edit
-            await dispatch(
-              fetchCustomers({
-                page: pagination.currentPage,
-                pageSize: pagination.pageSize,
-                search: filters.search,
-                status: filters.status,
-              })
-            ).unwrap();
-            // Update stats
-            const [totalData, activeData, inactiveData] = await Promise.all([
-              getCustomers(1, 1, "", "all"),
-              getCustomers(1, 1, "", "active"),
-              getCustomers(1, 1, "", "inactive"),
-            ]);
-            setStats({
-              total: totalData.totalItems || 0,
-              active: activeData.totalItems || 0,
-              inactive: inactiveData.totalItems || 0,
-            });
-          }}
-        />
-      )}
 
       {/* Customer Add Modal */}
       <CustomerAddModal
@@ -485,6 +499,7 @@ const CustomerList = () => {
             active: activeData.totalItems || 0,
             inactive: inactiveData.totalItems || 0,
           });
+          setActionNotice({ type: "success", message: "Đã thêm khách hàng." });
         }}
       />
 
@@ -513,6 +528,7 @@ const CustomerList = () => {
             active: activeData.totalItems || 0,
             inactive: inactiveData.totalItems || 0,
           });
+          setActionNotice({ type: "success", message: "Đã nhập danh sách khách hàng." });
         }}
         type="customers"
       />

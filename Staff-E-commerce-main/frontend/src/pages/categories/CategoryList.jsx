@@ -7,17 +7,15 @@ import {
   setSearchTerm,
   setStatusFilter,
   toggleStatus,
+  updateCategoryInfo,
   resetFilters,
 } from "../../features/categories/categorySlice";
 import Pagination from "../../components/ui/Pagination";
-import CategoryDetailModal from "../../components/categories/CategoryDetailModal";
-import CategoryEditModal from "../../components/categories/CategoryEditModal";
 import CategoryAddModal from "../../components/categories/CategoryAddModal";
 import {
   Search,
   Edit2,
   Power,
-  Eye,
   RotateCcw,
   Tag,
   CheckCircle,
@@ -38,17 +36,26 @@ const CategoryList = () => {
   } = useSelector((state) => state.categories);
 
   const [localSearchTerm, setLocalSearchTerm] = useState(filters.search || "");
-  const [selectedCategoryId, setSelectedCategoryId] = useState(null);
   const [editingCategoryId, setEditingCategoryId] = useState(null);
+  const [editForm, setEditForm] = useState({ name: "", description: "", isActive: true });
+  const [saving, setSaving] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [actionNotice, setActionNotice] = useState(null);
   const [stats, setStats] = useState({
     total: 0,
     active: 0,
     inactive: 0,
   });
 
-  const { user } = useAuth();
-  const isStaff = user?.role?.toLowerCase() === "staff";
+  useEffect(() => {
+    if (!actionNotice) return undefined;
+    const timer = window.setTimeout(() => setActionNotice(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [actionNotice]);
+
+  const { permissions } = useAuth();
+  // Write actions follow the account's permissions, not the role name.
+  const readOnly = !permissions.includes("categories.write");
 
   // Fetch stats (total, active, inactive) on mount
   useEffect(() => {
@@ -138,18 +145,76 @@ const CategoryList = () => {
           active: activeData.totalItems || 0,
           inactive: inactiveData.totalItems || 0,
         });
+        setActionNotice({ type: "success", message: "Đã cập nhật trạng thái danh mục." });
       } catch (error) {
-        console.error("Error toggling status:", error);
+        setActionNotice({ type: "error", message: error.message || "Không thể cập nhật trạng thái danh mục." });
       }
     }
   };
 
-  const handleView = (categoryId) => {
-    setSelectedCategoryId(categoryId);
+  const handleEdit = (category) => {
+    setEditingCategoryId(category.id);
+    setEditForm({
+      name: category.name || "",
+      description: category.description || "",
+      isActive: Boolean(category.isActive),
+    });
   };
 
-  const handleEdit = (categoryId) => {
-    setEditingCategoryId(categoryId);
+  const cancelInlineEdit = () => {
+    setEditingCategoryId(null);
+    setEditForm({ name: "", description: "", isActive: true });
+  };
+
+  const saveInlineEdit = async (category) => {
+    const name = editForm.name.trim();
+    const description = editForm.description.trim();
+    if (name.length < 2 || name.length > 191) {
+      setActionNotice({ type: "error", message: "Tên danh mục phải có từ 2 đến 191 ký tự." });
+      return;
+    }
+    if (description.length > 500) {
+      setActionNotice({ type: "error", message: "Mô tả không được vượt quá 500 ký tự." });
+      return;
+    }
+
+    const informationChanged = name !== category.name || description !== (category.description || "");
+    const statusChanged = editForm.isActive !== Boolean(category.isActive);
+    if (!informationChanged && !statusChanged) {
+      cancelInlineEdit();
+      return;
+    }
+
+    setSaving(true);
+    try {
+      if (informationChanged) {
+        await dispatch(updateCategoryInfo({
+          categoryId: category.id,
+          categoryData: { name, description },
+        })).unwrap();
+      }
+      if (statusChanged) {
+        await dispatch(toggleStatus({ categoryId: category.id, isActive: editForm.isActive })).unwrap();
+      }
+      await dispatch(fetchCategories({
+        page: pagination.currentPage,
+        pageSize: pagination.pageSize,
+        search: filters.search,
+        status: filters.status,
+      })).unwrap();
+      const [totalData, activeData, inactiveData] = await Promise.all([
+        getCategories(1, 1, "", "all"),
+        getCategories(1, 1, "", "active"),
+        getCategories(1, 1, "", "inactive"),
+      ]);
+      setStats({ total: totalData.totalItems || 0, active: activeData.totalItems || 0, inactive: inactiveData.totalItems || 0 });
+      cancelInlineEdit();
+      setActionNotice({ type: "success", message: "Đã cập nhật danh mục." });
+    } catch (error) {
+      setActionNotice({ type: "error", message: error.message || "Không thể cập nhật danh mục." });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handlePageChange = (page) => {
@@ -174,7 +239,7 @@ const CategoryList = () => {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-800">Quản Lý Danh Mục</h1>
-        {!isStaff && (
+        {!readOnly && (
           <button
             onClick={() => setIsAddModalOpen(true)}
             className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
@@ -183,6 +248,7 @@ const CategoryList = () => {
           </button>
         )}
       </div>
+      {actionNotice && <div role={actionNotice.type === "error" ? "alert" : "status"} className={`fixed right-4 top-4 z-50 max-w-md rounded-lg border p-3 shadow-lg ${actionNotice.type === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{actionNotice.message}<button type="button" className="ml-3 underline" onClick={() => setActionNotice(null)}>Đóng</button></div>}
 
       {/* Statistics */}
       <div className="mb-6 grid grid-cols-4 gap-4">
@@ -265,9 +331,10 @@ const CategoryList = () => {
       </div>
 
       {/* Table */}
+      <section className="min-w-0">
       <div className="overflow-hidden border border-gray-300 rounded-lg">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-max">
+          <table className="management-table w-full min-w-full">
             <thead className="bg-gray-100 border-b border-gray-300">
               <tr>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
@@ -310,10 +377,18 @@ const CategoryList = () => {
                 categories.map((category) => (
                   <tr
                     key={category.id}
-                    className="border-b border-gray-200 hover:bg-gray-50"
+                    className="border-b border-gray-200 hover:bg-primary-50/60"
                   >
                     <td className="px-6 py-3">
-                      <div>
+                      {editingCategoryId === category.id ? (
+                        <input
+                          value={editForm.name}
+                          onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))}
+                          maxLength={191}
+                          className="w-full min-w-32 rounded border border-gray-300 px-2 py-1 focus:border-primary-500 focus:outline-none"
+                          aria-label="Tên danh mục"
+                        />
+                      ) : <div>
                         <p className="font-semibold text-gray-800">
                           {category.name}
                         </p>
@@ -327,19 +402,37 @@ const CategoryList = () => {
                             return formattedDate;
                           })()}
                         </p>
-                      </div>
+                      </div>}
                     </td>
                     <td className="px-6 py-3 text-sm text-gray-600">
                       {category.slug || "-"}
                     </td>
                     <td className="px-6 py-3 text-sm text-gray-600">
-                      {category.description
+                      {editingCategoryId === category.id ? (
+                        <textarea
+                          value={editForm.description}
+                          onChange={(event) => setEditForm((current) => ({ ...current, description: event.target.value }))}
+                          maxLength={500}
+                          rows={2}
+                          className="w-full min-w-40 resize-y rounded border border-gray-300 px-2 py-1 focus:border-primary-500 focus:outline-none"
+                          aria-label="Mô tả danh mục"
+                        />
+                      ) : category.description
                         ? category.description.substring(0, 50) +
                           (category.description.length > 50 ? "..." : "")
                         : "-"}
                     </td>
                     <td className="px-6 py-3">
-                      {(() => {
+                      {editingCategoryId === category.id ? (
+                        <select
+                          value={String(editForm.isActive)}
+                          onChange={(event) => setEditForm((current) => ({ ...current, isActive: event.target.value === "true" }))}
+                          className="rounded border border-gray-300 px-2 py-1 focus:border-primary-500 focus:outline-none"
+                        >
+                          <option value="true">Hoạt động</option>
+                          <option value="false">Ngừng hoạt động</option>
+                        </select>
+                      ) : (() => {
                         const statusClass = category.isActive
                           ? "bg-emerald-100 text-emerald-800"
                           : "bg-red-100 text-red-800";
@@ -355,19 +448,31 @@ const CategoryList = () => {
                         );
                       })()}
                     </td>
-                    <td className="px-6 py-3 text-center">
+                    <td className="px-6 py-3 text-center" onClick={(event) => event.stopPropagation()}>
                       <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => handleView(category.id)}
-                          className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition"
-                          title="Xem chi tiết"
-                        >
-                          <Eye size={18} />
-                        </button>
-                        {!isStaff && (
+                        {!readOnly && (editingCategoryId === category.id ? (
                           <>
                             <button
-                              onClick={() => handleEdit(category.id)}
+                              type="button"
+                              onClick={() => saveInlineEdit(category)}
+                              disabled={saving}
+                              className="rounded bg-emerald-100 px-3 py-1 text-emerald-800 hover:bg-emerald-200 disabled:opacity-50"
+                            >
+                              Lưu
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelInlineEdit}
+                              disabled={saving}
+                              className="rounded bg-gray-100 px-3 py-1 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                            >
+                              Hủy
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleEdit(category)}
                               className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
                               title="Sửa"
                             >
@@ -389,7 +494,7 @@ const CategoryList = () => {
                               <Power size={18} />
                             </button>
                           </>
-                        )}
+                        ))}
                       </div>
                     </td>
                   </tr>
@@ -415,44 +520,7 @@ const CategoryList = () => {
           / {pagination.totalItems} danh mục
         </div>
       </div>
-
-      {/* Category Detail Modal */}
-      {selectedCategoryId && (
-        <CategoryDetailModal
-          categoryId={selectedCategoryId}
-          onClose={() => setSelectedCategoryId(null)}
-        />
-      )}
-
-      {/* Category Edit Modal */}
-      {editingCategoryId && (
-        <CategoryEditModal
-          categoryId={editingCategoryId}
-          onClose={() => setEditingCategoryId(null)}
-          onSave={async () => {
-            // Refresh category list after edit
-            await dispatch(
-              fetchCategories({
-                page: pagination.currentPage,
-                pageSize: pagination.pageSize,
-                search: filters.search,
-                status: filters.status,
-              })
-            ).unwrap();
-            // Update stats
-            const [totalData, activeData, inactiveData] = await Promise.all([
-              getCategories(1, 1, "", "all"),
-              getCategories(1, 1, "", "active"),
-              getCategories(1, 1, "", "inactive"),
-            ]);
-            setStats({
-              total: totalData.totalItems || 0,
-              active: activeData.totalItems || 0,
-              inactive: inactiveData.totalItems || 0,
-            });
-          }}
-        />
-      )}
+      </section>
 
       {/* Category Add Modal */}
       <CategoryAddModal
@@ -479,6 +547,7 @@ const CategoryList = () => {
             active: activeData.totalItems || 0,
             inactive: inactiveData.totalItems || 0,
           });
+          setActionNotice({ type: "success", message: "Đã thêm danh mục." });
         }}
       />
     </div>

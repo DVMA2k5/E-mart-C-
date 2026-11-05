@@ -32,7 +32,16 @@ builder.Services.AddDataProtection()
 // Configure Services
 // -------------------------
 builder.Services.AddScoped<PermissionFilter>();
+builder.Services.AddScoped<ActorPermissionService>();
+builder.Services.AddScoped<PaymentSimulator>();
+builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddScoped<AccountMutationFilter>();
+// Read caches: one size-limited MemoryCache, evicted by a change token fired after each committed DB write.
+builder.Services.AddSingleton<backend.Services.Caching.BusCacheStore>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationSignal>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationSaveChangesInterceptor>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationCommandInterceptor>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationTransactionInterceptor>();
 builder.Services.AddControllers(options =>
     {
         options.Filters.AddService<PermissionFilter>();
@@ -44,6 +53,7 @@ builder.Services.AddControllers(options =>
         options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        options.JsonSerializerOptions.Converters.Add(new backend.Helpers.UtcDateTimeJsonConverter());
 
         // Nếu muốn, có thể dùng ReferenceHandler.Preserve
         // options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.Preserve;
@@ -51,7 +61,8 @@ builder.Services.AddControllers(options =>
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR().AddJsonProtocol(options =>
+    options.PayloadSerializerOptions.Converters.Add(new backend.Helpers.UtcDateTimeJsonConverter()));
 builder.Services.AddAuthorization(options =>
 {
     // Yêu cầu đăng nhập cho tất cả endpoint trừ khi đánh dấu [AllowAnonymous]
@@ -62,8 +73,12 @@ builder.Services.AddAuthorization(options =>
 
 // Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-builder.Services.AddDbContext<AppDbContext>(options =>
+builder.Services.AddDbContext<AppDbContext>((services, options) =>
     options.UseSqlServer(connectionString)
+        .AddInterceptors(
+            services.GetRequiredService<backend.Services.Caching.CacheInvalidationSaveChangesInterceptor>(),
+            services.GetRequiredService<backend.Services.Caching.CacheInvalidationCommandInterceptor>(),
+            services.GetRequiredService<backend.Services.Caching.CacheInvalidationTransactionInterceptor>())
 // .EnableSensitiveDataLogging() // Dev only
 );
 // -------------------------
@@ -82,8 +97,15 @@ builder.Services.AddScoped<PaymentRepository>();
 builder.Services.AddScoped<CategoryRepository>();
 builder.Services.AddScoped<SupplierRepository>();
 builder.Services.AddScoped<ReportsRepository>();
+builder.Services.AddScoped<RevenueAnalyticsRepository>();
 builder.Services.AddScoped<UnitRepository>();
 builder.Services.AddScoped<PurchaseOrderRepository>();
+builder.Services.AddScoped<EmployeeRepository>();
+builder.Services.AddScoped<RoleRepository>();
+builder.Services.AddScoped<InvoiceRepository>();
+builder.Services.AddScoped<PosCheckoutRepository>();
+builder.Services.AddScoped<StorefrontRepository>();
+builder.Services.AddScoped<ImportRepository>();
 
 builder.Services.AddHttpContextAccessor();
 
@@ -96,23 +118,34 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ProductService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<InvoiceService>();
+builder.Services.AddSingleton<InvoiceDetailCache>();
 builder.Services.AddScoped<PosCheckoutService>();
+builder.Services.AddScoped<StorefrontService>();
+builder.Services.AddScoped<StorefrontAccountService>();
+builder.Services.AddScoped<StorefrontCheckoutService>();
+builder.Services.AddScoped<BankTransferService>();
+builder.Services.AddScoped<RealtimeNotificationService>();
 builder.Services.AddScoped<ActivityLogService>();
 builder.Services.AddScoped<CustomerService>();
 builder.Services.AddScoped<CategoryService>();
+builder.Services.AddSingleton(typeof(BusMemoryCache<>));
 builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<PromotionService>();
+builder.Services.AddScoped<VoucherWalletService>();
 builder.Services.AddScoped<StatisticsService>();
 builder.Services.AddScoped<OrderItemService>();
 builder.Services.AddScoped<InventoryService>();
 builder.Services.AddScoped<PaymentService>();
 builder.Services.AddScoped<ImportService>();
-builder.Services.AddScoped<CategoryService>();
 builder.Services.AddScoped<SupplierService>();
 builder.Services.AddScoped<ReportsService>();
+builder.Services.AddScoped<RevenueAnalyticsService>();
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<UnitService>();
 builder.Services.AddScoped<PurchaseOrderService>();
+builder.Services.AddScoped<EmployeeService>();
+builder.Services.AddScoped<RoleService>();
 
 builder.Services.AddHttpClient();
 
@@ -123,7 +156,8 @@ builder.Services.Configure<FormOptions>(options =>
 });
 
 // Authentication JWT
-var key = builder.Configuration["Jwt:Key"];
+var key = JwtKeyStore.Resolve(builder.Configuration, builder.Environment.ContentRootPath);
+builder.Configuration["Jwt:Key"] = key; // JwtService signs with the same resolved key.
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -133,7 +167,17 @@ builder.Services.AddAuthentication(options =>
 {
     options.RequireHttpsMetadata = false; // true in production
     options.SaveToken = true;
-    options.Events = new JwtBearerEvents { OnTokenValidated = SessionValidator.ValidateAsync };
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = SessionValidator.ValidateAsync,
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            if (!string.IsNullOrEmpty(accessToken) && context.HttpContext.Request.Path.StartsWithSegments("/hub/notifications"))
+                context.Token = accessToken;
+            return Task.CompletedTask;
+        }
+    };
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
@@ -147,11 +191,39 @@ builder.Services.AddAuthentication(options =>
 // -------------------------
 // Configure CORS for React
 // -------------------------
+// Cors:AllowedOrigins (exact origins) is used when configured, e.g. for a deployed site. Without it only this
+// machine and private LAN addresses are accepted, so the admin site/Expo web still work from another PC on the LAN.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()?
+    .Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .Select(origin => origin.Trim().TrimEnd('/'))
+    .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+static bool IsLocalOrLanOrigin(string origin)
+{
+    if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
+        return false;
+    if (uri.IsLoopback) return true;
+    if (!System.Net.IPAddress.TryParse(uri.Host, out var ip) ||
+        ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
+    var b = ip.GetAddressBytes();
+    return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
+}
+
+// Development only: the customer web app opened through a Cloudflare quick tunnel (Start-Customer-Public.cmd)
+// has an https://<random>.trycloudflare.com origin.
+var allowDevTunnelOrigins = builder.Environment.IsDevelopment();
+static bool IsDevTunnelOrigin(string origin) =>
+    Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
+    uri.Host.EndsWith(".trycloudflare.com", StringComparison.OrdinalIgnoreCase);
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReact", policy =>
     {
-        policy.SetIsOriginAllowed(_ => true)
+        policy.SetIsOriginAllowed(origin => (allowDevTunnelOrigins && IsDevTunnelOrigin(origin)) ||
+                (allowedOrigins.Count > 0
+                    ? allowedOrigins.Contains(origin.TrimEnd('/'))
+                    : IsLocalOrLanOrigin(origin)))
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -166,7 +238,7 @@ try
 }
 catch (Exception ex)
 {
-    app.Logger.LogCritical(ex, "Authorization schema initialization failed.");
+    app.Logger.LogCritical(ex, "Database schema initialization failed.");
     throw;
 }
 
@@ -183,6 +255,9 @@ app.UseRouting();
 
 app.UseCors("AllowReact");
 
+// Turns lock time-outs / deadlocks into 503 + Retry-After and other escaped errors into JSON (never HTML/stack).
+app.UseMiddleware<GlobalExceptionMiddleware>();
+
 // Product images are public files and cannot send the API's bearer token via <img>.
 app.UseStaticFiles(new StaticFileOptions
 {
@@ -190,6 +265,38 @@ app.UseStaticFiles(new StaticFileOptions
         Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")),
     RequestPath = "", // Serve /assets/... directly.
     ServeUnknownFileTypes = false
+});
+
+// -------------------------
+// Serve the built admin SPA (frontend/dist) when present. Public files, so this runs before authentication;
+// otherwise the authorization fallback policy answers 401 for index.html and the JS bundle.
+// -------------------------
+var frontendDist = Path.Combine(Directory.GetCurrentDirectory(), "../frontend/dist");
+if (Directory.Exists(frontendDist))
+{
+    var spaFiles = new PhysicalFileProvider(Path.GetFullPath(frontendDist));
+    // Client-side routes (/dashboard, /pos...) have no file extension: answer them with index.html.
+    app.Use(async (context, next) =>
+    {
+        var path = context.Request.Path;
+        if (HttpMethods.IsGet(context.Request.Method) && context.GetEndpoint() == null &&
+            !Path.HasExtension(path.Value) &&
+            !path.StartsWithSegments("/api") && !path.StartsWithSegments("/hub") && !path.StartsWithSegments("/swagger"))
+            context.Request.Path = "/index.html";
+        await next();
+    });
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = spaFiles, RequestPath = "" });
+}
+
+// A missing image or bundle file is a 404, not a 401 from the authorization fallback policy.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/assets") && context.GetEndpoint() == null)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    await next();
 });
 
 // Xác thực JWT
@@ -201,48 +308,6 @@ app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseHttpsRedirection();
 
 app.MapControllers();
-app.MapHub<OrderHub>("/hub/orders").AllowAnonymous();
-
-// -------------------------
-// Serve frontend SPA (Vite)
-// -------------------------
-var frontendDist = Path.Combine(Directory.GetCurrentDirectory(), "../frontend/dist");
-if (Directory.Exists(frontendDist))
-{
-    var fileProvider = new PhysicalFileProvider(frontendDist);
-
-    app.UseDefaultFiles(new DefaultFilesOptions
-    {
-        FileProvider = fileProvider,
-        RequestPath = ""
-    });
-    app.UseStaticFiles(new StaticFileOptions
-    {
-        FileProvider = fileProvider,
-        RequestPath = ""
-    });
-
-    // Fallback SPA routing (cho các route không phải API và không có file extension)
-    app.Use(async (context, next) =>
-    {
-        await next();
-
-        if (context.Response.StatusCode == 404 &&
-            !Path.HasExtension(context.Request.Path.Value) &&
-            !context.Request.Path.Value.StartsWith("/api"))
-        {
-            context.Request.Path = "/index.html";
-            context.Response.StatusCode = 200;
-            await next();
-        }
-    });
-
-    // Serve fallback file
-    app.UseStaticFiles(new StaticFileOptions
-    {
-        FileProvider = fileProvider,
-        RequestPath = ""
-    });
-}
+app.MapHub<NotificationHub>("/hub/notifications");
 
 app.Run();

@@ -17,6 +17,9 @@ namespace backend.DTO
 
         public int? SupplierId { get; set; }
 
+        // Derived by BUS from the supplier address for in-memory regional filtering.
+        public string? Region { get; set; }
+
         // Money values use decimal
         public decimal Price { get; set; }
 
@@ -28,6 +31,8 @@ namespace backend.DTO
         public string? PromotionName { get; set; }
 
         public decimal? Cost { get; set; }
+
+        public int StockQuantity { get; set; }
 
         public int? UnitId { get; set; }
 
@@ -52,11 +57,30 @@ namespace backend.DTO
         public CategoryDTO? Category { get; set; }
         public SupplierDTO? Supplier { get; set; }
 
-        // Inventory snapshot (optional, filled by query/join)
+        // Kept for API compatibility during the inventory-table retirement.
         public InventoryDTO? Inventory { get; set; }
 
         // Aggregated rating info (optional)
         public double AverageRating { get; set; } = 0.0;
         public int ReviewCount { get; set; } = 0;
+
+        [JsonIgnore]
+        public int SalesCount { get; set; }
+    }
+
+    public sealed class ProductUpdateDTO
+    {
+        public string ProductName { get; set; } = string.Empty;
+        public string? Sku { get; set; }
+        public string? Barcode { get; set; }
+        public int? CategoryId { get; set; }
+        public int? SupplierId { get; set; }
+        public decimal Price { get; set; }
+        public decimal? Cost { get; set; }
+        public int? StockQuantity { get; set; }
+        public int? UnitId { get; set; }
+        public string? Description { get; set; }
+        public string? ImageUrl { get; set; }
+        public bool IsActive { get; set; } = true;
     }
 }

@@ -1,3 +1,4 @@
+using backend.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using backend.Services;
 using backend.DTO;
@@ -42,7 +43,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Lỗi tạo báo cáo: {ex.Message}" });
+                return this.ServerError(ex);
             }
         }
 
@@ -65,7 +66,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Lỗi tạo báo cáo: {ex.Message}" });
+                return this.ServerError(ex);
             }
         }
 
@@ -82,7 +83,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Lỗi: {ex.Message}" });
+                return this.ServerError(ex);
             }
         }
 
@@ -99,7 +100,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Lỗi: {ex.Message}" });
+                return this.ServerError(ex);
             }
         }
 
@@ -115,7 +116,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Lỗi: {ex.Message}" });
+                return this.ServerError(ex);
             }
         }
 
@@ -132,7 +133,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Lỗi: {ex.Message}" });
+                return this.ServerError(ex);
             }
         }
 
@@ -150,7 +151,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Lỗi: {ex.Message}" });
+                return this.ServerError(ex);
             }
         }
 
@@ -168,7 +169,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Lỗi: {ex.Message}" });
+                return this.ServerError(ex);
             }
         }
 
@@ -185,7 +186,7 @@ namespace backend.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = $"Lỗi: {ex.Message}" });
+                return this.ServerError(ex);
             }
         }
 

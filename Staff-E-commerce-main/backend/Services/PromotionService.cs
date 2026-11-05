@@ -8,17 +8,26 @@ namespace backend.Services
     public class PromotionService
     {
         private readonly PromotionRepository _promotionRepository;
+        private readonly BusMemoryCache<PromotionDTO> _cache;
+        private readonly VoucherWalletService _wallet;
+        private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
-        public PromotionService(PromotionRepository promotionRepository)
+        public PromotionService(PromotionRepository promotionRepository, BusMemoryCache<PromotionDTO> cache, VoucherWalletService wallet)
         {
             _promotionRepository = promotionRepository;
+            _cache = cache;
+            _wallet = wallet;
         }
 
         // Get all promotions
         public async Task<List<PromotionDTO>> GetAllPromotionsAsync()
         {
-            var promotions = await _promotionRepository.GetAllAsync();
-            return promotions.Select(MapToDTO).ToList();
+            var (promotions, _) = await _cache.GetOrCreateAsync(async () =>
+            {
+                var loaded = await _promotionRepository.GetAllAsync();
+                return loaded.Select(MapToDTO).ToList();
+            }, CacheTtl);
+            return promotions.ToList();
         }
 
         // Get paginated promotions with search and filter
@@ -29,16 +38,41 @@ namespace backend.Services
             string? status = null, 
             string? type = null)
         {
-            var result = await _promotionRepository.GetPaginatedAsync(page, pageSize, search, status, type);
+            var all = await GetAllPromotionsAsync();
+            IEnumerable<PromotionDTO> filtered = all;
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var keyword = search.Trim();
+                filtered = filtered.Where(item => item.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                    (item.VoucherCode?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+            if (!string.IsNullOrWhiteSpace(type) && type != "all")
+                filtered = type is "event" or "voucher" or "product"
+                    ? filtered.Where(item => item.Type == type)
+                    : filtered.Where(item => item.DiscountType == type);
+            if (!string.IsNullOrWhiteSpace(status) && status != "all")
+            {
+                var today = DateTimeHelper.VietnamToday;
+                filtered = status switch
+                {
+                    "active" => filtered.Where(item => item.Status == "active" &&
+                        (!item.StartDate.HasValue || item.StartDate.Value.Date <= today) &&
+                        (!item.EndDate.HasValue || item.EndDate.Value.Date >= today) &&
+                        (item.Type == "voucher" || !item.UsageLimit.HasValue || item.UsedCount < item.UsageLimit)),
+                    "inactive" => filtered.Where(item => item.Status != "active"),
+                    "expired" => filtered.Where(item => item.EndDate.HasValue && item.EndDate.Value.Date < today),
+                    "scheduled" => filtered.Where(item => item.Status == "active" && item.StartDate.HasValue && item.StartDate.Value.Date > today),
+                    _ => filtered
+                };
+            }
+            var totalItems = filtered.Count();
+            var totalPages = Math.Max(1, (int)Math.Ceiling(totalItems / (double)pageSize));
+            page = Math.Min(Math.Max(page, 1), totalPages);
+            var items = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
             return new PaginationResult<PromotionDTO>
             {
-                Items = result.Items.Select(MapToDTO).ToList(),
-                TotalItems = result.TotalItems,
-                CurrentPage = result.CurrentPage,
-                PageSize = result.PageSize,
-                TotalPages = result.TotalPages,
-                HasPrevious = result.HasPrevious,
-                HasNext = result.HasNext
+                Items = items, TotalItems = totalItems, CurrentPage = page, PageSize = pageSize,
+                TotalPages = totalPages, HasPrevious = page > 1, HasNext = page < totalPages
             };
         }
 
@@ -59,17 +93,19 @@ namespace backend.Services
         }
 
         // Create promotion
-        public async Task<PromotionDTO> CreatePromotionAsync(Promotion promotion)
+        public async Task<PromotionDTO> CreatePromotionAsync(PromotionDTO request)
         {
+            var promotion = BuildPromotion(request);
+            promotion.Code = $"PROMO-{Guid.NewGuid():N}".ToUpperInvariant();
             // Validation
             if (string.IsNullOrWhiteSpace(promotion.Name))
-                throw new ArgumentException("Name is required", nameof(promotion.Name));
+                throw new ArgumentException("Vui lòng nhập tên khuyến mãi.", nameof(promotion.Name));
             if (promotion.Type == "voucher" && string.IsNullOrWhiteSpace(promotion.VoucherDetails?.VoucherCode))
-                throw new ArgumentException("Voucher code is required");
+                throw new ArgumentException("Vui lòng nhập mã voucher.");
             if (promotion.Type == "product" && (promotion.ProductDetails == null || !promotion.ProductDetails.Any()))
-                throw new ArgumentException("Select at least one product");
+                throw new ArgumentException("Chọn ít nhất một sản phẩm.");
             if (!promotion.StartDate.HasValue || !promotion.EndDate.HasValue)
-                throw new ArgumentException("Start date and end date are required");
+                throw new ArgumentException("Vui lòng chọn ngày bắt đầu và ngày kết thúc.");
 
             if (string.IsNullOrWhiteSpace(promotion.Name))
                 promotion.Name = promotion.Code;
@@ -79,58 +115,65 @@ namespace backend.Services
             promotion.Status = promotion.Active ? "active" : "disabled";
 
             if (promotion.Value <= 0)
-                throw new ArgumentException("Value must be greater than 0", nameof(promotion.Value));
+                throw new ArgumentException("Mức giảm phải lớn hơn 0.", nameof(promotion.Value));
+            if (promotion.UsageLimit is <= 0)
+                throw new ArgumentException("Số lượt sử dụng phải lớn hơn 0 (để trống nếu không giới hạn).", nameof(promotion.UsageLimit));
 
             if (!new[] { "product", "event", "voucher" }.Contains(promotion.Type))
-                throw new ArgumentException("Type must be product, event, or voucher", nameof(promotion.Type));
+                throw new ArgumentException("Loại khuyến mãi không hợp lệ.", nameof(promotion.Type));
             if (!new[] { "percent", "fixed" }.Contains(promotion.DiscountType))
-                throw new ArgumentException("DiscountType must be percent or fixed", nameof(promotion.DiscountType));
+                throw new ArgumentException("Kiểu giảm giá phải là phần trăm hoặc số tiền cố định.", nameof(promotion.DiscountType));
             if (promotion.DiscountType == "percent" && promotion.Value > 100)
-                throw new ArgumentException("Percent value cannot exceed 100", nameof(promotion.Value));
+                throw new ArgumentException("Mức giảm theo phần trăm không được vượt quá 100%.", nameof(promotion.Value));
 
             if (promotion.StartDate.HasValue && promotion.EndDate.HasValue && promotion.StartDate > promotion.EndDate)
-                throw new ArgumentException("Start date must be before end date");
+                throw new ArgumentException("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.");
 
             if (promotion.Type == "voucher")
             {
                 promotion.VoucherDetails!.VoucherCode = promotion.VoucherDetails.VoucherCode.Trim().ToUpperInvariant();
                 var existing = await _promotionRepository.GetByCodeAsync(promotion.VoucherDetails.VoucherCode);
                 if (existing != null)
-                    throw new ArgumentException($"Voucher code '{promotion.VoucherDetails.VoucherCode}' already exists");
+                    throw new ArgumentException($"Mã voucher '{promotion.VoucherDetails.VoucherCode}' đã tồn tại.");
             }
 
             var created = await _promotionRepository.CreateAsync(promotion);
+            _cache.Clear();
             return MapToDTO(created);
         }
 
         // Update promotion
-        public async Task<PromotionDTO> UpdatePromotionAsync(Promotion promotion)
+        public async Task<PromotionDTO> UpdatePromotionAsync(int id, PromotionDTO request)
         {
+            var promotion = BuildPromotion(request);
+            promotion.Id = id;
             var existing = await _promotionRepository.GetByIdAsync(promotion.Id);
             if (existing == null)
                 throw new ArgumentException("Promotion not found", nameof(promotion.Id));
 
             // Validation
             if (promotion.Value <= 0)
-                throw new ArgumentException("Value must be greater than 0", nameof(promotion.Value));
+                throw new ArgumentException("Mức giảm phải lớn hơn 0.", nameof(promotion.Value));
+            if (promotion.UsageLimit is <= 0)
+                throw new ArgumentException("Số lượt sử dụng phải lớn hơn 0 (để trống nếu không giới hạn).", nameof(promotion.UsageLimit));
 
             if (!new[] { "product", "event", "voucher" }.Contains(promotion.Type))
-                throw new ArgumentException("Type must be product, event, or voucher", nameof(promotion.Type));
+                throw new ArgumentException("Loại khuyến mãi không hợp lệ.", nameof(promotion.Type));
             if (!new[] { "percent", "fixed" }.Contains(promotion.DiscountType))
-                throw new ArgumentException("DiscountType must be percent or fixed", nameof(promotion.DiscountType));
+                throw new ArgumentException("Kiểu giảm giá phải là phần trăm hoặc số tiền cố định.", nameof(promotion.DiscountType));
             if (string.IsNullOrWhiteSpace(promotion.Name))
-                throw new ArgumentException("Name is required", nameof(promotion.Name));
+                throw new ArgumentException("Vui lòng nhập tên khuyến mãi.", nameof(promotion.Name));
             if (promotion.Type == "voucher" && string.IsNullOrWhiteSpace(promotion.VoucherDetails?.VoucherCode))
-                throw new ArgumentException("Voucher code is required");
+                throw new ArgumentException("Vui lòng nhập mã voucher.");
             if (promotion.Type == "product" && (promotion.ProductDetails == null || !promotion.ProductDetails.Any()))
-                throw new ArgumentException("Select at least one product");
+                throw new ArgumentException("Chọn ít nhất một sản phẩm.");
             if (!promotion.StartDate.HasValue || !promotion.EndDate.HasValue)
-                throw new ArgumentException("Start date and end date are required");
+                throw new ArgumentException("Vui lòng chọn ngày bắt đầu và ngày kết thúc.");
             if (promotion.DiscountType == "percent" && promotion.Value > 100)
-                throw new ArgumentException("Percent value cannot exceed 100", nameof(promotion.Value));
+                throw new ArgumentException("Mức giảm theo phần trăm không được vượt quá 100%.", nameof(promotion.Value));
 
             if (promotion.StartDate.HasValue && promotion.EndDate.HasValue && promotion.StartDate > promotion.EndDate)
-                throw new ArgumentException("Start date must be before end date");
+                throw new ArgumentException("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.");
 
             // Check if changing code conflicts with another promotion
             promotion.Code = existing.Code; // Internal identifier; customer-facing codes belong to vouchers only.
@@ -139,10 +182,13 @@ namespace backend.Services
                 promotion.VoucherDetails!.VoucherCode = promotion.VoucherDetails.VoucherCode.Trim().ToUpperInvariant();
                 var duplicate = await _promotionRepository.GetByCodeAsync(promotion.VoucherDetails.VoucherCode);
                 if (duplicate != null && duplicate.Id != promotion.Id)
-                    throw new ArgumentException($"Voucher code '{promotion.VoucherDetails.VoucherCode}' already exists");
+                    throw new ArgumentException($"Mã voucher '{promotion.VoucherDetails.VoucherCode}' đã tồn tại.");
             }
 
             promotion.CreatedAt = existing.CreatedAt;
+            promotion.UsedCount = existing.UsedCount;
+            if (promotion.UsageLimit.HasValue && promotion.UsageLimit < existing.UsedCount)
+                throw new ArgumentException($"Số lượt sử dụng không được nhỏ hơn số lượt đã dùng ({existing.UsedCount}).", nameof(promotion.UsageLimit));
             promotion.UpdatedAt = DateTimeHelper.UtcNow;
             promotion.Name = string.IsNullOrWhiteSpace(promotion.Name) ? existing.Name : promotion.Name;
             promotion.StartDate ??= existing.StartDate;
@@ -151,14 +197,63 @@ namespace backend.Services
                 ? promotion.Status
                 : promotion.Active ? "active" : "disabled";
             var updated = await _promotionRepository.UpdateAsync(promotion);
+            _cache.Clear();
             return MapToDTO(updated);
+        }
+
+        private static Promotion BuildPromotion(PromotionDTO request)
+        {
+            var promotion = new Promotion
+            {
+                Name = request.Name,
+                Type = request.Type,
+                DiscountType = request.DiscountType,
+                Value = request.Value,
+                MinOrderAmount = request.MinOrderAmount,
+                MaxDiscount = request.MaxDiscount,
+                StartDate = request.StartDate,
+                EndDate = request.EndDate,
+                UsageLimit = request.Type == "voucher" ? null : request.UsageLimit,
+                Active = request.Active,
+                Status = request.Status ?? (request.Active ? "active" : "disabled"),
+                Description = request.Description
+            };
+            promotion.VoucherDetails = promotion.Type == "voucher" && !string.IsNullOrWhiteSpace(request.VoucherCode)
+                ? new VoucherPromotion
+                {
+                    VoucherCode = request.VoucherCode.Trim().ToUpperInvariant(),
+                    DiscountPercent = promotion.DiscountType == "percent" ? promotion.Value : null,
+                    Visibility = request.Visibility,
+                    SendToCustomers = request.SendToCustomers,
+                    ClaimStartDate = request.ClaimStartDate ?? request.StartDate,
+                    ClaimEndDate = request.ClaimEndDate ?? request.EndDate,
+                    ClaimLimit = request.ClaimLimit
+                }
+                : null;
+            promotion.EventDetails = promotion.Type == "event"
+                ? new EventPromotion
+                {
+                    MinOrderAmount = request.MinOrderAmount,
+                    DiscountPercent = promotion.DiscountType == "percent" ? promotion.Value : null
+                }
+                : null;
+            promotion.ProductDetails = promotion.Type == "product"
+                ? request.ProductIds.Distinct().Select(productId => new ProductPromotion
+                {
+                    ProductId = productId,
+                    DiscountPercent = promotion.DiscountType == "percent" ? promotion.Value : null
+                }).ToList()
+                : null;
+            return promotion;
         }
 
         // Delete promotion
         public async Task<bool> DeletePromotionAsync(int id)
         {
             if (id <= 0) throw new ArgumentException("ID must be greater than 0", nameof(id));
-            return await _promotionRepository.DeleteAsync(id);
+            var deleted = await _promotionRepository.DeleteAsync(id);
+            if (deleted) _cache.Clear();
+            return deleted;
         }
 
         // Toggle active status
@@ -169,6 +264,7 @@ namespace backend.Services
 
             promotion.Status = promotion.Status == "disabled" ? "active" : "disabled";
             await _promotionRepository.UpdateAsync(promotion);
+            _cache.Clear();
             return true;
         }
 
@@ -250,7 +346,7 @@ namespace backend.Services
                 };
             }
 
-            if (promotion.UsageLimit.HasValue && promotion.UsedCount >= promotion.UsageLimit)
+            if (promotion.Type != "voucher" && promotion.UsageLimit.HasValue && promotion.UsedCount >= promotion.UsageLimit)
             {
                 return new ValidatePromotionResult
                 {
@@ -316,20 +412,7 @@ namespace backend.Services
         // Apply promotion to order
         public async Task<bool> ApplyPromotionByIdsAsync(int promotionId, int orderId, int? customerId)
         {
-            var promotion = await _promotionRepository.GetByIdAsync(promotionId);
-            if (promotion == null) return false;
-
-            await _promotionRepository.IncrementUsedCountAsync(promotionId);
-
-            // Add redemption record
-            await _promotionRepository.AddRedemptionAsync(new PromotionRedemption
-            {
-                PromotionId = promotionId,
-                OrderId = orderId,
-                CustomerId = customerId
-            });
-
-            return true;
+            return await ApplyPromotionRedemptionAsync(promotionId, orderId, customerId);
         }
 
 
@@ -357,6 +440,25 @@ namespace backend.Services
             }).ToList();
         }
 
+        public async Task<List<PromotionRedemptionDTO>> GetCustomerRedemptionHistoryAsync(int customerId)
+        {
+            var redemptions = await _promotionRepository.GetCustomerRedemptionsAsync(customerId);
+            return redemptions.Select(r => new PromotionRedemptionDTO
+            {
+                Id = r.Id,
+                PromotionId = r.PromotionId,
+                CustomerId = r.CustomerId,
+                OrderId = r.OrderId,
+                OrderNumber = r.Order?.OrderNumber,
+                OrderAmount = r.Order?.TotalAmount ?? 0,
+                RedeemedAt = r.RedeemedAt,
+                PromotionName = r.Promotion?.Name ?? "Mã giảm giá",
+                PromotionType = r.Promotion?.Type ?? string.Empty,
+                PromotionCode = r.Promotion?.VoucherDetails?.VoucherCode,
+                PromotionEndDate = r.Promotion?.EndDate
+            }).ToList();
+        }
+
         // Get overview stats
         public async Task<object> GetOverviewStatsAsync()
         {
@@ -367,7 +469,7 @@ namespace backend.Services
             var active = allPromotions.Count(p => p.Active && 
                 (!p.StartDate.HasValue || p.StartDate.Value.Date <= vnToday) &&
                 (!p.EndDate.HasValue || p.EndDate.Value.Date >= vnToday) &&
-                (!p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit));
+                (p.Type == "voucher" || !p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit));
             var scheduled = allPromotions.Count(p => p.Active && 
                 p.StartDate.HasValue && p.StartDate.Value.Date > vnToday);
             var expired = allPromotions.Count(p => p.EndDate.HasValue && p.EndDate.Value.Date < vnToday);
@@ -409,7 +511,7 @@ namespace backend.Services
         }
 
         // Map Promotion to PromotionDTO
-        private PromotionDTO MapToDTO(Promotion p)
+        public static PromotionDTO MapToDTO(Promotion p)
         {
             return new PromotionDTO
             {
@@ -421,11 +523,17 @@ namespace backend.Services
                 Value = p.Value,
                 MinOrderAmount = p.EventDetails?.MinOrderAmount ?? 0,
                 VoucherCode = p.VoucherDetails?.VoucherCode,
+                Visibility = p.VoucherDetails?.Visibility ?? "public",
+                SendToCustomers = p.VoucherDetails?.SendToCustomers ?? false,
+                ClaimStartDate = p.VoucherDetails?.ClaimStartDate,
+                ClaimEndDate = p.VoucherDetails?.ClaimEndDate,
+                ClaimLimit = p.VoucherDetails?.ClaimLimit,
+                ClaimedCount = p.VoucherDetails?.ClaimedCount ?? 0,
                 ProductIds = p.ProductDetails?.Select(d => d.ProductId).ToList() ?? new List<int>(),
                 MaxDiscount = p.MaxDiscount,
                 StartDate = p.StartDate,
                 EndDate = p.EndDate,
-                UsageLimit = p.UsageLimit,
+                UsageLimit = p.Type == "voucher" ? null : p.UsageLimit,
                 UsedCount = p.UsedCount,
                 Active = p.Active,
                 Status = p.Status,
@@ -437,22 +545,64 @@ namespace backend.Services
 
 
 
-        /// <summary>
-        /// Áp dụng khuyến mãi cho đơn hàng đã tạo
-        /// </summary>
-        public async Task ApplyPromotionAsync(Order order)
+        public async Task<bool> ApplyPromotionToOrderAsync(int orderId)
         {
-            if (!order.PromotionId.HasValue) return; // không có khuyến mãi thì thôi
+            var order = await _promotionRepository.GetOrderByIdAsync(orderId);
+            if (order is null) return false;
+            if (!order.PromotionId.HasValue)
+                throw new InvalidOperationException("Đơn hàng không có chương trình khuyến mãi.");
+            await ApplyPromotionRedemptionAsync(order.PromotionId.Value, order.Id, order.CustomerId);
+            return true;
+        }
 
-            try
+        private async Task<bool> ApplyPromotionRedemptionAsync(int promotionId, int orderId, int? requestedCustomerId)
+        {
+            await using var transaction = await _promotionRepository.BeginSerializableTransactionAsync();
+            await _wallet.LockAsync();
+            var order = await _promotionRepository.GetOrderForUpdateAsync(orderId);
+            if (order == null) return false;
+            // A cancelled or refunded order already released its promotion; applying again would burn a slot.
+            if (order.Status is "cancelled" or "refunded")
+                throw new InvalidOperationException("Đơn hàng đã hủy hoặc hoàn tiền, không thể áp dụng khuyến mãi.");
+
+            if (order.PromotionId != promotionId)
+                throw new InvalidOperationException("Khuyến mãi không khớp với khuyến mãi của đơn hàng.");
+            if (requestedCustomerId.HasValue && requestedCustomerId != order.CustomerId)
+                throw new InvalidOperationException("Khách hàng không khớp với khách hàng của đơn hàng.");
+
+            var details = await _promotionRepository.GetByIdAsync(promotionId);
+            if (details?.Type == "voucher")
             {
-                await _promotionRepository.ApplyPromotionAsync(order);
+                await _wallet.ReserveAsync(promotionId, order.CustomerId, order);
+                await _promotionRepository.SaveChangesAsync();
+                await _wallet.SyncOrderAsync(order.Id);
+                await transaction.CommitAsync();
+                return true;
             }
-            catch (Exception ex)
+            if (await _promotionRepository.HasRedemptionAsync(promotionId, orderId))
             {
-                // có thể log lỗi nếu muốn
-                throw new Exception($"Áp dụng khuyến mãi thất bại: {ex.Message}");
+                await transaction.CommitAsync();
+                return true;
             }
+
+            var promotion = await _promotionRepository.GetForUpdateAsync(promotionId)
+                ?? throw new InvalidOperationException("Khuyến mãi không tồn tại.");
+            if (promotion.UsageLimit.HasValue && promotion.UsedCount >= promotion.UsageLimit.Value)
+                throw new InvalidOperationException("Khuyến mãi đã hết lượt sử dụng.");
+
+            promotion.UsedCount++;
+            promotion.UpdatedAt = DateTimeHelper.UtcNow;
+            _promotionRepository.AddRedemption(new PromotionRedemption
+            {
+                PromotionId = promotionId,
+                OrderId = orderId,
+                CustomerId = order.CustomerId,
+                RedeemedAt = DateTimeHelper.UtcNow
+            });
+            await _promotionRepository.SaveChangesAsync();
+            await transaction.CommitAsync();
+            _cache.Clear();
+            return true;
         }
     }
 }

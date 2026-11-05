@@ -6,6 +6,7 @@ export const useAuth = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [permissions, setPermissions] = useState([]);
+  const [permissionsLoaded, setPermissionsLoaded] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -13,7 +14,8 @@ export const useAuth = () => {
       if (!localStorage.getItem("auth_token")) return;
       request("/me/access")
         .then((access) => { if (active) setPermissions(access.permissions ?? []); })
-        .catch(() => { if (active) setPermissions([]); });
+        .catch(() => { if (active) setPermissions([]); })
+        .finally(() => { if (active) setPermissionsLoaded(true); });
     };
     refresh();
     window.addEventListener("focus", refresh);
@@ -73,5 +75,5 @@ export const useAuth = () => {
     setLoading(false);
   }, []);
 
-  return { user, loading, permissions };
+  return { user, loading, permissions, permissionsLoaded };
 };

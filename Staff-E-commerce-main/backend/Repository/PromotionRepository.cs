@@ -3,6 +3,9 @@ using backend.DTO;
 using backend.Models;
 using backend.Helpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using System.Data;
+using backend.Services;
 
 namespace backend.Repository
 {
@@ -15,6 +18,28 @@ namespace backend.Repository
             _context = context;
         }
 
+        public Task<IDbContextTransaction> BeginSerializableTransactionAsync() =>
+            _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+        public Task<Promotion?> GetForUpdateAsync(int id) => _context.Promotions
+            .FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted);
+
+        public Task<Order?> GetOrderForUpdateAsync(int orderId) => _context.Orders
+            .FirstOrDefaultAsync(o => o.Id == orderId);
+
+        public Task<bool> HasRedemptionAsync(int promotionId, int orderId) =>
+            _context.PromotionRedemptions.AnyAsync(r => r.PromotionId == promotionId && r.OrderId == orderId);
+
+        public void AddRedemption(PromotionRedemption redemption) =>
+            _context.PromotionRedemptions.Add(redemption);
+
+        public Task SaveChangesAsync() => _context.SaveChangesAsync();
+
+        public Task<Order?> GetOrderByIdAsync(int orderId) => _context.Orders
+            .Include(o => o.OrderItems).ThenInclude(i => i.Product)
+            .Include(o => o.Customer)
+            .FirstOrDefaultAsync(o => o.Id == orderId);
+
         // Get all promotions
         public async Task<List<Promotion>> GetAllAsync()
         {
@@ -26,80 +51,6 @@ namespace backend.Repository
                 .ToListAsync();
 
             return PopulateDiscountFields(promotions);
-        }
-
-        // Get paginated promotions with search and filter
-        public async Task<PaginationResult<Promotion>> GetPaginatedAsync(
-            int page, 
-            int pageSize, 
-            string? search = null, 
-            string? status = null, 
-            string? type = null)
-        {
-            if (page < 1) page = 1;
-            if (pageSize <= 0) pageSize = 20;
-
-            IQueryable<Promotion> query = _context.Promotions
-                .AsNoTracking()
-                .Where(p => !p.IsDeleted)
-                .Include(p => p.EventDetails).Include(p => p.VoucherDetails).Include(p => p.ProductDetails);
-
-            // Search by code
-            if (!string.IsNullOrWhiteSpace(search))
-            {
-                query = query.Where(p => p.Name.ToLower().Contains(search.ToLower()) ||
-                    (p.VoucherDetails != null && p.VoucherDetails.VoucherCode.ToLower().Contains(search.ToLower())));
-            }
-
-            // Filter by type
-            if (!string.IsNullOrWhiteSpace(type) && type != "all")
-            {
-                query = type is "event" or "voucher" or "product"
-                    ? query.Where(p => p.Type == type)
-                    : query.Where(p => p.DiscountType == type);
-            }
-
-            // Filter by status - sử dụng DateTimeHelper để thống nhất timezone
-            var vnToday = DateTimeHelper.VietnamToday;
-            if (!string.IsNullOrWhiteSpace(status) && status != "all")
-            {
-                query = status switch
-                {
-                    "active" => query.Where(p => p.Status == "active" &&
-                        (!p.StartDate.HasValue || p.StartDate.Value.Date <= vnToday) &&
-                        (!p.EndDate.HasValue || p.EndDate.Value.Date >= vnToday) &&
-                        (!p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit)),
-                    "inactive" => query.Where(p => p.Status != "active"),
-                    "expired" => query.Where(p => p.EndDate.HasValue && p.EndDate.Value.Date < vnToday),
-                    "scheduled" => query.Where(p => p.Status == "active" &&
-                        p.StartDate.HasValue && p.StartDate.Value.Date > vnToday &&
-                        (!p.EndDate.HasValue || p.EndDate.Value.Date >= vnToday) &&
-                        (!p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit)),
-                    _ => query
-                };
-            }
-
-            var totalItems = await query.CountAsync();
-            var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
-
-            var items = await query
-                .OrderByDescending(p => p.CreatedAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync();
-
-            PopulateDiscountFields(items);
-
-            return new PaginationResult<Promotion>
-            {
-                Items = items,
-                TotalItems = totalItems,
-                CurrentPage = page,
-                PageSize = pageSize,
-                TotalPages = totalPages,
-                HasPrevious = page > 1,
-                HasNext = page < totalPages
-            };
         }
 
         // Get promotion by ID
@@ -156,11 +107,29 @@ namespace backend.Repository
             promotion.CreatedAt = DateTimeHelper.UtcNow;
             promotion.UpdatedAt = DateTimeHelper.UtcNow;
 
-            await using var transaction = await _context.Database.BeginTransactionAsync();
+            await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
             try
             {
+                await VoucherWalletService.LockAsync(_context);
+                VoucherWalletService.ValidateConfiguration(promotion);
+                if (promotion.Type == "voucher" && !promotion.VoucherDetails!.ClaimLimit.HasValue)
+                    throw new ArgumentException("Vui lòng nhập tổng số voucher cho phép nhận.");
+                if (promotion.Type == "voucher" && await _context.VoucherPromotions.AnyAsync(v => v.VoucherCode == promotion.VoucherDetails!.VoucherCode))
+                    throw new ArgumentException("Mã voucher đã tồn tại. Vui lòng chọn mã khác.");
                 _context.Promotions.Add(promotion);
                 await _context.SaveChangesAsync();
+                if (promotion.VoucherDetails is { SendToCustomers: true } voucher)
+                {
+                    if (promotion.Status != "active" || promotion.EndDate?.Date < DateTimeHelper.VietnamToday || voucher.ClaimEndDate?.Date < DateTimeHelper.VietnamToday)
+                        throw new ArgumentException("Chỉ cấp sẵn voucher đang hoạt động và chưa hết hạn nhận.");
+                    var customerIds = await _context.Customers.Where(c => c.IsActive).Select(c => c.Id).ToListAsync();
+                    if (voucher.ClaimLimit.HasValue && voucher.ClaimLimit < customerIds.Count)
+                        throw new ArgumentException($"Giới hạn nhận phải từ {customerIds.Count} để cấp cho tất cả khách hàng hiện có.");
+                    _context.CustomerVouchers.AddRange(customerIds.Select(id => new CustomerVoucher
+                    { PromotionId = promotion.Id, CustomerId = id, ClaimedAt = DateTime.UtcNow, Source = "admin" }));
+                    voucher.ClaimedCount = customerIds.Count;
+                    await _context.SaveChangesAsync();
+                }
                 await transaction.CommitAsync();
                 return promotion;
             }
@@ -174,21 +143,70 @@ namespace backend.Repository
         // Update promotion
         public async Task<Promotion> UpdateAsync(Promotion promotion)
         {
+            await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+            await VoucherWalletService.LockAsync(_context);
             var existing = await _context.Promotions
                 .Include(p => p.EventDetails).Include(p => p.VoucherDetails).Include(p => p.ProductDetails)
                 .FirstOrDefaultAsync(p => p.Id == promotion.Id);
             if (existing == null) throw new InvalidOperationException("Promotion not found");
+            var previousVoucher = existing.VoucherDetails;
+            if (previousVoucher is { ClaimedCount: > 0 })
+            {
+                if (promotion.Type != "voucher" || promotion.VoucherDetails == null ||
+                    previousVoucher.VoucherCode != promotion.VoucherDetails.VoucherCode ||
+                    previousVoucher.Visibility != promotion.VoucherDetails.Visibility ||
+                    existing.Value != promotion.Value || existing.DiscountType != promotion.DiscountType || existing.MaxDiscount != promotion.MaxDiscount)
+                    throw new ArgumentException("Voucher đã có người nhận: không thể đổi loại, mã, hình thức công khai hoặc giá trị giảm.");
+                if (promotion.EndDate < existing.EndDate)
+                    throw new ArgumentException("Không thể rút ngắn hạn sử dụng của voucher đã có người nhận.");
+            }
+            if (promotion.VoucherDetails != null)
+            {
+                promotion.VoucherDetails.ClaimedCount = previousVoucher?.ClaimedCount ?? 0;
+                promotion.VoucherDetails.SendToCustomers = previousVoucher?.SendToCustomers ?? false;
+                if (promotion.VoucherDetails.ClaimLimit < promotion.VoucherDetails.ClaimedCount)
+                    throw new ArgumentException("Giới hạn nhận không được nhỏ hơn số voucher đã nhận.");
+                if (await _context.VoucherPromotions.AnyAsync(v => v.PromotionId != promotion.Id && v.VoucherCode == promotion.VoucherDetails.VoucherCode))
+                    throw new ArgumentException("Mã voucher đã tồn tại. Vui lòng chọn mã khác.");
+            }
+            VoucherWalletService.ValidateConfiguration(promotion);
+            promotion.UsedCount = existing.UsedCount;
 
-            if (existing.ProductDetails != null) _context.ProductPromotions.RemoveRange(existing.ProductDetails);
+            var requestedProductDetails = (promotion.ProductDetails ?? Array.Empty<ProductPromotion>())
+                .GroupBy(detail => detail.ProductId)
+                .ToDictionary(group => group.Key, group => group.First());
+            existing.ProductDetails ??= new List<ProductPromotion>();
+
+            foreach (var current in existing.ProductDetails
+                         .Where(detail => !requestedProductDetails.ContainsKey(detail.ProductId)).ToList())
+                _context.ProductPromotions.Remove(current);
+
+            foreach (var requested in requestedProductDetails.Values)
+            {
+                var current = existing.ProductDetails.FirstOrDefault(detail => detail.ProductId == requested.ProductId);
+                if (current is not null)
+                {
+                    current.DiscountPercent = requested.DiscountPercent;
+                    continue;
+                }
+
+                existing.ProductDetails.Add(new ProductPromotion
+                {
+                    PromotionId = existing.Id,
+                    ProductId = requested.ProductId,
+                    DiscountPercent = requested.DiscountPercent
+                });
+            }
+
             if (existing.EventDetails != null) _context.EventPromotions.Remove(existing.EventDetails);
             if (existing.VoucherDetails != null) _context.VoucherPromotions.Remove(existing.VoucherDetails);
             _context.Entry(existing).CurrentValues.SetValues(promotion);
             existing.EventDetails = promotion.EventDetails;
             existing.VoucherDetails = promotion.VoucherDetails;
-            existing.ProductDetails = promotion.ProductDetails;
             promotion.UpdatedAt = DateTimeHelper.UtcNow;
             existing.UpdatedAt = promotion.UpdatedAt;
             await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
             return existing;
         }
 
@@ -216,7 +234,7 @@ namespace backend.Repository
                            p.Status == "active" && p.Type != "product" &&
                            (!p.StartDate.HasValue || p.StartDate.Value.Date <= vnToday) &&
                            (!p.EndDate.HasValue || p.EndDate.Value.Date >= vnToday) &&
-                           (!p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit))
+                           (p.Type == "voucher" || !p.UsageLimit.HasValue || p.UsedCount < p.UsageLimit))
                 .ToListAsync();
 
             return PopulateDiscountFields(promotions);
@@ -255,66 +273,13 @@ namespace backend.Repository
                 .ToListAsync();
         }
 
-        // Increment used count
-        public async Task<bool> IncrementUsedCountAsync(int promotionId)
-        {
-            var promotion = await _context.Promotions.FindAsync(promotionId);
-            if (promotion == null) return false;
+        public Task<List<PromotionRedemption>> GetCustomerRedemptionsAsync(int customerId) =>
+            _context.PromotionRedemptions.AsNoTracking()
+                .Where(redemption => redemption.CustomerId == customerId)
+                .Include(redemption => redemption.Promotion).ThenInclude(promotion => promotion!.VoucherDetails)
+                .Include(redemption => redemption.Order)
+                .OrderByDescending(redemption => redemption.RedeemedAt)
+                .ToListAsync();
 
-            promotion.UsedCount++;
-            promotion.UpdatedAt = DateTimeHelper.UtcNow;
-
-            await _context.SaveChangesAsync();
-            return true;
-        }
-
-        // Add redemption record
-        public async Task<PromotionRedemption> AddRedemptionAsync(PromotionRedemption redemption)
-        {
-            redemption.RedeemedAt = DateTimeHelper.UtcNow;
-            _context.PromotionRedemptions.Add(redemption);
-            await _context.SaveChangesAsync();
-            return redemption;
-        }
-
-        /// <summary>
-        /// Áp dụng khuyến mãi cho một đơn hàng đã tạo (alternative method for POS)
-        /// </summary>
-        public async Task ApplyPromotionAsync(Order order)
-        {
-            if (!order.PromotionId.HasValue) return;
-
-            using var transaction = await _context.Database.BeginTransactionAsync();
-
-            try
-            {
-                var promo = await GetByIdAsync(order.PromotionId.Value);
-                if (promo == null)
-                    throw new Exception("Khuyến mãi không tồn tại");
-
-                if (promo.UsageLimit.HasValue && promo.UsedCount >= promo.UsageLimit.Value)
-                    throw new Exception("Khuyến mãi đã hết lượt sử dụng");
-
-                promo.UsedCount += 1;
-                _context.Promotions.Update(promo);
-
-                var redemption = new PromotionRedemption
-                {
-                    PromotionId = promo.Id,
-                    CustomerId = order.CustomerId,
-                    OrderId = order.Id,
-                    RedeemedAt = DateTimeHelper.UtcNow
-                };
-                await _context.PromotionRedemptions.AddAsync(redemption);
-
-                await _context.SaveChangesAsync();
-                await transaction.CommitAsync();
-            }
-            catch
-            {
-                await transaction.RollbackAsync();
-                throw;
-            }
-        }
     }
 }

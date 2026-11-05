@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { getCustomerById, updateCustomer } from "../../api/customerApi";
 
-export default function CustomerEditModal({ onClose, customerId, onSave }) {
+export default function CustomerEditModal({ onClose, customerId, onSave, embedded = false }) {
   const [formData, setFormData] = useState({
     fullName: "",
     email: "",
@@ -70,13 +71,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(
-          `http://localhost:5099/api/customers/${customerId}`
-        );
-        if (!response.ok) {
-          throw new Error("Failed to fetch customer details");
-        }
-        const data = await response.json();
+        const data = await getCustomerById(customerId);
         setFormData({
           fullName: data.fullName || "",
           email: data.email || "",
@@ -111,6 +106,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (saving || loading) return;
 
     // Validate form first
     const validationErrors = validateForm();
@@ -126,23 +122,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
     setErrors({});
 
     try {
-      const response = await fetch(
-        `http://localhost:5099/api/customers/${customerId}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(formData),
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to update customer");
-      }
-
-      const updatedData = await response.json();
+      const updatedData = await updateCustomer(customerId, formData);
       setSuccessMessage("Cập nhật thông tin khách hàng thành công!");
       setErrors({});
 
@@ -151,10 +131,7 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
         onSave(updatedData);
       }
 
-      // Đóng modal sau 2 giây
-      setTimeout(() => {
-        onClose();
-      }, 2000);
+      onClose();
     } catch (err) {
       setError(err.message || "Error updating customer");
     } finally {
@@ -165,19 +142,19 @@ export default function CustomerEditModal({ onClose, customerId, onSave }) {
   if (!customerId) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4">
+    <div className={embedded ? "management-detail-panel w-full" : "fixed inset-0 z-40 flex items-center justify-center bg-black/50"}>
+      <div className={embedded ? "w-full rounded-xl border bg-white shadow-sm" : "bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4"}>
         {/* Header */}
         <div className="flex justify-between items-center p-6 border-b border-gray-200">
           <h2 className="text-2xl font-bold text-gray-800">
             Chỉnh Sửa Thông Tin Khách Hàng
           </h2>
-          <button
+          {!embedded && <button
             onClick={onClose}
             className="p-1 hover:bg-gray-100 rounded-lg transition"
           >
             <X size={24} className="text-gray-600" />
-          </button>
+          </button>}
         </div>
 
         {/* Body */}

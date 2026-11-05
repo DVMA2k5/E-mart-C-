@@ -1,7 +1,30 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 import ProductDescription from "./components/ProductDescription";
+import AdvancedSearchSheet from "./components/AdvancedSearchSheet";
+import {
+  DEFAULT_FILTERS,
+  PRICE_PRESETS,
+  activePricePresetOf,
+  buildSearchIndex,
+  describeActiveFilters,
+  filterSearchIndex,
+  hasPriceFilter,
+  normalizeSearch,
+  removeFilter,
+  singleCategoryId,
+  sortProducts,
+} from "./utils/productFilters";
+import {
+  checkoutDefinitelyRejected,
+  checkoutStorageKey,
+  createCheckoutRequestId,
+  parsePendingCheckout,
+  preparePendingCheckout,
+} from "./utils/storefrontCheckoutSession";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AppState,
   ActivityIndicator,
   Alert,
   Animated,
@@ -40,17 +63,29 @@ import {
   IconShield,
   IconStar,
   IconSort,
+  IconFilter,
   getCategoryIcon,
 } from "./components/Icons";
+import { apiFetch, setSessionExpiredHandler, SESSION_EXPIRED_MESSAGE } from "./services/apiClient";
 
-const defaultHost = typeof window !== "undefined" && window.location?.hostname
-  ? `http://${window.location.hostname}:5099/api`
-  : "http://10.0.2.2:5099/api";
-const API_URL = (typeof window !== "undefined" && window.location?.hostname
-  ? defaultHost
-  : process.env.EXPO_PUBLIC_API_URL || defaultHost).replace(/\/$/, "");
+// EXPO_PUBLIC_API_URL wins everywhere (a public tunnel URL so phones on any network can reach the backend).
+// Without it: web uses the machine that serves the page; Expo Go uses the LAN IP of the computer running Expo
+// (from the dev-server address); the emulator alias 10.0.2.2 is only the last fallback.
+const isWeb = typeof window !== "undefined" && !!window.location?.hostname;
+function resolveApiUrl() {
+  const configured = (process.env.EXPO_PUBLIC_API_URL || "").trim();
+  // 10.0.2.2 only exists inside the Android emulator, so a browser must never use it.
+  if (configured && !(isWeb && configured.includes("10.0.2.2"))) return configured;
+  if (isWeb) return `http://${window.location.hostname}:5099/api`;
+  const hostUri = Constants.expoConfig?.hostUri || Constants.expoGoConfig?.debuggerHost || "";
+  const devHost = hostUri.split(":")[0];
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(devHost)) return `http://${devHost}:5099/api`;
+  return "http://10.0.2.2:5099/api";
+}
+const API_URL = resolveApiUrl().replace(/\/$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
-const CART_KEY = "e-mart-mobile-cart";
+const CART_KEY = "e-mart-mobile-cart"; // legacy key shared by every account; removed on start-up
+const cartStorageKey = (customerId) => `${CART_KEY}:${customerId || "guest"}`;
 const CUSTOMER_KEY = "e-mart-mobile-customer";
 const CUSTOMER_TOKEN_KEY = "e-mart-mobile-customer-token";
 const ADDRESS_KEY = "e-mart-mobile-delivery-address";
@@ -60,6 +95,31 @@ function deliveryAddressFromProfile(value) {
   return parts.length >= 3
     ? { street: parts.slice(0, -2).join(", "), ward: parts.at(-2), city: parts.at(-1), otherReceiver: false }
     : { street: (value || "").trim(), ward: "", city: "", otherReceiver: false };
+}
+
+function normalizeVietnamesePhone(value) {
+  let phone = String(value || "").trim().replace(/[\s().-]/g, "");
+  if (phone.startsWith("+84")) phone = `0${phone.slice(3)}`;
+  else if (phone.startsWith("84")) phone = `0${phone.slice(2)}`;
+  return phone;
+}
+
+function parseRegistrationDate(value) {
+  const input = String(value || "").trim();
+  if (!input) return { iso: null, error: false };
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input);
+  const local = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(input);
+  const match = iso || local;
+  if (!match) return { iso: null, error: true };
+  const year = Number(iso ? match[1] : match[3]);
+  const month = Number(match[2]);
+  const day = Number(iso ? match[3] : match[1]);
+  const date = new Date(year, month - 1, day);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day || date > today)
+    return { iso: null, error: true };
+  return { iso: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`, error: false };
 }
 
 // Bảng màu chuẩn Bách Hóa Xanh
@@ -78,13 +138,43 @@ const money = (value) => new Intl.NumberFormat("vi-VN", { style: "currency", cur
 const productPriceLabel = (product, price = product.price) => `${money(price)}${product.unitName ? `/${product.unitName}` : ""}`;
 const stockLimit = (product) => Number.isFinite(product?.stockQuantity) ? Math.max(0, Math.floor(product.stockQuantity)) : 0;
 
-function ProductStock({ product, style = styles.stockLabel }) {
+const sameJson = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+
+// Order lists use database names (cash / e_wallet / card); a freshly placed order uses API names (cod / momo / bank).
+const normalizePaymentMethod = (method) => {
+  const value = String(method || "").toLowerCase();
+  return { cod: "cash", momo: "e_wallet", bank: "card" }[value] || value;
+};
+
+// Keeps the previous object for each unchanged product (so memoised cards skip re-rendering) while taking the
+// server's list as the source of truth for which products exist and in what order.
+const mergeProducts = (current, incoming) => {
+  const previous = new Map(current.map((item) => [item.id, item]));
+  let changed = current.length !== incoming.length;
+  const merged = incoming.map((item, index) => {
+    const old = previous.get(item.id);
+    if (old && sameJson(old, item)) {
+      if (current[index] !== old) changed = true;
+      return old;
+    }
+    changed = true;
+    return item;
+  });
+  return changed ? merged : current;
+};
+
+function ProductStock({ product, reservedQuantity = 0, style = styles.stockLabel }) {
   if (product.stockQuantity == null) return null;
-  return <Text style={style}>Còn: {product.stockQuantity}{product.unitName ? ` ${product.unitName}` : ""}</Text>;
+  if (stockLimit(product) === 0) return <Text style={[style, { color: BHX_RED, fontWeight: "700" }]}>Hết hàng</Text>;
+  const available = Math.max(0, stockLimit(product) - reservedQuantity);
+  return <Text style={style}>Còn: {available}{product.unitName ? ` ${product.unitName}` : ""}</Text>;
 }
 
 const productDiscountAmount = (product) => Math.max(0, product.discountAmount ?? ((product.originalPrice ?? product.price) - product.price));
 const eventPromotionIssue = (promotion, orderAmount) => {
+  const walletIssues = { reserved: "Đang giữ cho đơn hàng chờ hoàn tất.", disabled: "Voucher đã bị vô hiệu.", scheduled: "Chưa đến ngày sử dụng.", used: "Voucher đã được sử dụng.", expired: "Voucher đã hết hạn." };
+  if (walletIssues[promotion.walletStatus]) return walletIssues[promotion.walletStatus];
+  if (orderAmount == null) return "";
   if (orderAmount <= 0) return "Thêm sản phẩm vào giỏ để sử dụng ưu đãi.";
   const minimum = Number(promotion.minOrderAmount) || 0;
   return orderAmount < minimum ? `Mua thêm ${money(minimum - orderAmount)} để sử dụng ưu đãi.` : "";
@@ -222,7 +312,7 @@ function QuantityInput({ quantity, onCommit, style }) {
 
 const ProductCard = memo(function ProductCard({ product, cartQty = 0, onAdd, onQuantityChange, onQuantitySet, onOpen, cardWidthStyle }) {
   const originalPrice = product.originalPrice ?? product.price;
-  const isHot = (product.id % 2 === 0);
+  const isHot = Boolean(product.isBestSeller); // top sellers of the last 30 days, computed by the server
   const discountPercent = originalPrice > 0 ? Math.max(0, Math.round(((originalPrice - product.price) / originalPrice) * 100)) : 0;
 
   return (
@@ -258,7 +348,7 @@ const ProductCard = memo(function ProductCard({ product, cartQty = 0, onAdd, onQ
           )}
         </View>
 
-        <ProductStock product={product} />
+        <ProductStock product={product} reservedQuantity={cartQty} />
         {/* Smart Stepper Control */}
         <View style={styles.stepperContainer}>
           {cartQty === 0 ? (
@@ -297,7 +387,7 @@ const ProductCard = memo(function ProductCard({ product, cartQty = 0, onAdd, onQ
   );
 });
 
-function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQuantityChange, onQuantitySet, onViewCart, onOpen, flight, onFlightComplete, descriptionStatus }) {
+function ProductDetails({ product, products = [], quantity, getCartQuantity, onClose, onAdd, onQuantityChange, onQuantitySet, onViewCart, onOpen, flight, onFlightComplete, descriptionStatus }) {
   const relatedProducts = product.categoryId == null ? [] : products.filter((item) => (
     String(item.categoryId) === String(product.categoryId) && String(item.id) !== String(product.id)
   ));
@@ -323,7 +413,7 @@ function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQu
             </View>
             {productDiscountAmount(product) > 0 && <Text style={styles.productDetailSaving}>Tiết kiệm {money(productDiscountAmount(product))}</Text>}
           </View>
-          <ProductStock product={product} style={styles.productDetailStock} />
+          <ProductStock product={product} reservedQuantity={quantity} style={styles.productDetailStock} />
         </View>
         <View style={styles.relatedProductsSection}>
           <Text style={styles.relatedProductsTitle}>Sản phẩm liên quan</Text>
@@ -336,7 +426,7 @@ function ProductDetails({ product, products = [], quantity, onClose, onAdd, onQu
                   </View>
                   <Text style={styles.relatedProductName} numberOfLines={2}>{item.productName}</Text>
                   <Text style={styles.relatedProductPrice}>{productPriceLabel(item)}</Text>
-                  <ProductStock product={item} />
+                  <ProductStock product={item} reservedQuantity={getCartQuantity?.(item.id) || 0} />
                 </Pressable>
               ))}
             </ScrollView>
@@ -433,7 +523,7 @@ function CustomerInvoice({ order, token, onClose }) {
     const load = async () => {
       try {
         if (!token) throw new Error("Vui lòng đăng nhập để xem hóa đơn.");
-        const response = await fetch(`${API_URL}/storefront/orders/${order.id}/invoice`, {
+        const response = await apiFetch(`${API_URL}/storefront/orders/${order.id}/invoice`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) throw new Error(await readError(response));
@@ -506,6 +596,7 @@ function CustomerInvoice({ order, token, onClose }) {
 }
 
 export default function App() {
+  const checkoutRequestLock = useRef(false);
   const { width: windowWidth } = useWindowDimensions();
   const isDesktop = windowWidth >= 768;
   const isWide = windowWidth >= 1024;
@@ -524,14 +615,33 @@ export default function App() {
   const previousCartCount = useRef(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  // The whole catalogue is loaded once (the server keeps it cached in RAM) and reused for the home list,
+  // search, category/price filters and flash sale, so the app never re-downloads pages to search.
+  const productsHasMore = false;
+  const productsLoadingMore = false;
+  const productPage = 1;
+  const flashSaleProducts = useMemo(
+    () => products.filter((product) => productDiscountAmount(product) > 0 && stockLimit(product) > 0),
+    [products]
+  );
+  const flashSaleHasMore = false;
+  const flashSalePage = 1;
+  const flashSaleLoading = loading;
+  const [flashSaleOpen, setFlashSaleOpen] = useState(false);
+  const [countdownNow, setCountdownNow] = useState(Date.now());
   const [query, setQuery] = useState("");
-  const [categoryId, setCategoryId] = useState("all");
   const homeListRef = useRef(null);
   const [tab, setTab] = useState("home");
   const [bannerIndex, setBannerIndex] = useState(0);
 
   // Bộ lọc & Sắp xếp
   const [sortOption, setSortOption] = useState("default");
+  // One filter state (categories with OR, price range, promotion, stock) shared by the quick category
+  // tags, the home price chips, the category drawer and the advanced search sheet.
+  const [filters, setFilters] = useState(() => ({ ...DEFAULT_FILTERS }));
+  // "all", the one selected category, or null when several categories are chosen.
+  const categoryId = singleCategoryId(filters);
+  const [advancedSearchOpen, setAdvancedSearchOpen] = useState(false);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [selectedDrawerCatId, setSelectedDrawerCatId] = useState("all");
   const [drawerSearchText, setDrawerSearchText] = useState("");
@@ -541,12 +651,15 @@ export default function App() {
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderError, setOrderError] = useState("");
   const [completedOrder, setCompletedOrder] = useState(null);
+  const [pendingCheckout, setPendingCheckout] = useState(null);
 
   const [customerOrders, setCustomerOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState("");
   const [ordersRefreshKey, setOrdersRefreshKey] = useState(0);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [orderActionBusy, setOrderActionBusy] = useState(false);
+  const [orderActionMessage, setOrderActionMessage] = useState("");
   const [invoiceOrder, setInvoiceOrder] = useState(null);
   const [orderFilter, setOrderFilter] = useState("all");
 
@@ -554,12 +667,30 @@ export default function App() {
   const [customerToken, setCustomerToken] = useState("");
   const customerSession = useRef(customerToken);
   customerSession.current = customerToken;
+  // Synchronous single-flight lock for write actions (see the wrappers after claimVoucherTask).
+  const runningActions = useRef(new Set());
+  const runExclusive = useCallback(async (key, task) => {
+    if (runningActions.current.has(key)) return undefined;
+    runningActions.current.add(key);
+    try {
+      return await task();
+    } finally {
+      runningActions.current.delete(key);
+    }
+  }, []);
   const [accountReady, setAccountReady] = useState(false);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [registerMode, setRegisterMode] = useState(false);
   const [registerFullName, setRegisterFullName] = useState("");
   const [registerPhone, setRegisterPhone] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerAddress, setRegisterAddress] = useState("");
+  const [registerDateOfBirth, setRegisterDateOfBirth] = useState("");
+  const [registerPasswordConfirm, setRegisterPasswordConfirm] = useState("");
+  const [passwordForm, setPasswordForm] = useState({ current: "", next: "", confirm: "" });
+  const [phoneAvailability, setPhoneAvailability] = useState(null);
+  const phoneCheckSequence = useRef(0);
   const [accountName, setAccountName] = useState("");
   const [accountEmail, setAccountEmail] = useState("");
   const [accountAddress, setAccountAddress] = useState("");
@@ -576,15 +707,66 @@ export default function App() {
   const [voucherOpen, setVoucherOpen] = useState(false);
   const [voucherCode, setVoucherCode] = useState("");
   const [voucherList, setVoucherList] = useState([]);
+  const [voucherSearch, setVoucherSearch] = useState("");
+  const [codeResult, setCodeResult] = useState(null);
   const [voucherBusy, setVoucherBusy] = useState(false);
   const [voucherMessage, setVoucherMessage] = useState("");
   const [appliedVoucher, setAppliedVoucher] = useState(null);
   const [draftVoucher, setDraftVoucher] = useState(null);
   const [vouchersLoading, setVouchersLoading] = useState(false);
+  const [voucherContext, setVoucherContext] = useState("checkout");
+  const [voucherView, setVoucherView] = useState("available");
+  const [voucherHistory, setVoucherHistory] = useState([]);
+  const [voucherHistoryTab, setVoucherHistoryTab] = useState("used");
 
   const [paymentMethod, setPaymentMethod] = useState("cod");
+  const [paymentOptions, setPaymentOptions] = useState({ cod: true, momo: false, bank: false, bankDetails: null });
   const [useRewardPoints, setUseRewardPoints] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    apiFetch(`${API_URL}/storefront/payment-options`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("payment options unavailable")))
+      .then((options) => {
+        if (!active) return;
+        setPaymentOptions(options);
+        setPaymentMethod((current) => options[current] ? current : "cod");
+      })
+      .catch(() => { if (active) setPaymentOptions({ cod: true, momo: false, bank: false, bankDetails: null }); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!customer?.id || !customerToken) {
+      setPendingCheckout(null);
+      return () => { active = false; };
+    }
+
+    AsyncStorage.getItem(checkoutStorageKey(customer.id))
+      .then((raw) => parsePendingCheckout(raw, customer.id))
+      .then((pending) => {
+        if (!active || !pending) return;
+        setPendingCheckout(pending);
+        setCart(pending.cart);
+        setCheckoutForm({
+          fullName: pending.payload.fullName || "",
+          phone: pending.payload.phone || "",
+          address: pending.payload.address || "",
+          note: pending.payload.note || "",
+        });
+        setPaymentMethod(pending.payload.paymentMethod || "cod");
+        setUseRewardPoints((pending.payload.pointsUsed || 0) > 0);
+        setAppliedVoucher(pending.voucher || null);
+        setOrderError("Có một yêu cầu đặt hàng chưa xác định kết quả. Hãy kiểm tra thông tin và gửi lại để nhận đúng kết quả, không tạo đơn trùng.");
+      })
+      .catch(() => {
+        if (active) setOrderError("Không đọc được yêu cầu đặt hàng đã lưu. Vui lòng liên hệ nhân viên trước khi đặt đơn khác.");
+      });
+
+    return () => { active = false; };
+  }, [customer?.id, customerToken]);
 
   // Auto scroll banner
   useEffect(() => {
@@ -610,27 +792,48 @@ export default function App() {
     return () => { active = false; };
   }, [customer?.id, customer?.address, customerToken]);
 
-  const loadStore = useCallback(async () => {
-    setLoading(true);
-    setLoadError("");
+  const loadStore = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError("");
+    }
     try {
       const [productsResponse, categoriesResponse] = await Promise.all([
-        fetch(`${API_URL}/storefront/products`),
-        fetch(`${API_URL}/storefront/categories`),
+        apiFetch(`${API_URL}/storefront/products`, { cache: "no-store" }),
+        apiFetch(`${API_URL}/storefront/categories`, { cache: "no-store" }),
       ]);
       if (!productsResponse.ok) throw new Error(await readError(productsResponse));
       if (!categoriesResponse.ok) throw new Error(await readError(categoriesResponse));
-      const [productData, categoryData] = await Promise.all([productsResponse.json(), categoriesResponse.json()]);
-      setProducts(Array.isArray(productData) ? productData : []);
-      setCategories(Array.isArray(categoryData) ? categoryData : []);
+      const incoming = await productsResponse.json();
+      const categoryData = await categoriesResponse.json();
+      // Replace the list with the server's (new products appear, removed ones disappear) but keep the same
+      // object for every unchanged product so memoised cards do not re-render on each refresh.
+      setProducts((current) => mergeProducts(current, Array.isArray(incoming) ? incoming : []));
+      setCategories((current) => sameJson(current, categoryData) ? current : (Array.isArray(categoryData) ? categoryData : []));
     } catch (error) {
-      setLoadError(error.message || "Không thể tải sản phẩm.");
+      if (!silent) setLoadError(error.message || "Không thể tải sản phẩm.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { loadStore(); }, [loadStore]);
+  const loadFlashSale = useCallback(() => loadStore(true), [loadStore]);
+
+  useEffect(() => {
+    loadStore();
+    // Picks up stock changes, new products and price/promotion changes made in the admin site.
+    const stockRefresh = setInterval(() => {
+      if (AppState.currentState === "active") loadStore(true);
+    }, 15000);
+    // Refresh as soon as the app comes back to the foreground.
+    const subscription = AppState.addEventListener?.("change", (state) => { if (state === "active") loadStore(true); });
+    return () => { clearInterval(stockRefresh); subscription?.remove?.(); };
+  }, [loadStore]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setCountdownNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const productInfoRequest = useRef(null);
   const [descriptionStatus, setDescriptionStatus] = useState(null);
@@ -641,11 +844,10 @@ export default function App() {
     productInfoRequest.current = controller;
     setDescriptionStatus({ id: product.id, loading: true });
     // Refresh from the public API, including descriptions edited after app startup.
-    fetch(`${API_URL}/storefront/products`, { cache: "no-store", signal: controller.signal })
+    apiFetch(`${API_URL}/storefront/products/${product.id}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
-        const data = await response.json();
-        const latest = Array.isArray(data) ? data.find((item) => item.id === product.id) : null;
+        const latest = await response.json();
         if (!latest) throw new Error("Sản phẩm hiện không còn khả dụng.");
         if (controller.signal.aborted) return;
         setProducts((current) => current.map((item) => item.id === product.id && item.description !== latest.description
@@ -659,37 +861,77 @@ export default function App() {
   }, []);
   useEffect(() => () => productInfoRequest.current?.abort(), []);
 
+  // Each account has its own saved cart (guests share one guest cart), so another person signing in on the same
+  // device never sees it. The cart is (re)loaded whenever the signed-in account changes.
+  const cartKey = cartStorageKey(customer?.id);
+  const cartOwner = useRef(null);
   useEffect(() => {
-    AsyncStorage.getItem(CART_KEY)
-      .then((stored) => setCart(stored ? JSON.parse(stored) : []))
-      .catch(() => setCart([]))
-      .finally(() => setCartLoaded(true));
-  }, []);
+    let active = true;
+    cartOwner.current = null; // block saving until this account's cart is loaded
+    setCartLoaded(false);
+    (async () => {
+      let next = [];
+      try {
+        await AsyncStorage.removeItem(CART_KEY); // retire the old cart key that every account shared
+        const stored = await AsyncStorage.getItem(cartKey);
+        next = stored ? JSON.parse(stored) : [];
+        if (customer?.id) {
+          // An unfinished order wins: its exact cart must be resent with the same request id.
+          const pending = await AsyncStorage.getItem(checkoutStorageKey(customer.id)).catch(() => null);
+          const pendingCart = (() => { try { return parsePendingCheckout(pending, customer.id)?.cart; } catch { return null; } })();
+          if (pendingCart?.length) next = pendingCart;
+          else if (!next.length) {
+            // Items picked before signing in move into the account's cart.
+            const guest = await AsyncStorage.getItem(cartStorageKey(null));
+            const guestCart = guest ? JSON.parse(guest) : [];
+            if (Array.isArray(guestCart) && guestCart.length) {
+              next = guestCart;
+              await AsyncStorage.removeItem(cartStorageKey(null));
+            }
+          }
+        }
+      } catch {
+        next = [];
+      }
+      if (!active) return;
+      setCart(Array.isArray(next) ? next : []);
+      cartOwner.current = cartKey;
+      setCartLoaded(true);
+    })();
+    return () => { active = false; };
+    // customer?.id is already part of cartKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartKey]);
 
   useEffect(() => {
     cartSnapshot.current = { cart, loaded: cartLoaded };
-    if (!cartLoaded) return;
-    const timer = setTimeout(() => {
-      AsyncStorage.setItem(CART_KEY, JSON.stringify(cart)).catch(() => { });
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [cart, cartLoaded]);
-
-  useEffect(() => () => {
-    const snapshot = cartSnapshot.current;
-    if (snapshot.loaded) AsyncStorage.setItem(CART_KEY, JSON.stringify(snapshot.cart)).catch(() => { });
-  }, []);
+    if (!cartLoaded || cartOwner.current !== cartKey) return;
+    AsyncStorage.setItem(cartKey, JSON.stringify(cart)).catch(() => { });
+  }, [cart, cartLoaded, cartKey]);
 
   useEffect(() => {
-    if (!cartLoaded || loading || loadError) return;
+    if (!cartLoaded || loading || loadError || pendingCheckout) return;
+    const byId = new Map(products.map((product) => [product.id, product]));
     setCart((current) => {
-      const adjusted = current.map((item) => ({
-        ...item,
-        quantity: Math.min(item.quantity, stockLimit(products.find((product) => product.id === item.id))),
-      })).filter((item) => item.quantity > 0);
-      return adjusted.length === current.length && adjusted.every((item, index) => item.quantity === current[index].quantity) ? current : adjusted;
+      // Follow the live catalogue: cap to stock, drop products that are no longer sold and pick up price changes,
+      // so the total shown in the cart is the one the server will charge.
+      const adjusted = current.map((item) => {
+        const product = byId.get(item.id);
+        if (!product) return { ...item, quantity: 0 };
+        return {
+          ...item,
+          name: product.productName ?? item.name,
+          price: product.price,
+          originalPrice: product.originalPrice,
+          discountAmount: productDiscountAmount(product),
+          quantity: Math.min(item.quantity, stockLimit(product)),
+        };
+      }).filter((item) => item.quantity > 0);
+      return adjusted.length === current.length && adjusted.every((item, index) =>
+        item.quantity === current[index].quantity && item.price === current[index].price &&
+        item.originalPrice === current[index].originalPrice && item.name === current[index].name) ? current : adjusted;
     });
-  }, [products, cartLoaded, loading, loadError]);
+  }, [products, cartLoaded, loading, loadError, pendingCheckout]);
 
   useEffect(() => {
     let active = true;
@@ -702,7 +944,7 @@ export default function App() {
         const storedCustomer = values[1][1] ? JSON.parse(values[1][1]) : null;
         if (!token || !storedCustomer) return;
 
-        const response = await fetch(`${API_URL}/storefront/account`, {
+        const response = await apiFetch(`${API_URL}/storefront/account`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) throw new Error("Phiên đăng nhập đã hết hạn.");
@@ -730,20 +972,26 @@ export default function App() {
     let active = true;
     setOrdersLoading(true);
     setOrdersError("");
-    fetch(`${API_URL}/storefront/orders`, {
+    apiFetch(`${API_URL}/storefront/orders`, {
       headers: { Authorization: `Bearer ${customerToken}` },
     })
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
         return response.json();
       })
-      .then((data) => { if (active) setCustomerOrders(Array.isArray(data) ? data : []); })
+      .then((data) => {
+        if (!active) return;
+        const list = Array.isArray(data) ? data : [];
+        setCustomerOrders(list);
+        // Keep an open order detail in step with the refreshed status (e.g. after paying or cancelling).
+        setSelectedOrder((current) => current ? list.find((order) => order.id === current.id) ?? current : current);
+      })
       .catch((error) => { if (active) setOrdersError(error.message || "Không thể tải lịch sử đơn hàng."); })
       .finally(() => { if (active) setOrdersLoading(false); });
     return () => { active = false; };
   }, [tab, customerToken, ordersRefreshKey]);
 
-  const loginCustomer = async () => {
+  const loginCustomerTask = async () => {
     const username = loginUsername.trim();
     if (username.length < 3 || loginPassword.length < 6) {
       setAccountError("Vui lòng nhập tên đăng nhập và mật khẩu hợp lệ.");
@@ -754,7 +1002,7 @@ export default function App() {
     setAccountError("");
     setAccountMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/login`, {
+      const response = await apiFetch(`${API_URL}/storefront/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password: loginPassword }),
@@ -780,16 +1028,39 @@ export default function App() {
     }
   };
 
-  const registerCustomer = async () => {
-    const username = loginUsername.trim();
+  const registerCustomerTask = async () => {
     const fullName = registerFullName.trim();
-    const phone = registerPhone.trim();
-    if (username.length < 3 || loginPassword.length < 6 || fullName.length < 2) {
-      setAccountError("Vui lòng nhập tên đăng nhập, mật khẩu và họ tên hợp lệ.");
+    const phone = normalizeVietnamesePhone(registerPhone);
+    const email = registerEmail.trim();
+    const address = registerAddress.trim();
+    if (loginPassword.length < 6 || fullName.length < 2) {
+      setAccountError("Vui lòng nhập họ tên và mật khẩu hợp lệ (ít nhất 6 ký tự).");
       return;
     }
-    if (!/^(0|\+84)[35789]\d{8}$/.test(phone)) {
+    if (loginPassword !== registerPasswordConfirm) {
+      // A filled-in mismatch is already shown under the confirm field; only report the empty case here.
+      setAccountError(registerPasswordConfirm ? "" : "Vui lòng nhập lại mật khẩu để xác nhận.");
+      return;
+    }
+    if (!/^0[35789]\d{8}$/.test(phone)) {
       setAccountError("Số điện thoại Việt Nam chưa đúng định dạng.");
+      return;
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAccountError("Email chưa đúng định dạng.");
+      return;
+    }
+    if (address.length > 500) {
+      setAccountError("Địa chỉ không được vượt quá 500 ký tự.");
+      return;
+    }
+    const parsedBirthDate = parseRegistrationDate(registerDateOfBirth);
+    if (parsedBirthDate.error) {
+      setAccountError("Ngày sinh chưa hợp lệ.");
+      return;
+    }
+    if (phoneAvailability?.phone === phone && phoneAvailability.available === false) {
+      setAccountError("Số điện thoại này đã được đăng ký. Vui lòng đăng nhập hoặc dùng số khác.");
       return;
     }
 
@@ -797,10 +1068,10 @@ export default function App() {
     setAccountError("");
     setAccountMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/register`, {
+      const response = await apiFetch(`${API_URL}/storefront/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password: loginPassword, fullName, phone }),
+        body: JSON.stringify({ username: phone, password: loginPassword, fullName, phone, email: email || null, address: address || null, dateOfBirth: parsedBirthDate.iso }),
       });
       if (!response.ok) throw new Error(await readError(response));
       const result = await response.json();
@@ -811,8 +1082,18 @@ export default function App() {
       setCustomerToken(result.token);
       setCustomer(result.customer);
       setAccountName(result.customer.fullName || "");
+      setAccountEmail(result.customer.email || "");
+      setAccountAddress(result.customer.address || "");
+      setAccountDateOfBirth(result.customer.dateOfBirth ? result.customer.dateOfBirth.slice(0, 10) : "");
       setCheckoutForm((form) => ({ ...form, fullName: result.customer.fullName || "", phone: result.customer.phone || "" }));
-      setAccountMessage("Tạo tài khoản thành công.");
+      setLoginPassword("");
+      setRegisterFullName("");
+      setRegisterPhone("");
+      setRegisterEmail("");
+      setRegisterAddress("");
+      setRegisterDateOfBirth("");
+      setRegisterPasswordConfirm("");
+      setTab("home");
     } catch (error) {
       setAccountError(error.message || "Không thể tạo tài khoản.");
     } finally {
@@ -820,7 +1101,133 @@ export default function App() {
     }
   };
 
-  const saveAccountName = async () => {
+  const checkRegistrationPhone = async (value) => {
+    const phone = normalizeVietnamesePhone(value);
+    const sequence = ++phoneCheckSequence.current;
+    if (!/^0[35789]\d{8}$/.test(phone)) {
+      setPhoneAvailability(null);
+      return;
+    }
+    setPhoneAvailability({ phone, checking: true });
+    try {
+      const response = await apiFetch(`${API_URL}/storefront/register/phone-availability?phone=${encodeURIComponent(phone)}`);
+      if (!response.ok) throw new Error("phone check failed");
+      const result = await response.json();
+      if (sequence === phoneCheckSequence.current) setPhoneAvailability({ phone, available: result.available === true });
+    } catch {
+      if (sequence === phoneCheckSequence.current) setPhoneAvailability({ phone, error: true });
+    }
+  };
+
+  const markAccountEdited = (setter) => (value) => {
+    setter(value);
+    // A prior success must not look like confirmation for edits made afterward.
+    setAccountMessage("");
+    setAccountError("");
+  };
+
+  // Coming back from the MoMo / bank page: reload the order list so the new payment status shows.
+  useEffect(() => {
+    const subscription = AppState.addEventListener?.("change", (state) => {
+      if (state === "active" && tab === "orders") setOrdersRefreshKey((key) => key + 1);
+    });
+    return () => subscription?.remove?.();
+  }, [tab]);
+
+  useEffect(() => { setOrderActionMessage(""); }, [selectedOrder?.id]);
+
+  const confirmDialog = (title, message) => new Promise((resolve) => {
+    if (Platform.OS === "web") {
+      resolve(typeof window !== "undefined" && window.confirm(`${title}\n${message}`));
+      return;
+    }
+    Alert.alert(title, message, [
+      { text: "Không", style: "cancel", onPress: () => resolve(false) },
+      { text: "Đồng ý", style: "destructive", onPress: () => resolve(true) },
+    ]);
+  });
+
+  const cancelCustomerOrderTask = async (order) => {
+    if (!(await confirmDialog("Hủy đơn hàng", `Bạn chắc chắn muốn hủy đơn ${order.orderNumber}?`))) return;
+    setOrderActionBusy(true);
+    setOrderActionMessage("");
+    try {
+      const response = await apiFetch(`${API_URL}/storefront/orders/${order.id}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
+        body: JSON.stringify({ reason: "Khách hủy trên ứng dụng" }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      setOrdersRefreshKey((key) => key + 1);
+      void loadStore(true); // stock went back to the shelf
+    } catch (error) {
+      setOrderActionMessage(error.message || "Không thể hủy đơn hàng.");
+    } finally {
+      setOrderActionBusy(false);
+    }
+  };
+
+  // Opens the MoMo page (a new attempt each time) or the bank-transfer page for an unpaid order.
+  const payOrderOnlineTask = async (order) => {
+    setOrderActionBusy(true);
+    setOrderActionMessage("");
+    try {
+      const method = normalizePaymentMethod(order.paymentMethod);
+      const response = method === "e_wallet"
+        ? await apiFetch(`${API_URL}/storefront/orders/${order.id}/pay-momo`, { method: "POST", headers: { Authorization: `Bearer ${customerToken}` } })
+        : await apiFetch(`${API_URL}/storefront/orders/${order.id}/payment-status`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!response.ok) throw new Error(await readError(response));
+      const result = await response.json();
+      const url = method === "e_wallet" ? result.payUrl : result.bankSimulatorUrl;
+      if (url) {
+        await Linking.openURL(url);
+      } else if (method === "card") {
+        setOrderActionMessage(`Chuyển khoản ${money(result.totalAmount)} với nội dung EMART_${result.orderNumber}. Cửa hàng sẽ xác nhận khi nhận được tiền.`);
+      } else {
+        throw new Error("Chưa tạo được liên kết thanh toán. Vui lòng thử lại.");
+      }
+    } catch (error) {
+      setOrderActionMessage(error.message || "Không mở được trang thanh toán.");
+    } finally {
+      setOrderActionBusy(false);
+    }
+  };
+
+  const changeCustomerPasswordTask = async () => {
+    if (passwordForm.current.length < 6 || passwordForm.next.length < 6) {
+      setAccountError("Mật khẩu phải có ít nhất 6 ký tự.");
+      return;
+    }
+    if (passwordForm.next !== passwordForm.confirm) {
+      setAccountError("Mật khẩu mới và xác nhận mật khẩu không khớp.");
+      return;
+    }
+    if (passwordForm.next === passwordForm.current) {
+      setAccountError("Mật khẩu mới phải khác mật khẩu hiện tại.");
+      return;
+    }
+    setAccountBusy(true);
+    setAccountError("");
+    setAccountMessage("");
+    try {
+      const response = await apiFetch(`${API_URL}/me/change-password`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
+        body: JSON.stringify({ currentPassword: passwordForm.current, newPassword: passwordForm.next, confirmNewPassword: passwordForm.confirm }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      // The server revokes every existing session after a password change, so sign in again.
+      setPasswordForm({ current: "", next: "", confirm: "" });
+      await clearCustomerSession();
+      setAccountMessage("Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.");
+    } catch (error) {
+      setAccountError(error.message || "Không thể đổi mật khẩu.");
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const saveAccountNameTask = async () => {
     const fullName = accountName.trim();
     if (fullName.length < 2) {
       setAccountError("Họ tên cần có ít nhất 2 ký tự.");
@@ -831,7 +1238,7 @@ export default function App() {
     setAccountError("");
     setAccountMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/account`, {
+      const response = await apiFetch(`${API_URL}/storefront/account`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -852,7 +1259,7 @@ export default function App() {
       setAccountAddress(profile.address || "");
       setAccountDateOfBirth(profile.dateOfBirth ? profile.dateOfBirth.slice(0, 10) : "");
       setCheckoutForm((form) => ({ ...form, fullName: profile.fullName }));
-      setAccountMessage("Đã cập nhật họ tên.");
+      setAccountMessage("Đã cập nhật thông tin tài khoản.");
     } catch (error) {
       setAccountError(error.message || "Không thể lưu thông tin tài khoản.");
     } finally {
@@ -860,7 +1267,7 @@ export default function App() {
     }
   };
 
-  const saveDeliveryAddress = async () => {
+  const saveDeliveryAddressTask = async () => {
     if (addressBusy) return;
     if (!accountReady) { setAddressMessage("Đang tải tài khoản, vui lòng thử lại sau."); return; }
     if (!customer || !customerToken) { setProfilePage(""); setAccountError("Vui lòng đăng nhập để quản lý địa chỉ nhận hàng."); return; }
@@ -878,7 +1285,7 @@ export default function App() {
     try {
       if (customer || customerToken) {
         if (!customer || !customerToken) throw new Error("Vui lòng đăng nhập lại để cập nhật địa chỉ tài khoản.");
-        const response = await fetch(`${API_URL}/storefront/account/address`, {
+        const response = await apiFetch(`${API_URL}/storefront/account/address`, {
           method: "PUT",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
           body: JSON.stringify({ address: fullAddress }),
@@ -908,71 +1315,134 @@ export default function App() {
     }
   };
 
+  // The token expired or was revoked (401 from any authenticated call). Only the broken session is dropped: the
+  // account's saved cart and any unfinished order request stay on the device, so after signing in again the
+  // customer continues exactly where they were, and a resent order reuses its request id (no duplicate order).
+  const expireCustomerSession = useCallback((phone) => {
+    customerSession.current = ""; // later 401s from requests already in flight are ignored
+    AsyncStorage.multiRemove([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY]).catch(() => { });
+    setCustomer(null);
+    setCustomerToken("");
+    setCustomerOrders([]);
+    setSelectedOrder(null);
+    setInvoiceOrder(null);
+    setSelectedProduct(null);
+    setCategoryModalOpen(false);
+    setVoucherOpen(false);
+    setCheckoutOpen(false);
+    setLoginPassword("");
+    if (phone) setLoginUsername((current) => current || phone);
+    setRegisterMode(false);
+    setProfilePage("");
+    setAccountError("");
+    setAccountMessage(SESSION_EXPIRED_MESSAGE);
+    setTab("profile"); // the login form
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined") window.setTimeout(() => window.alert(SESSION_EXPIRED_MESSAGE), 0);
+    } else {
+      Alert.alert("Hết phiên đăng nhập", SESSION_EXPIRED_MESSAGE);
+    }
+  }, []);
+
+  useEffect(() => setSessionExpiredHandler((token) => {
+    if (token && token === customerSession.current) expireCustomerSession(customer?.phone);
+  }), [customer?.phone, expireCustomerSession]);
+
+  // "Đăng xuất": removes this account's token, profile, addresses and saved cart from the device.
+  // An unfinished order request (keyed by account) is deliberately kept, see expireCustomerSession.
+  const clearCustomerSession = async () => {
+    const customerAddressKey = customer?.id ? `${ADDRESS_KEY}:${customer.id}` : null;
+    const customerCartKey = customer?.id ? cartStorageKey(customer.id) : null;
+    const sessionKeys = [CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY, CART_KEY, customerAddressKey, customerCartKey].filter(Boolean);
+    let storageError = false;
+    try {
+      await AsyncStorage.multiRemove(sessionKeys);
+    } catch {
+      storageError = true;
+      await Promise.all(sessionKeys.map((key) => AsyncStorage.removeItem(key).catch(() => { })));
+    }
+
+    customerSession.current = "";
+    setCustomer(null);
+    setCustomerToken("");
+    setAccountName("");
+    setAccountEmail("");
+    setAccountAddress("");
+    setAccountDateOfBirth("");
+    setLoginUsername("");
+    setLoginPassword("");
+    setRegisterFullName("");
+    setRegisterPhone("");
+    setRegisterEmail("");
+    setRegisterAddress("");
+    setRegisterDateOfBirth("");
+    setRegisterPasswordConfirm("");
+    setAccountError("");
+    setAccountMessage("");
+    setDeliveryAddress({ city: "", ward: "", street: "", otherReceiver: false });
+    setAddressMessage("");
+    setProfilePage("");
+    setRegisterMode(false);
+    setDatePickerOpen(false);
+    setCheckoutOpen(false);
+    setCheckoutForm({ fullName: "", phone: "", address: "", note: "" });
+    setPendingCheckout(null);
+    setCart([]);
+    setCustomerOrders([]);
+    setSelectedOrder(null);
+    setInvoiceOrder(null);
+    setAppliedVoucher(null);
+    setDraftVoucher(null);
+    setUseRewardPoints(false);
+
+    if (storageError) Alert.alert("Đăng xuất", "Đã thoát tài khoản trong ứng dụng nhưng thiết bị chưa xóa được phiên đã lưu.");
+  };
+
   const logoutCustomer = () => {
-    Alert.alert("Đăng xuất", "Bạn muốn đăng xuất khỏi tài khoản này?", [
+    const title = "Đăng xuất";
+    const message = "Bạn muốn đăng xuất khỏi tài khoản này?";
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined" && window.confirm(`${title}\n${message}`)) {
+        clearCustomerSession();
+      }
+      return;
+    }
+    Alert.alert(title, message, [
       { text: "Ở lại", style: "cancel" },
-      {
-        text: "Đăng xuất",
-        style: "destructive",
-        onPress: async () => {
-          customerSession.current = "";
-          setCustomer(null);
-          setCustomerToken("");
-          setAccountName("");
-          setAccountEmail("");
-          setAccountAddress("");
-          setAccountDateOfBirth("");
-          setLoginUsername("");
-          setLoginPassword("");
-          setRegisterFullName("");
-          setRegisterPhone("");
-          setAccountError("");
-          setAccountMessage("");
-          setDeliveryAddress({ city: "", ward: "", street: "", otherReceiver: false });
-          setAddressMessage("");
-          setProfilePage("");
-          setDatePickerOpen(false);
-          setCheckoutOpen(false);
-          setCheckoutForm({ fullName: "", phone: "", address: "", note: "" });
-          try {
-            await AsyncStorage.multiRemove([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY, `${ADDRESS_KEY}:${customer.id}`]);
-          } catch {
-            Alert.alert("Đăng xuất", "Không thể xóa dữ liệu đăng nhập trên thiết bị. Vui lòng thử lại.");
-          }
-        },
-      },
+      { text: "Đăng xuất", style: "destructive", onPress: clearCustomerSession },
     ]);
   };
 
-  // Lọc và Sắp xếp danh sách sản phẩm
-  const visibleProducts = useMemo(() => {
-    let result = products.filter((product) => {
-      const matchesSearch = product.productName?.toLowerCase().includes(query.trim().toLowerCase());
-      const matchesCategory = categoryId === "all" || String(product.categoryId) === String(categoryId);
-      return matchesSearch && matchesCategory;
-    });
+  // Search index built once per catalogue refresh, not on every keystroke.
+  const searchIndex = useMemo(() => buildSearchIndex(products), [products]);
+  const appliedFilters = filters;
+  const activeFilterChips = useMemo(() => describeActiveFilters(appliedFilters, categories), [appliedFilters, categories]);
+  // A typed (non-preset) range highlights no price chip; it shows in the active filter chips instead.
+  const activePricePreset = activePricePresetOf(filters);
+  const anyPriceFilter = hasPriceFilter(filters);
 
-    if (sortOption === "price_asc") {
-      result = [...result].sort((a, b) => a.price - b.price);
-    } else if (sortOption === "price_desc") {
-      result = [...result].sort((a, b) => b.price - a.price);
-    } else if (sortOption === "hot") {
-      result = [...result].sort((a, b) => (a.id % 2 === 0 ? -1 : 1));
-    }
-    return result;
-  }, [products, query, categoryId, sortOption]);
+  // Lọc và Sắp xếp danh sách sản phẩm (same rules as the advanced search sheet's live result count).
+  const visibleProducts = useMemo(
+    () => sortProducts(filterSearchIndex(searchIndex, query, appliedFilters), sortOption),
+    [searchIndex, query, appliedFilters, sortOption]
+  );
+
+  const visibleVoucherHistory = useMemo(() => voucherHistory.filter((item) => {
+    return item.walletStatus === voucherHistoryTab;
+  }), [voucherHistory, voucherHistoryTab]);
 
   const activeDrawerCategory = useMemo(() => (
     categories.find((category) => String(category.id) === String(selectedDrawerCatId))
   ), [categories, selectedDrawerCatId]);
 
+  // Reuses the same accent-insensitive search index as the home list.
   const drawerProducts = useMemo(() => {
-    const keyword = drawerSearchText.trim().toLocaleLowerCase("vi-VN");
-    return products.filter((product) => (
+    const keyword = normalizeSearch(drawerSearchText);
+    return searchIndex.filter(({ product, text }) => (
       (selectedDrawerCatId === "all" || String(product.categoryId) === String(selectedDrawerCatId))
-      && (product.productName || "").toLocaleLowerCase("vi-VN").includes(keyword)
-    ));
-  }, [products, selectedDrawerCatId, drawerSearchText]);
+      && (!keyword || text.includes(keyword))
+    )).map(({ product }) => product);
+  }, [searchIndex, selectedDrawerCatId, drawerSearchText]);
 
   const cartItemMap = useMemo(() => {
     const map = {};
@@ -1010,16 +1480,26 @@ export default function App() {
   const pointsDiscount = useRewardPoints ? maxPointsUsable * 1000 : 0;
   const payable = Math.max(0, afterVoucher - pointsDiscount);
 
-  const openVouchers = async () => {
+  const openVouchers = async (context = "checkout") => {
+    if (context === "checkout" && pendingCheckout) return;
+    if (!requireAuthenticatedCustomer()) return;
+    setVoucherContext(context);
+    setVoucherView("available");
     setDraftVoucher(appliedVoucher);
     setVoucherOpen(true);
     setVoucherMessage("");
     setVouchersLoading(true);
     try {
-      const response = await fetch(`${API_URL}/storefront/promotions`);
-      if (!response.ok) throw new Error(await readError(response));
-      const data = await response.json();
-      setVoucherList(Array.isArray(data) ? data.filter((promotion) => promotion.type === "event") : []);
+      const walletResponse = await apiFetch(`${API_URL}/storefront/vouchers`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!walletResponse.ok) throw new Error(await readError(walletResponse));
+      const wallet = await walletResponse.json();
+      let events = [];
+      if (context === "checkout") {
+        const response = await apiFetch(`${API_URL}/storefront/promotions`);
+        if (!response.ok) throw new Error(await readError(response));
+        events = (await response.json()).filter((promotion) => promotion.type === "event");
+      }
+      setVoucherList([...events, ...wallet.filter((promotion) => !["used", "expired"].includes(promotion.walletStatus))]);
     } catch (error) {
       setVoucherMessage(error.message || "Không tải được phiếu mua hàng.");
     } finally {
@@ -1027,7 +1507,7 @@ export default function App() {
     }
   };
 
-  const applyVoucher = async (code = voucherCode, eventPromotionId = null) => {
+  const applyVoucherTask = async (code = voucherCode, eventPromotionId = null) => {
     const normalizedCode = code.trim();
     if (!eventPromotionId && !normalizedCode) { setVoucherMessage("Nhập mã voucher."); return; }
     if (eventPromotionId) {
@@ -1038,9 +1518,9 @@ export default function App() {
     setVoucherBusy(true);
     setVoucherMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/promotions/validate`, {
+      const response = await apiFetch(`${API_URL}/storefront/promotions/validate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
         body: JSON.stringify({ code: eventPromotionId ? "" : normalizedCode, eventPromotionId, orderAmount: subtotal }),
       });
       const result = await response.json().catch(() => ({}));
@@ -1066,9 +1546,141 @@ export default function App() {
   }, [customer, customerToken]);
 
   const navigateToTab = (nextTab) => {
-    if ((nextTab === "cart" || nextTab === "orders") && !requireAuthenticatedCustomer()) return;
+    if (nextTab === "home") setFlashSaleOpen(false);
     setTab(nextTab);
   };
+
+  const openVoucherHistory = async () => {
+    if (!customerToken) return;
+    setVoucherView("history");
+    setVouchersLoading(true);
+    setVoucherMessage("");
+    try {
+      const response = await apiFetch(`${API_URL}/storefront/promotions/history`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      setVoucherHistory(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setVoucherMessage(error.message || "Không tải được lịch sử voucher.");
+    } finally {
+      setVouchersLoading(false);
+    }
+  };
+
+  // Voucher hunt page. Public vouchers are listed; an Only-code voucher appears only after its code is looked up.
+  const openVoucherDiscovery = async (initialCode = "") => {
+    if (!requireAuthenticatedCustomer()) return;
+    setVoucherContext("account");
+    setVoucherView("discover");
+    setVoucherOpen(true);
+    setVoucherMessage("");
+    setVoucherSearch(initialCode);
+    setCodeResult(null);
+    setVouchersLoading(true);
+    try {
+      const response = await apiFetch(`${API_URL}/storefront/vouchers/discover`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      setVoucherList(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setVoucherMessage(error.message || "Không tải được voucher.");
+    } finally {
+      setVouchersLoading(false);
+    }
+    if (initialCode.trim()) await lookupVoucherCode(initialCode);
+  };
+
+  // Asks the server for the voucher with exactly this code (works for Public and Only-code vouchers).
+  const lookupVoucherCodeTask = async (rawCode = voucherSearch) => {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) { setVoucherMessage("Nhập mã voucher để tìm."); return; }
+    setVoucherBusy(true);
+    setVoucherMessage("");
+    try {
+      const response = await apiFetch(`${API_URL}/storefront/vouchers/lookup?code=${encodeURIComponent(code)}`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      if (!response.ok) throw new Error(await readError(response));
+      setCodeResult(await response.json());
+    } catch (error) {
+      setCodeResult(null);
+      setVoucherMessage(error.message || "Không tìm thấy mã voucher.");
+    } finally {
+      setVoucherBusy(false);
+    }
+  };
+
+  // Public list filtered locally by name or code while the customer types.
+  const filteredDiscoverVouchers = useMemo(() => {
+    const keyword = normalizeSearch(voucherSearch);
+    if (!keyword) return voucherList;
+    return voucherList.filter((voucher) => normalizeSearch(`${voucher.name || ""} ${voucher.voucherCode || ""}`).includes(keyword));
+  }, [voucherList, voucherSearch]);
+
+  const renderVoucherDiscoverCard = (voucher, viaCode) => {
+    const isClaimableVoucher = voucher.type === "voucher";
+    const blocked = voucher.isClaimed || !!voucher.claimIssue;
+    const cannotClaim = !isClaimableVoucher || voucherBusy || blocked;
+    // Only-code vouchers can be saved only with their code; Public ones by id.
+    const save = () => viaCode || voucher.visibility === "only-code" ? claimVoucher(null, voucher.voucherCode) : claimVoucher(voucher.id);
+    return <View key={`${viaCode ? "code" : "list"}-${voucher.id}`} style={styles.voucherDiscoverCard}>
+      <View style={styles.voucherDiscoverBadge}>
+        <Text style={styles.voucherDiscoverBadgeIcon}>★</Text>
+        <Text style={styles.voucherDiscoverBadgeValue}>{voucher.discountType === "percent" ? `GIẢM ${voucher.value}%` : `GIẢM ${money(voucher.value)}`}</Text>
+        <Text style={styles.voucherDiscoverBadgeBrand}>{isClaimableVoucher ? "VOUCHER" : voucher.type === "product" ? "SẢN PHẨM" : "SỰ KIỆN"}</Text>
+      </View>
+      <View style={styles.voucherDiscoverInfo}>
+        <Text style={styles.voucherDiscoverName}>{voucher.name || `Giảm ${voucher.discountType === "percent" ? `${voucher.value}%` : money(voucher.value)}`}</Text>
+        {voucher.maxDiscount ? <Text style={styles.voucherDiscoverDetail}>Giảm tối đa {money(voucher.maxDiscount)}</Text> : null}
+        <Text style={styles.voucherDiscoverDetail}>Đơn tối thiểu {money(voucher.minOrderAmount || 0)}</Text>
+        {isClaimableVoucher ? <>
+          <Pressable accessibilityRole="button" disabled={cannotClaim} onPress={save} style={[styles.voucherDiscoverSave, cannotClaim && styles.voucherDiscoverSaveDisabled]}>
+            <Text style={[styles.voucherDiscoverSaveText, cannotClaim && styles.voucherDiscoverSaveTextDisabled]}>{voucher.isClaimed ? "Đã lưu" : voucher.claimIssue ? "Chưa thể lưu" : voucherBusy ? "Đang lưu..." : "Lưu mã"}</Text>
+          </Pressable>
+          {voucher.claimIssue && !voucher.isClaimed ? <Text style={styles.voucherUnavailableText}>{voucher.claimIssue}</Text> : null}
+          <Text style={styles.voucherDiscoverConditions}>Mã: {voucher.voucherCode} · Mỗi khách 1 lần · Đã nhận {voucher.claimedCount || 0}/{voucher.claimLimit ?? "∞"}</Text>
+          <Text style={styles.voucherDiscoverConditions}>Nhận đến {new Date(voucher.claimEndDate).toLocaleDateString("vi-VN")} · Dùng đến {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>
+        </> : <Text style={styles.voucherDiscoverConditions}>Ưu đãi tự áp dụng khi đơn hàng đáp ứng điều kiện · Đến {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>}
+      </View>
+    </View>;
+  };
+
+  const claimVoucherTask = async (promotionId = null, codeOverride = null) => {
+    if (voucherBusy || !requireAuthenticatedCustomer()) return;
+    const code = (codeOverride ?? voucherCode).trim().toUpperCase();
+    if (!promotionId && !code) { setVoucherMessage("Nhập mã voucher để nhận."); return; }
+    setVoucherBusy(true);
+    setVoucherMessage("");
+    try {
+      const response = await apiFetch(`${API_URL}/storefront/vouchers/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
+        body: JSON.stringify(promotionId ? { promotionId } : { code }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      const received = await response.json();
+      const savedId = promotionId ?? received.id;
+      const markSaved = (item) => item.id === savedId ? { ...item, isClaimed: true, claimIssue: "Bạn đã lưu mã này.", claimedCount: received.claimedCount } : item;
+      setVoucherList((current) => current.map(markSaved));
+      setCodeResult((current) => current ? markSaved(current) : current);
+      if (!promotionId && voucherView !== "discover") { await openVouchers("account"); setVoucherCode(""); }
+      setVoucherMessage("Đã lưu voucher vào kho của bạn.");
+    } catch (error) {
+      setVoucherMessage(error.message || "Không thể nhận voucher.");
+    } finally { setVoucherBusy(false); }
+  };
+
+  // Every action that writes (or spends a rate-limited lookup) runs at most once at a time. The lock is a ref, so
+  // it holds even for two taps that arrive before React re-renders the disabled button (and covers the confirm
+  // dialog of "Hủy đơn"). Actions on one order share a key, so cancelling and paying cannot overlap.
+  const loginCustomer = () => runExclusive("account", loginCustomerTask);
+  const registerCustomer = () => runExclusive("account", registerCustomerTask);
+  const changeCustomerPassword = () => runExclusive("account", changeCustomerPasswordTask);
+  const saveAccountName = () => runExclusive("account", saveAccountNameTask);
+  const saveDeliveryAddress = () => runExclusive("address", saveDeliveryAddressTask);
+  const cancelCustomerOrder = (order) => runExclusive("order-action", () => cancelCustomerOrderTask(order));
+  const payOrderOnline = (order) => runExclusive("order-action", () => payOrderOnlineTask(order));
+  const applyVoucher = (...args) => runExclusive("voucher", () => applyVoucherTask(...args));
+  const lookupVoucherCode = (...args) => runExclusive("voucher", () => lookupVoucherCodeTask(...args));
+  const claimVoucher = (...args) => runExclusive("voucher", () => claimVoucherTask(...args));
 
   const flyProductToCart = useCallback((product, event) => {
     const x = event?.nativeEvent?.pageX;
@@ -1086,6 +1698,7 @@ export default function App() {
 
   const addToCart = useCallback((product, event) => {
     if (!requireAuthenticatedCustomer()) return;
+    if (pendingCheckout) return;
     if (loading || loadError) return;
     const available = stockLimit(products.find((item) => item.id === product.id));
     if (available === 0) return;
@@ -1113,9 +1726,10 @@ export default function App() {
         quantity: 1,
       }];
     });
-  }, [requireAuthenticatedCustomer, loading, loadError, products, flyProductToCart]);
+  }, [requireAuthenticatedCustomer, pendingCheckout, loading, loadError, products, flyProductToCart]);
 
   const changeQuantity = useCallback((id, amount) => {
+    if (pendingCheckout) return;
     if (amount > 0 && !requireAuthenticatedCustomer()) return;
     if (amount > 0 && (loading || loadError)) return;
     const available = stockLimit(products.find((product) => product.id === id));
@@ -1130,9 +1744,10 @@ export default function App() {
       next[index] = { ...item, quantity };
       return next;
     });
-  }, [requireAuthenticatedCustomer, loading, loadError, products]);
+  }, [requireAuthenticatedCustomer, pendingCheckout, loading, loadError, products]);
 
   const setProductQuantity = useCallback((id, quantity) => {
+    if (pendingCheckout) return;
     if (!requireAuthenticatedCustomer() || loading || loadError) return;
     if (!Number.isSafeInteger(quantity) || quantity < 1) return;
     const available = Math.min(1000, stockLimit(products.find((product) => product.id === id)));
@@ -1145,7 +1760,7 @@ export default function App() {
       next[index] = { ...current[index], quantity: nextQuantity };
       return next;
     });
-  }, [requireAuthenticatedCustomer, loading, loadError, products]);
+  }, [requireAuthenticatedCustomer, pendingCheckout, loading, loadError, products]);
 
   const getCartQuantity = (productId) => cart.find((item) => item.id === productId)?.quantity || 0;
 
@@ -1157,6 +1772,7 @@ export default function App() {
       onOpen={openProduct}
       descriptionStatus={descriptionStatus?.id === selectedProduct.id ? descriptionStatus : null}
       quantity={getCartQuantity(selectedProduct.id)}
+      getCartQuantity={getCartQuantity}
       onClose={() => setSelectedProduct(null)}
       onAdd={addToCart}
       onQuantityChange={changeQuantity}
@@ -1176,56 +1792,77 @@ export default function App() {
       setCheckoutOpen(false);
       return;
     }
-    if (!checkoutForm.fullName.trim() || !checkoutForm.phone.trim() || !checkoutForm.address.trim()) {
+    const formToValidate = pendingCheckout?.payload || checkoutForm;
+    if (!formToValidate.fullName?.trim() || !formToValidate.phone?.trim() || !formToValidate.address?.trim()) {
       setOrderError("Nhập họ tên, số điện thoại và địa chỉ nhận hàng.");
       return;
     }
-    if (!/^(0|\+84)[35789]\d{8}$/.test(checkoutForm.phone.trim())) {
+    if (!/^(0|\+84)[35789]\d{8}$/.test(formToValidate.phone.trim())) {
       setOrderError("Số điện thoại Việt Nam chưa đúng định dạng.");
       return;
     }
-    if (!cart.length) return;
+    if (!(pendingCheckout?.cart?.length || cart.length) || checkoutRequestLock.current) return;
+    checkoutRequestLock.current = true;
     setOrderSubmitting(true);
     setOrderError("");
     try {
-      const response = await fetch(`${API_URL}/storefront/orders`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${customerToken}`,
-        },
-        body: JSON.stringify({
+      const storageKey = checkoutStorageKey(customer.id);
+      const pending = await preparePendingCheckout(AsyncStorage, customer.id, () => ({
+        owner: customer.id,
+        cart,
+        voucher: appliedVoucher,
+        payload: {
           ...checkoutForm,
           fullName: checkoutForm.fullName.trim(),
           phone: checkoutForm.phone.trim(),
+          requestId: createCheckoutRequestId(),
+          expectedTotal: payable,
           paymentMethod,
           pointsUsed: useRewardPoints ? maxPointsUsable : 0,
           items: cart.map((item) => ({ productId: item.id, quantity: item.quantity })),
           promotionCode: appliedVoucher?.code || null,
           eventPromotionId: appliedVoucher?.eventPromotionId || null,
-        }),
+        },
+      }));
+      setPendingCheckout(pending);
+      const response = await apiFetch(`${API_URL}/storefront/orders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${customerToken}`,
+        },
+        body: JSON.stringify(pending.payload),
       });
-      if (!response.ok) throw new Error(await readError(response));
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (checkoutDefinitelyRejected(response.status, result)) {
+          await AsyncStorage.removeItem(storageKey);
+          setPendingCheckout(null);
+        }
+        throw new Error(result.message || result.title || "Chưa xác định được kết quả đặt hàng. Hãy thử lại yêu cầu đã lưu.");
+      }
+      await AsyncStorage.removeItem(storageKey);
+      setPendingCheckout(null);
       setCompletedOrder({
         ...result,
-        paymentMethod,
-        pointsDiscount,
-        vietQrUrl: result.vietQrUrl || (paymentMethod === "bank" ? `https://img.vietqr.io/image/MB-0987654321-compact2.png?amount=${result.totalAmount}&addInfo=EMART_${result.orderNumber}&accountName=EMART%20STORE` : null)
+        paymentMethod: result.paymentMethod || pending.payload.paymentMethod,
+        pointsDiscount: (result.pointsUsed ?? pending.payload.pointsUsed) * 1000,
+        vietQrUrl: result.vietQrUrl || null,
       });
-      if (customer && useRewardPoints && maxPointsUsable > 0) {
-        setCustomer((prev) => prev ? ({ ...prev, rewardPoints: Math.max(0, (prev.rewardPoints || 0) - maxPointsUsable) }) : null);
-      }
+      apiFetch(`${API_URL}/storefront/account`, { headers: { Authorization: `Bearer ${customerToken}` } })
+        .then((accountResponse) => accountResponse.ok ? accountResponse.json() : null)
+        .then((profile) => { if (profile) setCustomer(profile); })
+        .catch(() => {});
       const placedOrder = {
         ...result,
-        paymentMethod,
-        recipientName: result.recipientName || checkoutForm.fullName.trim(),
-        recipientPhone: result.recipientPhone || checkoutForm.phone.trim(),
-        shippingAddress: result.shippingAddress || checkoutForm.address.trim(),
-        note: result.note ?? (checkoutForm.note.trim() || null),
-        paymentStatus: "pending",
+        paymentMethod: result.paymentMethod || pending.payload.paymentMethod,
+        recipientName: result.recipientName || pending.payload.fullName,
+        recipientPhone: result.recipientPhone || pending.payload.phone,
+        shippingAddress: result.shippingAddress || pending.payload.address,
+        note: result.note ?? (pending.payload.note?.trim() || null),
+        paymentStatus: result.paymentStatus || "pending",
         orderType: "mobile",
-        items: cart.map((item) => ({
+        items: pending.cart.map((item) => ({
           productId: item.id,
           productName: item.name,
           imageUrl: item.image,
@@ -1236,16 +1873,28 @@ export default function App() {
       };
       setCustomerOrders((current) => [placedOrder, ...current.filter((order) => order.id !== placedOrder.id)]);
       setCart([]);
-      void loadStore();
+      void loadStore(true);
       setUseRewardPoints(false);
     } catch (error) {
       setOrderError(error.message || "Không thể gửi đơn hàng. Kiểm tra kết nối rồi thử lại.");
     } finally {
+      checkoutRequestLock.current = false;
       setOrderSubmitting(false);
     }
   };
 
   const currentBanner = BANNERS[bannerIndex];
+  const flashSaleEnd = flashSaleProducts
+    .map((product) => product.promotionEndsAt ? new Date(product.promotionEndsAt).getTime() : 0)
+    .filter((value) => value > countdownNow)
+    .sort((left, right) => left - right)[0] || countdownNow;
+  const flashRemainingSeconds = Math.max(0, Math.floor((flashSaleEnd - countdownNow) / 1000));
+  const flashCountdown = [
+    { label: "ngày", value: Math.floor(flashRemainingSeconds / 86400) },
+    { label: "giờ", value: Math.floor((flashRemainingSeconds % 86400) / 3600) },
+    { label: "phút", value: Math.floor((flashRemainingSeconds % 3600) / 60) },
+    { label: "giây", value: flashRemainingSeconds % 60 },
+  ].map((part) => ({ ...part, value: String(part.value).padStart(2, "0") }));
 
   // Dynamic responsive card styles
   const cardWidthStyle = useMemo(() => {
@@ -1254,10 +1903,35 @@ export default function App() {
     return { width: "48.5%" }; // 2 cột trên điện thoại
   }, [isDesktop, isWide]);
 
+  // Quick category tags / drawer pick exactly one category (or all); other filters stay as they are.
   const selectHomeCategory = useCallback((id) => {
-    setCategoryId(String(id));
+    setFilters((current) => ({ ...current, categoryIds: String(id) === "all" ? [] : [String(id)] }));
     homeListRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, []);
+
+  // One place that applies a full filter set (advanced search sheet, chip removal, reset) to the home list.
+  const applyFilters = useCallback((next) => {
+    setFilters({ ...DEFAULT_FILTERS, ...next });
+    homeListRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, []);
+
+  const applyAdvancedSearch = useCallback((next) => {
+    applyFilters(next);
+    setAdvancedSearchOpen(false);
+  }, [applyFilters]);
+
+  const togglePricePreset = useCallback((preset) => {
+    setFilters((current) => {
+      const active = preset && activePricePresetOf(current)?.id === preset.id;
+      const cleared = { ...current, priceMin: null, priceMax: null };
+      return !preset || active ? cleared : { ...cleared, priceMin: preset.min, priceMax: preset.max };
+    });
+  }, []);
+
+  const resetHomeSearch = useCallback(() => {
+    setQuery("");
+    applyFilters(DEFAULT_FILTERS);
+  }, [applyFilters]);
 
   const renderHomeProduct = useCallback(({ item: product }) => (
     <ProductCard
@@ -1300,7 +1974,7 @@ export default function App() {
             <Text style={styles.bannerSubtitle} numberOfLines={2}>{currentBanner.subtitle}</Text>
 
             <Pressable
-              onPress={openVouchers}
+              onPress={() => openVouchers()}
               style={styles.bannerCtaBtn}
             >
               <Text style={styles.bannerCtaText}>Xem ưu đãi  ›</Text>
@@ -1319,14 +1993,43 @@ export default function App() {
           </View>
         </View>
 
+        {!!flashSaleProducts.length && <View style={styles.flashHomeSection}>
+          <View style={styles.flashHomeHeading}>
+            <View>
+              <Text style={styles.flashHomeTitle}>FLASH SALE</Text>
+              <View style={styles.flashCountdownRow}>
+                <Text style={styles.flashEndingText}>Kết thúc sau</Text>
+                {flashCountdown.map((part) => <View key={part.label} style={styles.flashTimeGroup}><View style={styles.flashTimeBox}><Text style={styles.flashTimeText}>{part.value}</Text></View><Text style={styles.flashTimeLabel}>{part.label}</Text></View>)}
+              </View>
+            </View>
+            <Pressable onPress={() => setFlashSaleOpen(true)} style={styles.flashShopAllButton}>
+              <Text style={styles.flashShopAllText}>XEM TẤT CẢ</Text>
+            </Pressable>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.flashProductRow}>
+            {flashSaleProducts.slice(0, 8).map((product) => <Pressable key={product.id} onPress={() => openProduct(product)} style={styles.flashProductCard}>
+              <View style={styles.flashProductImageBox}><ProductImage imagePath={product.imageUrl} productId={product.id} categoryName={product.categoryName} style={styles.productImage} /></View>
+              <Text style={styles.flashProductName} numberOfLines={2}>{product.productName}</Text>
+              <Text style={styles.flashProductPrice}>{money(product.price)}</Text>
+              <View style={styles.flashOldPriceRow}>
+                <Text style={styles.flashOriginalPrice}>{money(product.originalPrice)}</Text>
+                <Text style={styles.flashDiscountBadge}>-{Math.round(product.discountPercent || 0)}%</Text>
+              </View>
+            </Pressable>)}
+          </ScrollView>
+        </View>}
+
         {/* 2. DẢI CAM KẾT VÀNG SIÊU THỊ */}
   
 
         <View style={styles.filterToolbar}>
           <View style={styles.filterLeft}>
             <Text style={styles.filterResultCount} numberOfLines={1}>
-              {categoryId === "all" ? "Tất cả sản phẩm" : (categories.find((c) => String(c.id) === String(categoryId))?.name || "Ngành hàng")}
-              <Text style={styles.filterNumber}> ({visibleProducts.length})</Text>
+              {categoryId === "all"
+                ? "Tất cả sản phẩm"
+                : categoryId == null
+                  ? `${activeFilterChips.find((chip) => chip.key === "category")?.label || "Nhiều danh mục"} · ${visibleProducts.length} sản phẩm`
+                  : (categories.find((c) => String(c.id) === String(categoryId))?.name || "Ngành hàng")}
             </Text>
           </View>
 
@@ -1354,6 +2057,55 @@ export default function App() {
               </Text>
             </Pressable>
           </View>
+          <View style={styles.sortPillsRow}>
+            <Pressable
+              onPress={() => togglePricePreset(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Lọc giá Mọi giá"
+              style={[styles.sortPill, !anyPriceFilter && styles.sortPillActive]}
+            >
+              <Text style={[styles.sortPillText, !anyPriceFilter && styles.sortPillTextActive]}>Mọi giá</Text>
+            </Pressable>
+            {PRICE_PRESETS.map((preset) => (
+              <Pressable
+                key={preset.id}
+                onPress={() => togglePricePreset(preset)}
+                accessibilityRole="button"
+                accessibilityLabel={`Lọc giá ${preset.label}`}
+                style={[styles.sortPill, activePricePreset?.id === preset.id && styles.sortPillActive]}
+              >
+                <Text style={[styles.sortPillText, activePricePreset?.id === preset.id && styles.sortPillTextActive]}>{preset.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <View style={styles.sortPillsRow}>
+            <Pressable
+              onPress={() => setAdvancedSearchOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel={`Mở bộ lọc nâng cao${activeFilterChips.length ? `, đang áp dụng ${activeFilterChips.length} điều kiện` : ""}`}
+              style={[styles.sortPill, styles.advancedFilterPill, activeFilterChips.length > 0 && styles.advancedFilterPillActive]}
+            >
+              <IconFilter size={12} color={BHX_GREEN} />
+              <Text style={styles.advancedFilterPillText}>Bộ lọc{activeFilterChips.length ? ` (${activeFilterChips.length})` : ""}</Text>
+            </Pressable>
+            {activeFilterChips.map((chip) => (
+              <Pressable
+                key={chip.key}
+                onPress={() => applyFilters(removeFilter(appliedFilters, chip.key))}
+                accessibilityRole="button"
+                accessibilityLabel={`Bỏ lọc ${chip.label}`}
+                style={styles.activeFilterChip}
+              >
+                <Text style={styles.activeFilterChipText} numberOfLines={1}>{chip.label}</Text>
+                <IconClose size={11} color={BHX_GREEN} />
+              </Pressable>
+            ))}
+            {activeFilterChips.length > 1 && (
+              <Pressable onPress={() => applyFilters(DEFAULT_FILTERS)} accessibilityRole="button" style={styles.clearFiltersButton}>
+                <Text style={styles.clearFiltersText}>Xóa tất cả</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
 
       </>}
@@ -1367,21 +2119,71 @@ export default function App() {
             <Text style={styles.errorTitle}>Chưa kết nối được cửa hàng</Text>
             <Text style={styles.errorText}>{loadError}</Text>
             <Text style={styles.apiHint}>API: {API_URL}</Text>
-            <AppButton title="Thử kết nối lại" onPress={loadStore} />
+            <AppButton title="Thử kết nối lại" onPress={() => loadStore()} />
           </View>
         ) : (
           <View style={styles.emptyState}>
             <IconCart size={50} color="#cbd5e1" />
             <Text style={styles.emptyTitle}>Chưa có sản phẩm phù hợp</Text>
-            <Text style={styles.stateText}>Hãy chọn ngành hàng khác hoặc bấm xem tất cả.</Text>
-            <AppButton title="Xem tất cả sản phẩm" onPress={() => { setQuery(""); selectHomeCategory("all"); }} style={styles.emptyCta} />
+            <Text style={styles.stateText}>
+              {activeFilterChips.length ? "Thử bỏ bớt điều kiện lọc hoặc bấm xem tất cả." : "Hãy chọn ngành hàng khác hoặc bấm xem tất cả."}
+            </Text>
+            {activeFilterChips.length > 0 && <AppButton title="Điều chỉnh bộ lọc" secondary onPress={() => setAdvancedSearchOpen(true)} style={styles.emptyCta} />}
+            <AppButton title="Xem tất cả sản phẩm" onPress={resetHomeSearch} style={styles.emptyCta} />
           </View>
         )}
-      ListFooterComponent={<View style={{ height: 35 }} />}
+      ListFooterComponent={<View style={styles.loadMoreFooter}>
+        {productsHasMore && <AppButton title={productsLoadingMore ? "Đang tải thêm..." : "Load more"} disabled={productsLoadingMore} onPress={() => loadStore(false, productPage + 1, true)} style={styles.loadMoreButton} />}
+      </View>}
     />
   );
 
-  const renderCart = () => (
+  const renderFlashSale = () => (
+    <FlatList
+      key={`flash-${isWide ? "wide" : isDesktop ? "desktop" : "mobile"}`}
+      data={flashSaleProducts}
+      keyExtractor={(product) => `flash-${product.id}`}
+      renderItem={renderHomeProduct}
+      numColumns={isWide ? 5 : isDesktop ? 4 : 2}
+      contentContainerStyle={[styles.scrollContent, styles.responsiveContainer]}
+      columnWrapperStyle={styles.homeProductRow}
+      ListHeaderComponent={<View style={styles.flashPageHeader}>
+        <Pressable onPress={() => setFlashSaleOpen(false)} style={styles.flashBackButton}><Text style={styles.flashBackText}>‹</Text></Pressable>
+        <View style={{ flex: 1 }}><Text style={styles.flashPageTitle}>Flash Sale</Text><Text style={styles.flashPageSubtitle}>Giá sốc trong thời gian có hạn</Text></View>
+        <View style={styles.flashCountdownRow}>{flashCountdown.map((part) => <View key={`page-${part.label}`} style={styles.flashTimeGroup}><View style={styles.flashTimeBox}><Text style={styles.flashTimeText}>{part.value}</Text></View><Text style={styles.flashTimeLabel}>{part.label}</Text></View>)}</View>
+      </View>}
+      ListEmptyComponent={flashSaleLoading ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /><Text style={styles.stateText}>Đang tải Flash Sale...</Text></View> : <View style={styles.emptyState}><Text style={styles.emptyTitle}>Hiện chưa có sản phẩm Flash Sale</Text></View>}
+      ListFooterComponent={<View style={styles.loadMoreFooter}>{flashSaleHasMore && <AppButton title={flashSaleLoading ? "Đang tải thêm..." : "Load more"} disabled={flashSaleLoading} onPress={() => loadFlashSale(flashSalePage + 1, true)} style={styles.loadMoreButton} />}</View>}
+    />
+  );
+
+  const renderGuestRestrictedState = () => (
+    <View style={styles.guestRestrictedState}>
+      <View style={styles.guestRestrictedIllustration}>
+        <IconCart size={70} color={BHX_GREEN} />
+      </View>
+      <Text style={styles.guestRestrictedTitle}>Bạn chưa thêm gì ở đây</Text>
+      <View style={styles.guestRestrictedActions}>
+        <AppButton
+          title="Đăng nhập / Đăng ký"
+          onPress={() => {
+            setProfilePage("");
+            setRegisterMode(false);
+            setTab("profile");
+          }}
+          style={styles.guestRestrictedButton}
+        />
+        <AppButton
+          title="Trở về trang chủ"
+          secondary
+          onPress={() => setTab("home")}
+          style={[styles.guestRestrictedButton, styles.guestRestrictedHomeButton]}
+        />
+      </View>
+    </View>
+  );
+
+  const renderCart = () => (!customer || !customerToken) ? renderGuestRestrictedState() : (
     <ScrollView contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
       <View style={styles.responsiveContainer}>
         <Text style={styles.pageTitle}>{itemCount} mặt hàng trong giỏ</Text>
@@ -1428,7 +2230,7 @@ export default function App() {
                 <Text style={styles.freeShipping}>Miễn phí (0đ)</Text>
               </View>
 
-              <Pressable style={styles.voucherRow} onPress={openVouchers}>
+              <Pressable disabled={Boolean(pendingCheckout)} style={styles.voucherRow} onPress={() => openVouchers()}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                   <IconStar size={16} color={BHX_ORANGE} />
                   <Text style={styles.voucherLabel}>Phiếu giảm giá (Voucher)</Text>
@@ -1438,7 +2240,7 @@ export default function App() {
                 </Text>
               </Pressable>
               {appliedVoucher && (
-                <Pressable onPress={() => setAppliedVoucher(null)}>
+                <Pressable disabled={Boolean(pendingCheckout)} onPress={() => setAppliedVoucher(null)}>
                   <Text style={styles.voucherRemove}>✕ Bỏ phiếu mua hàng</Text>
                 </Pressable>
               )}
@@ -1452,10 +2254,14 @@ export default function App() {
               <AppButton
                 title="Xóa hết giỏ hàng"
                 secondary
-                onPress={() => Alert.alert("Xóa giỏ hàng", "Bạn có chắc muốn xóa tất cả sản phẩm khỏi giỏ?", [
-                  { text: "Hủy", style: "cancel" },
-                  { text: "Xóa hết", style: "destructive", onPress: () => { setCart([]); setAppliedVoucher(null); } }
-                ])}
+                disabled={Boolean(pendingCheckout)}
+                onPress={async () => {
+                  // Alert.alert buttons do nothing on Expo web, so use the cross-platform confirm.
+                  if (await confirmDialog("Xóa giỏ hàng", "Bạn có chắc muốn xóa tất cả sản phẩm khỏi giỏ?")) {
+                    setCart([]);
+                    setAppliedVoucher(null);
+                  }
+                }}
               />
             </View>
           </View>
@@ -1488,6 +2294,8 @@ export default function App() {
   });
 
   const renderOrders = () => {
+    if (!customer || !customerToken) return renderGuestRestrictedState();
+
     if (selectedOrder) {
       const orderItems = selectedOrder.items || [];
       const address = orderAddress(selectedOrder);
@@ -1497,6 +2305,13 @@ export default function App() {
       const paidAmount = String(selectedOrder.paymentStatus || "").toLowerCase() === "paid"
         ? selectedOrder.totalAmount
         : 0;
+      const orderStatus = String(selectedOrder.status || "").toLowerCase();
+      const paymentMethod = normalizePaymentMethod(selectedOrder.paymentMethod);
+      const isPrepaid = paymentMethod === "e_wallet" || paymentMethod === "card";
+      const unpaid = String(selectedOrder.paymentStatus || "").toLowerCase() !== "paid";
+      const awaitingOnlinePayment = selectedOrder.orderType !== "pos" && isPrepaid && unpaid && (orderStatus === "pending" || orderStatus === "processing");
+      // Customers may cancel only before the store confirms and before any money is taken.
+      const canCancel = selectedOrder.orderType !== "pos" && orderStatus === "pending" && (unpaid || !selectedOrder.totalAmount);
 
       return (
         <View style={styles.ordersScreen}>
@@ -1542,11 +2357,18 @@ export default function App() {
                     <Text style={styles.summaryValue}>{money(selectedOrder.totalAmount)}</Text>
                   </View>
                   <View style={styles.summaryLine}>
-                    <Text style={styles.summaryLabel}>{paidAmount > 0 ? "Đã thanh toán" : "Thanh toán khi nhận"}</Text>
+                    <Text style={styles.summaryLabel}>{paidAmount > 0 ? "Đã thanh toán" : isPrepaid ? "Chưa thanh toán" : "Thanh toán khi nhận"}</Text>
                     <Text style={styles.summaryValue}>{money(paidAmount || selectedOrder.totalAmount)}</Text>
                   </View>
                 </View>
               </View>
+              {orderActionMessage ? <Text style={styles.orderError}>{orderActionMessage}</Text> : null}
+              {awaitingOnlinePayment && <AppButton
+                title={orderActionBusy ? "Đang mở trang thanh toán..." : paymentMethod === "e_wallet" ? "Thanh toán bằng MoMo" : "Chuyển khoản ngân hàng"}
+                onPress={() => payOrderOnline(selectedOrder)}
+                disabled={orderActionBusy}
+              />}
+              {canCancel && <AppButton title={orderActionBusy ? "Đang xử lý..." : "Hủy đơn hàng"} secondary onPress={() => cancelCustomerOrder(selectedOrder)} disabled={orderActionBusy} />}
               {String(selectedOrder.status).toLowerCase() === "completed" && <AppButton title="Xem hóa đơn" onPress={() => setInvoiceOrder(selectedOrder)} />}
             </View>
           </ScrollView>
@@ -1579,13 +2401,6 @@ export default function App() {
           <View style={styles.errorCard}>
             <Text style={styles.errorText}>{ordersError}</Text>
             <AppButton title="Thử lại" onPress={() => setOrdersRefreshKey((key) => key + 1)} />
-          </View>
-        ) : !customer && customerOrders.length === 0 ? (
-          <View style={styles.emptyState}>
-            <IconReceipt size={48} color="#cbd5e1" />
-            <Text style={styles.emptyTitle}>Đăng nhập để xem đơn</Text>
-            <Text style={styles.stateText}>Đơn hàng được lưu giữ an toàn theo số điện thoại của bạn.</Text>
-            <AppButton title="Đăng nhập ngay" onPress={() => setTab("profile")} style={styles.emptyCta} />
           </View>
         ) : visibleOrders.length === 0 ? (
           <View style={styles.emptyState}>
@@ -1642,15 +2457,21 @@ export default function App() {
   const renderProfile = () => (
     <ScrollView contentContainerStyle={styles.pageContent} keyboardShouldPersistTaps="handled">
       {profilePage && customer && customerToken ? <>
-        <View style={styles.accountPageHeading}><Pressable style={styles.accountBackButton} onPress={() => { setProfilePage(""); setAccountError(""); setAccountMessage(""); setAddressMessage(""); }}><Text style={styles.accountBack}>‹</Text></Pressable><Text style={styles.accountPageTitle}>{profilePage === "personal" ? "Thông tin tài khoản" : "Địa chỉ nhận hàng"}</Text></View>
-        {profilePage === "personal" ? <View style={styles.infoCard}>
-          <TextInput value={accountName} onChangeText={setAccountName} placeholder="Họ và tên *" style={styles.accountInput} maxLength={150} autoCapitalize="words" />
-          <TextInput value={accountEmail} onChangeText={setAccountEmail} placeholder="Email" style={styles.accountInput} keyboardType="email-address" autoCapitalize="none" />
+        <View style={styles.accountPageHeading}><Pressable style={styles.accountBackButton} onPress={() => { setProfilePage(""); setAccountError(""); setAccountMessage(""); setAddressMessage(""); }}><Text style={styles.accountBack}>‹</Text></Pressable><Text style={styles.accountPageTitle}>{profilePage === "personal" ? "Thông tin tài khoản" : profilePage === "password" ? "Đổi mật khẩu" : "Địa chỉ nhận hàng"}</Text></View>
+        {profilePage === "password" ? <View style={styles.infoCard}>
+          <TextInput value={passwordForm.current} onChangeText={(value) => setPasswordForm((form) => ({ ...form, current: value }))} placeholder="Mật khẩu hiện tại *" style={styles.accountInput} secureTextEntry autoCapitalize="none" />
+          <TextInput value={passwordForm.next} onChangeText={(value) => setPasswordForm((form) => ({ ...form, next: value }))} placeholder="Mật khẩu mới (ít nhất 6 ký tự) *" style={styles.accountInput} secureTextEntry autoCapitalize="none" />
+          <TextInput value={passwordForm.confirm} onChangeText={(value) => setPasswordForm((form) => ({ ...form, confirm: value }))} placeholder="Nhập lại mật khẩu mới *" style={styles.accountInput} secureTextEntry autoCapitalize="none" onSubmitEditing={() => { if (!accountBusy) changeCustomerPassword(); }} />
+          {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
+          <AppButton title={accountBusy ? "Đang đổi mật khẩu..." : "Đổi mật khẩu"} onPress={changeCustomerPassword} disabled={accountBusy} />
+        </View> : profilePage === "personal" ? <View style={styles.infoCard}>
+          <TextInput value={accountName} onChangeText={markAccountEdited(setAccountName)} placeholder="Họ và tên *" style={styles.accountInput} maxLength={150} autoCapitalize="words" />
+          <TextInput value={accountEmail} onChangeText={markAccountEdited(setAccountEmail)} placeholder="Email" style={styles.accountInput} keyboardType="email-address" autoCapitalize="none" />
           {Platform.OS === "web" ? (
             <input
               type="date"
               value={accountDateOfBirth}
-              onChange={(event) => setAccountDateOfBirth(event.target.value)}
+              onChange={(event) => markAccountEdited(setAccountDateOfBirth)(event.target.value)}
               style={styles.webDateInput}
               aria-label="Ngày sinh"
             />
@@ -1661,14 +2482,13 @@ export default function App() {
               </Text>
             </Pressable>
           )}
-          <TextInput value={accountAddress} onChangeText={setAccountAddress} placeholder="Địa chỉ" style={styles.accountInput} />
+          <TextInput value={accountAddress} onChangeText={markAccountEdited(setAccountAddress)} placeholder="Địa chỉ" style={styles.accountInput} />
           <Text style={[styles.accountInput, styles.phoneReadonly]}><Text style={styles.phoneHint}>Số điện thoại *</Text>{"\n"}{customer?.phone}</Text>
           {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
           {accountMessage ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
           <AppButton title={accountBusy ? "Đang lưu..." : "Lưu chỉnh sửa"} onPress={saveAccountName} disabled={accountBusy} />
 
         </View> : <View style={styles.infoCard}>
-          <Pressable style={styles.locationButton} onPress={() => Alert.alert("Lấy vị trí hiện tại", "Tính năng định vị sẽ được bổ sung khi ứng dụng tích hợp quyền truy cập vị trí.")}><Text style={styles.locationButtonText}>◎ Lấy vị trí hiện tại</Text></Pressable>
           <TextInput value={deliveryAddress.city} onChangeText={(city) => setDeliveryAddress((a) => ({ ...a, city }))} placeholder="Tỉnh/Thành phố" style={styles.accountInput} />
           <TextInput value={deliveryAddress.ward} onChangeText={(ward) => setDeliveryAddress((a) => ({ ...a, ward }))} placeholder="Phường/Xã" style={styles.accountInput} />
           <TextInput value={deliveryAddress.street} onChangeText={(street) => setDeliveryAddress((a) => ({ ...a, street }))} placeholder="Số nhà, tên đường" style={styles.accountInput} />
@@ -1698,17 +2518,63 @@ export default function App() {
           <View style={styles.infoCard}><Text style={styles.infoTitle}>Thông tin cá nhân</Text>
             <Pressable style={styles.profileMenuRow} onPress={() => { setAccountName(customer.fullName || ""); setProfilePage("personal"); }}><Text style={styles.profileMenuIcon}>♙</Text><Text style={styles.profileMenuText}>Sửa thông tin cá nhân</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
             <Pressable style={styles.profileMenuRow} onPress={() => { setAddressMessage(""); setProfilePage("address"); }}><Text style={styles.profileMenuIcon}>♧</Text><Text style={styles.profileMenuText}>Địa chỉ nhận hàng</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
+            <Pressable style={styles.profileMenuRow} onPress={() => openVouchers("account")}><Text style={styles.profileMenuIcon}>🎟</Text><Text style={styles.profileMenuText}>Voucher của tôi</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
+            <Pressable style={styles.profileMenuRow} onPress={() => { setAccountError(""); setAccountMessage(""); setPasswordForm({ current: "", next: "", confirm: "" }); setProfilePage("password"); }}><Text style={styles.profileMenuIcon}>🔒</Text><Text style={styles.profileMenuText}>Đổi mật khẩu</Text><Text style={styles.profileMenuArrow}>›</Text></Pressable>
           </View>
           <View style={styles.infoCard}>
             <AppButton title="Đăng xuất" secondary onPress={logoutCustomer} />
           </View>
         </> : <>
-          <View style={styles.infoCard}>
+          <View style={[styles.infoCard, styles.registerInfoCard]}>
             <Text style={styles.inputLabel}>{registerMode ? "TẠO TÀI KHOẢN KHÁCH HÀNG" : "ĐĂNG NHẬP KHÁCH HÀNG"}</Text>
-            {registerMode ? <TextInput value={registerFullName} onChangeText={setRegisterFullName} placeholder="Họ và tên" style={styles.formInput} autoCapitalize="words" /> : null}
-            {registerMode ? <TextInput value={registerPhone} onChangeText={setRegisterPhone} placeholder="Số điện thoại" style={styles.formInput} keyboardType="phone-pad" maxLength={13} autoComplete="tel" /> : null}
-            <TextInput value={loginUsername} onChangeText={setLoginUsername} placeholder="Tên đăng nhập" style={styles.formInput} autoCapitalize="none" autoComplete="username" />
-            <TextInput value={loginPassword} onChangeText={setLoginPassword} placeholder="Mật khẩu" style={styles.formInput} secureTextEntry autoCapitalize="none" autoComplete="password" />
+            {registerMode ? <TextInput value={registerFullName} onChangeText={setRegisterFullName} placeholder="Họ và tên *" style={styles.formInput} autoCapitalize="words" maxLength={150} /> : null}
+            {registerMode ? <TextInput value={registerPhone} onChangeText={(value) => { setRegisterPhone(value); setPhoneAvailability(null); phoneCheckSequence.current += 1; }} onBlur={() => checkRegistrationPhone(registerPhone)} placeholder="Số điện thoại *" style={styles.formInput} keyboardType="phone-pad" maxLength={16} autoComplete="tel" /> : null}
+            {registerMode && phoneAvailability ? <Text style={[styles.phoneAvailability, phoneAvailability.available === false || phoneAvailability.error ? styles.phoneUnavailable : styles.phoneAvailable]}>
+              {phoneAvailability.checking ? "Đang kiểm tra số điện thoại..." : phoneAvailability.error ? "Chưa kiểm tra được. Số điện thoại sẽ được xác minh khi tạo tài khoản." : phoneAvailability.available ? "Số điện thoại có thể đăng ký." : "Số điện thoại này đã được đăng ký."}
+            </Text> : null}
+            {registerMode ? <TextInput value={registerEmail} onChangeText={setRegisterEmail} placeholder="Email" style={styles.formInput} keyboardType="email-address" autoCapitalize="none" maxLength={255} /> : null}
+            {registerMode ? <TextInput value={registerDateOfBirth} onChangeText={setRegisterDateOfBirth} placeholder="Ngày sinh (DD/MM/YYYY)" style={styles.formInput} keyboardType="numbers-and-punctuation" maxLength={10} /> : null}
+            {registerMode ? <TextInput value={registerAddress} onChangeText={setRegisterAddress} placeholder="Địa chỉ" style={[styles.formInput, styles.addressInput]} multiline maxLength={500} /> : null}
+            {!registerMode ? <TextInput
+              value={loginUsername}
+              onChangeText={setLoginUsername}
+              placeholder="Số điện thoại"
+              style={styles.formInput}
+              autoCapitalize="none"
+              autoComplete="tel"
+              keyboardType="phone-pad"
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                if (!accountBusy) loginCustomer();
+              }}
+            /> : null}
+            <TextInput
+              value={loginPassword}
+              onChangeText={setLoginPassword}
+              placeholder="Mật khẩu"
+              style={styles.formInput}
+              secureTextEntry
+              autoCapitalize="none"
+              autoComplete="password"
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                if (accountBusy) return;
+                if (registerMode) registerCustomer();
+                else loginCustomer();
+              }}
+            />
+            {registerMode ? <TextInput
+              value={registerPasswordConfirm}
+              onChangeText={setRegisterPasswordConfirm}
+              placeholder="Nhập lại mật khẩu *"
+              style={styles.formInput}
+              secureTextEntry
+              autoCapitalize="none"
+              returnKeyType="done"
+              onSubmitEditing={() => { if (!accountBusy) registerCustomer(); }}
+            /> : null}
+            {registerMode && registerPasswordConfirm && registerPasswordConfirm !== loginPassword ? <Text style={styles.phoneUnavailable}>Mật khẩu xác nhận chưa khớp.</Text> : null}
+            {accountMessage && !customer ? <Text style={styles.accountMessage}>{accountMessage}</Text> : null}
             {accountError ? <Text style={styles.orderError}>{accountError}</Text> : null}
             <AppButton title={accountBusy ? (registerMode ? "Đang tạo tài khoản..." : "Đang đăng nhập...") : (registerMode ? "Tạo tài khoản" : "Đăng nhập")} onPress={registerMode ? registerCustomer : loginCustomer} disabled={accountBusy} />
             <Pressable onPress={() => { setRegisterMode((mode) => !mode); setAccountError(""); setAccountMessage(""); }}>
@@ -1723,7 +2589,7 @@ export default function App() {
               <Text style={styles.infoTitle}>Chọn ngày sinh</Text>
               <TextInput
                 value={accountDateOfBirth}
-                onChangeText={setAccountDateOfBirth}
+                onChangeText={markAccountEdited(setAccountDateOfBirth)}
                 placeholder="YYYY-MM-DD"
                 style={styles.accountInput}
                 keyboardType="numbers-and-punctuation"
@@ -1742,7 +2608,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor={BHX_GREEN} />
+      <StatusBar barStyle="light-content" />
 
       {/* 1. TOP HEADER PHONG CÁCH BÁCH HÓA XANH (TÁCH 2 TẦNG TRÊN MOBILE ĐẢM BẢO KHÔNG BỊ TRÀN) */}
       <View style={styles.header}>
@@ -1780,7 +2646,7 @@ export default function App() {
           <View style={styles.searchBar}>
             <Pressable
               onPress={() => {
-                setSelectedDrawerCatId(categoryId === "all" ? "all" : categoryId);
+                setSelectedDrawerCatId(categoryId ?? "all");
                 setCategoryModalOpen(true);
               }}
               style={styles.searchCategoryBtn}
@@ -1807,10 +2673,24 @@ export default function App() {
                 <IconClose size={18} color="#64748b" />
               </Pressable>
             )}
+            {tab === "home" && !flashSaleOpen && (
+              <Pressable
+                onPress={() => setAdvancedSearchOpen(true)}
+                style={styles.searchFilterButton}
+                accessibilityRole="button"
+                accessibilityLabel={`Tìm kiếm nâng cao${activeFilterChips.length ? `, đang áp dụng ${activeFilterChips.length} điều kiện` : ""}`}
+              >
+                <IconFilter size={18} color={BHX_GREEN} />
+                <Text style={styles.searchFilterText}>Lọc</Text>
+                {activeFilterChips.length > 0 && (
+                  <View style={styles.searchFilterBadge}><Text style={styles.searchFilterBadgeText}>{activeFilterChips.length}</Text></View>
+                )}
+              </Pressable>
+            )}
           </View>
 
           {/* Lọc sản phẩm theo danh mục */}
-          {tab === "home" && <ScrollView horizontal style={styles.quickTagsScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow} keyboardShouldPersistTaps="handled">
+          {tab === "home" && !flashSaleOpen && <ScrollView horizontal style={styles.quickTagsScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickTagsRow} keyboardShouldPersistTaps="handled">
             {[{ id: "all", name: "Tất cả" }, ...categories].map((category) => (
               <Pressable
                 key={category.id}
@@ -1832,7 +2712,7 @@ export default function App() {
 
       {/* NỘI DUNG MÀN HÌNH CHÍNH */}
       <View style={styles.screen}>
-        {tab === "home" ? renderHome() : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
+        {tab === "home" ? (flashSaleOpen ? renderFlashSale() : renderHome()) : tab === "cart" ? renderCart() : tab === "orders" ? renderOrders() : renderProfile()}
       </View>
 
 
@@ -1844,7 +2724,7 @@ export default function App() {
             { 
               key: "cart", 
               label: "Giỏ hàng", 
-              badge: itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
+              badge: customer && customerToken && itemCount > 0 ? (itemCount > 99 ? "99+" : itemCount) : null,
               icon: (active) => <IconCart size={20} color={active ? BHX_GREEN : "#64748b"} /> 
             },
             { key: "orders", label: "Đơn hàng", icon: (active) => <IconReceipt size={20} color={active ? BHX_GREEN : "#64748b"} active={active} /> },
@@ -1875,6 +2755,16 @@ export default function App() {
       {/* ========================================================================= */}
       {/* Danh mục loại sản phẩm và sản phẩm của cửa hàng. */}
       {/* ========================================================================= */}
+      <AdvancedSearchSheet
+        visible={advancedSearchOpen}
+        onClose={() => setAdvancedSearchOpen(false)}
+        onApply={applyAdvancedSearch}
+        criteria={appliedFilters}
+        categories={categories}
+        searchIndex={searchIndex}
+        keyword={query}
+      />
+
       <CategorySlideModal
         visible={categoryModalOpen}
         onRequestClose={() => selectedProduct ? setSelectedProduct(null) : setCategoryModalOpen(false)}
@@ -1981,7 +2871,7 @@ export default function App() {
                   ) : loadError ? (
                     <View style={styles.bhxEmptySubState}>
                       <Text style={styles.errorText}>{loadError}</Text>
-                      <AppButton title="Thử lại" onPress={loadStore} />
+                      <AppButton title="Thử lại" onPress={() => loadStore()} />
                     </View>
                   ) : drawerProducts.map((product) => (
                     <Pressable
@@ -1996,7 +2886,7 @@ export default function App() {
                       </View>
                       <Text style={styles.drawerProductName} numberOfLines={2}>{product.productName}</Text>
                       <Text style={styles.drawerProductPrice}>{productPriceLabel(product)}</Text>
-                      <ProductStock product={product} style={styles.drawerProductStock} />
+                      <ProductStock product={product} reservedQuantity={cartItemMap[product.id] || 0} style={styles.drawerProductStock} />
                     </Pressable>
                   ))}
 
@@ -2006,6 +2896,9 @@ export default function App() {
                       <Text style={styles.stateText}>{drawerSearchText.trim() ? "Không tìm thấy sản phẩm phù hợp." : "Loại này chưa có sản phẩm."}</Text>
                     </View>
                   )}
+                  {!loading && !loadError && productsHasMore && <View style={styles.drawerLoadMore}>
+                    <AppButton title={productsLoadingMore ? "Đang tải thêm..." : "Load more"} disabled={productsLoadingMore} onPress={() => loadStore(false, productPage + 1, true)} />
+                  </View>}
                 </ScrollView>
               </View>
             </View>
@@ -2037,9 +2930,9 @@ export default function App() {
                 <Text selectable style={styles.successCode}>{completedOrder.orderNumber}</Text>
 
                 {/* Thanh toán MoMo */}
-                {completedOrder.paymentMethod === "momo" && (
+                {completedOrder.paymentMethod === "momo" && completedOrder.paymentStatus !== "paid" && (
                   <View style={styles.paymentBoxMomo}>
-                    <Text style={styles.paymentBoxMomoTitle}>Thanh toán qua Ví MoMo</Text>
+                    <Text style={styles.paymentBoxMomoTitle}>Thanh toán qua Ví MoMo{paymentOptions.simulated ? " (giả lập)" : ""}</Text>
                     <Text style={styles.paymentBoxMomoDesc}>
                       Nhấn nút bên dưới để chuyển tiếp sang Ví MoMo và thanh toán {money(completedOrder.totalAmount)}.
                     </Text>
@@ -2048,7 +2941,29 @@ export default function App() {
                         <Text style={styles.momoActionText}>Mở App MoMo thanh toán ngay  →</Text>
                       </Pressable>
                     ) : (
-                      <Text style={styles.paymentWaitText}>Đang tạo liên kết ví MoMo...</Text>
+                      // The link could not be created: say why and let the customer retry instead of waiting forever.
+                      <>
+                        <Text style={styles.paymentWaitText}>{completedOrder.paymentError || "Chưa tạo được liên kết MoMo."}</Text>
+                        <Pressable
+                          disabled={orderActionBusy}
+                          onPress={() => runExclusive("order-action", async () => {
+                            setOrderActionBusy(true);
+                            try {
+                              const response = await apiFetch(`${API_URL}/storefront/orders/${completedOrder.id}/pay-momo`, { method: "POST", headers: { Authorization: `Bearer ${customerToken}` } });
+                              if (!response.ok) throw new Error(await readError(response));
+                              const result = await response.json();
+                              setCompletedOrder((order) => order ? { ...order, momoPayUrl: result.payUrl, paymentError: null } : order);
+                            } catch (error) {
+                              setCompletedOrder((order) => order ? { ...order, paymentError: error.message || "Vẫn chưa tạo được liên kết MoMo." } : order);
+                            } finally {
+                              setOrderActionBusy(false);
+                            }
+                          })}
+                          style={[styles.momoActionBtn, orderActionBusy && styles.buttonDisabled]}
+                        >
+                          <Text style={styles.momoActionText}>{orderActionBusy ? "Đang tạo liên kết..." : "Thử tạo lại liên kết MoMo"}</Text>
+                        </Pressable>
+                      </>
                     )}
                   </View>
                 )}
@@ -2062,12 +2977,17 @@ export default function App() {
                       <Image source={{ uri: completedOrder.vietQrUrl }} style={styles.vietQrImage} resizeMode="contain" />
                     )}
                     <View style={styles.bankDetailCard}>
-                      <Text style={styles.bankDetailLine}>• Ngân hàng: <Text style={styles.bankBold}>MBBank (Quân Đội)</Text></Text>
-                      <Text style={styles.bankDetailLine}>• Số tài khoản: <Text style={styles.bankBold}>0987654321</Text></Text>
-                      <Text style={styles.bankDetailLine}>• Chủ tài khoản: <Text style={styles.bankBold}>EMART STORE</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Ngân hàng: <Text style={styles.bankBold}>{completedOrder.bankDetails?.bankCode || paymentOptions.bankDetails?.bankCode || "—"}</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Số tài khoản: <Text style={styles.bankBold}>{completedOrder.bankDetails?.accountNumber || paymentOptions.bankDetails?.accountNumber || "—"}</Text></Text>
+                      <Text style={styles.bankDetailLine}>• Chủ tài khoản: <Text style={styles.bankBold}>{completedOrder.bankDetails?.accountName || paymentOptions.bankDetails?.accountName || "—"}</Text></Text>
                       <Text style={styles.bankDetailLine}>• Số tiền: <Text style={styles.bankMoney}>{money(completedOrder.totalAmount)}</Text></Text>
                       <Text style={styles.bankDetailLine}>• Nội dung: <Text style={styles.bankContent}>EMART_{completedOrder.orderNumber}</Text></Text>
                     </View>
+                    {completedOrder.bankSimulatorUrl && completedOrder.paymentStatus !== "paid" && (
+                      <Pressable onPress={() => Linking.openURL(completedOrder.bankSimulatorUrl)} style={styles.momoActionBtn}>
+                        <Text style={styles.momoActionText}>Giả lập chuyển khoản ngân hàng  →</Text>
+                      </Pressable>
+                    )}
                   </View>
                 )}
 
@@ -2088,6 +3008,7 @@ export default function App() {
                 <Text style={styles.inputLabel}>HỌ VÀ TÊN</Text>
                 <TextInput
                   value={checkoutForm.fullName}
+                  editable={!pendingCheckout}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, fullName: value }))}
                   placeholder="Ví dụ: Nguyễn Văn An"
                   style={styles.formInput}
@@ -2098,6 +3019,7 @@ export default function App() {
                 <Text style={styles.inputLabel}>SỐ ĐIỆN THOẠI</Text>
                 <TextInput
                   value={checkoutForm.phone}
+                  editable={!pendingCheckout}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, phone: value }))}
                   placeholder="Ví dụ: 0912345678"
                   style={styles.formInput}
@@ -2105,9 +3027,11 @@ export default function App() {
                   maxLength={13}
                 />
 
-                <Text style={styles.inputLabel}>ĐỊA CHỈ NHẬN HÀNG</Text>
+                <Text style={styles.inputLabel}>ĐỊA CHỈ NHẬN HÀNG (CHỈ CHO ĐƠN NÀY)</Text>
+                <Text style={{ color: TEXT_MUTED, fontSize: 12, marginBottom: 6 }}>Bạn có thể nhập địa chỉ khác. Địa chỉ mặc định đã lưu sẽ không thay đổi.</Text>
                 <TextInput
                   value={checkoutForm.address}
+                  editable={!pendingCheckout}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, address: value }))}
                   placeholder="Số nhà, tên đường, phường/xã, quận/huyện..."
                   style={[styles.formInput, styles.addressInput]}
@@ -2118,6 +3042,7 @@ export default function App() {
                 <Text style={styles.inputLabel}>GHI CHÚ GIAO HÀNG (NẾU CÓ)</Text>
                 <TextInput
                   value={checkoutForm.note}
+                  editable={!pendingCheckout}
                   onChangeText={(value) => setCheckoutForm((form) => ({ ...form, note: value }))}
                   placeholder="Ví dụ: Gọi trước khi đến 15 phút..."
                   style={[styles.formInput, styles.noteInput]}
@@ -2132,9 +3057,10 @@ export default function App() {
                     { key: "cod", label: "Tiền mặt khi nhận hàng (COD)", desc: "Nhận hàng kiểm tra rồi trả tiền mặt" },
                     { key: "momo", label: "Ví điện tử MoMo", desc: "Thanh toán online qua ứng dụng MoMo" },
                     { key: "bank", label: "Chuyển khoản QR ngân hàng", desc: "Quét mã VietQR chuyển khoản siêu tốc" },
-                  ].map((m) => (
+                  ].filter((method) => paymentOptions[method.key]).map((m) => (
                     <Pressable
                       key={m.key}
+                      disabled={Boolean(pendingCheckout)}
                       onPress={() => setPaymentMethod(m.key)}
                       style={[styles.paymentMethodOption, paymentMethod === m.key && styles.paymentMethodOptionActive]}
                     >
@@ -2154,6 +3080,7 @@ export default function App() {
                 {/* ĐIỂM THƯỞNG KHÁCH HÀNG */}
                 {customer && (customer.rewardPoints || 0) > 0 && maxPointsUsable > 0 && (
                   <Pressable
+                    disabled={Boolean(pendingCheckout)}
                     onPress={() => setUseRewardPoints(!useRewardPoints)}
                     style={[styles.rewardPointsCard, useRewardPoints && styles.rewardPointsCardActive]}
                   >
@@ -2203,33 +3130,87 @@ export default function App() {
               <Pressable style={styles.voucherCloseButton} accessibilityRole="button" accessibilityLabel="Quay lại giỏ hàng" onPress={() => setVoucherOpen(false)}>
                 <View style={{ transform: [{ rotate: "180deg" }] }}><IconChevronRight size={24} color="#ee4d2d" /></View>
               </Pressable>
-              <Text style={styles.voucherTitle}>Chọn E-Mart Voucher</Text>
+              <Text style={styles.voucherTitle}>{voucherView === "discover" ? "Siêu Voucher" : (voucherView === "history" ? "Lịch sử voucher" : (voucherContext === "account" ? "Voucher của tôi" : "Chọn E-Mart Voucher"))}</Text>
+              {voucherView === "discover" ? <Pressable onPress={() => openVouchers("account")} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>Kho voucher</Text></Pressable> : voucherContext === "account" && <Pressable onPress={voucherView === "history" ? () => openVouchers("account") : openVoucherHistory} style={styles.voucherHistoryButton}><Text style={styles.voucherHistoryButtonText}>{voucherView === "history" ? "Voucher" : "Lịch sử"}</Text></Pressable>}
             </View>
 
-            <View style={styles.voucherCodeRow}>
+            {voucherView === "available" && voucherContext === "account" && <><View style={styles.voucherCodeRow}>
               <TextInput
                 value={voucherCode}
                 onChangeText={setVoucherCode}
                 placeholder="Nhập mã voucher..."
                 autoCapitalize="characters"
                 style={styles.voucherInput}
+                returnKeyType="search"
+                onSubmitEditing={() => { if (voucherCode.trim()) openVoucherDiscovery(voucherCode.trim()); }}
               />
-              <Pressable disabled={voucherBusy} onPress={() => applyVoucher()} style={[styles.voucherAdd, voucherBusy && styles.buttonDisabled]}>
-                <Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Áp dụng"}</Text>
+              {/* Show the voucher first; the customer then saves it from the result card. */}
+              <Pressable disabled={voucherBusy || !voucherCode.trim()} onPress={() => openVoucherDiscovery(voucherCode.trim())} style={[styles.voucherAdd, (voucherBusy || !voucherCode.trim()) && styles.buttonDisabled]}>
+                <Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Tìm mã"}</Text>
               </Pressable>
             </View>
+            {voucherContext === "account" && <View style={styles.voucherExploreRow}>
+              <Pressable onPress={() => openVoucherDiscovery()} style={styles.voucherExploreButton}><Text style={styles.voucherExploreText}>⌕ Tìm thêm voucher</Text></Pressable>
+            </View>}</>}
 
             <ScrollView style={styles.voucherList} contentContainerStyle={styles.voucherListContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {voucherView === "discover" ? <>
+                <View style={styles.voucherDiscoverHero}>
+                  <Text style={styles.voucherDiscoverHeroSmall}>E-MART</Text>
+                  <Text style={styles.voucherDiscoverHeroTitle}>SIÊU VOUCHER</Text>
+                  <Text style={styles.voucherDiscoverHeroText}>Ưu đãi đang hoạt động tại E-Mart</Text>
+                </View>
+                <View style={styles.voucherDiscoverGuide}>
+                  <Text style={styles.voucherDiscoverGuideText}>• Số lượng có hạn, ưu tiên khách hàng nhận mã sớm.</Text>
+                  <Text style={styles.voucherDiscoverGuideText}>• Voucher Public có thể lưu vào kho; ưu đãi sự kiện/sản phẩm áp dụng theo điều kiện.</Text>
+                </View>
+                {/* Typing filters the Public list; "Tìm" asks the server, which also reveals Only-code vouchers. */}
+                <View style={styles.voucherCodeRow}>
+                  <TextInput
+                    value={voucherSearch}
+                    onChangeText={(value) => { setVoucherSearch(value); setCodeResult(null); setVoucherMessage(""); }}
+                    placeholder="Tìm voucher hoặc nhập mã..."
+                    autoCapitalize="characters"
+                    returnKeyType="search"
+                    onSubmitEditing={() => lookupVoucherCode()}
+                    style={styles.voucherInput}
+                  />
+                  <Pressable disabled={voucherBusy || !voucherSearch.trim()} onPress={() => lookupVoucherCode()} style={[styles.voucherAdd, (voucherBusy || !voucherSearch.trim()) && styles.buttonDisabled]}>
+                    <Text style={styles.voucherAddText}>{voucherBusy ? "..." : "Tìm"}</Text>
+                  </Pressable>
+                </View>
+                {codeResult && <View style={styles.voucherDiscoverGrid}>
+                  <Text style={styles.voucherDiscoverGuideText}>Kết quả cho mã {codeResult.voucherCode}{codeResult.visibility === "only-code" ? " (voucher chỉ dành cho người có mã)" : ""}</Text>
+                  {renderVoucherDiscoverCard(codeResult, true)}
+                </View>}
+                {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color="#ee4d2d" /><Text style={styles.stateText}>Đang tải voucher...</Text></View> : <View style={styles.voucherDiscoverGrid}>
+                  {filteredDiscoverVouchers.filter((voucher) => voucher.id !== codeResult?.id).map((voucher) => renderVoucherDiscoverCard(voucher, false))}
+                </View>}
+                {!vouchersLoading && !filteredDiscoverVouchers.length && !codeResult && <View style={styles.voucherDiscoverEmpty}>
+                  <Text style={styles.voucherDiscoverEmptyTitle}>{voucherSearch.trim() ? "Không có voucher phù hợp trong danh sách" : "Hiện chưa có ưu đãi đang hoạt động"}</Text>
+                  <Text style={styles.voucherDiscoverEmptyText}>Nếu bạn có mã riêng, nhập đúng mã rồi bấm Tìm để xem và lưu voucher.</Text>
+                </View>}
+                {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
+              </> : voucherView === "history" ? <>
+                <View style={styles.voucherHistoryTabs}>
+                  {[['used', 'Voucher đã dùng'], ['expired', 'Voucher hết hạn']].map(([key, label]) => <Pressable key={key} onPress={() => setVoucherHistoryTab(key)} style={[styles.voucherHistoryTab, voucherHistoryTab === key && styles.voucherHistoryTabActive]}><Text style={[styles.voucherHistoryTabText, voucherHistoryTab === key && styles.voucherHistoryTabTextActive]}>{label}</Text></Pressable>)}
+                </View>
+                {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color={BHX_GREEN} /></View> : visibleVoucherHistory.map((item) => <View key={item.id} style={styles.voucherHistoryCard}>
+                  <View style={styles.voucherHistoryIcon}><Text style={styles.voucherHistoryIconText}>%</Text></View>
+                  <View style={{ flex: 1 }}><Text style={styles.voucherName}>{item.name}</Text>{item.walletStatus === "used" ? <><Text style={styles.voucherMinimum}>Đơn hàng {item.orderNumber}</Text><Text style={styles.voucherExpiry}>Đã dùng ngày {new Date(item.usedAt).toLocaleDateString("vi-VN")}</Text></> : <Text style={styles.voucherExpiry}>Hết hạn ngày {new Date(item.endDate).toLocaleDateString("vi-VN")}</Text>}<Text style={styles.voucherUse}>Mã: {item.voucherCode}</Text></View>
+                </View>)}
+                {!vouchersLoading && !visibleVoucherHistory.length && <View style={styles.centerState}><Text style={styles.stateText}>Chưa có voucher trong mục này.</Text></View>}
+              </> : <>
               {vouchersLoading ? <View style={styles.centerState}><ActivityIndicator color="#ee4d2d" /><Text style={styles.stateText}>Đang tải voucher...</Text></View> : [false, true].map((unavailable) => {
-                const vouchers = voucherList.filter((voucher) => !!eventPromotionIssue(voucher, subtotal) === unavailable);
+                const vouchers = voucherList.filter((voucher) => !!eventPromotionIssue(voucher, voucherContext === "account" ? null : subtotal) === unavailable);
                 if (unavailable && !vouchers.length) return null;
                 return <View key={String(unavailable)} style={styles.voucherSection}>
                 <Text style={styles.voucherSubheading}>{unavailable ? "Voucher không khả dụng" : "Mã giảm giá"}</Text>
                 {!unavailable && !vouchers.length && voucherList.length > 0 && <Text style={styles.voucherEmptyText}>Chưa có mã phù hợp với đơn hàng này.</Text>}
                 {vouchers.map((voucher) => {
-                const issue = eventPromotionIssue(voucher, subtotal);
+                const issue = eventPromotionIssue(voucher, voucherContext === "account" ? null : subtotal);
                 const disabled = voucherBusy || !!issue;
-                const selected = draftVoucher?.eventPromotionId === voucher.id;
+                const selected = voucher.type === "voucher" ? draftVoucher?.promotion?.id === voucher.id : draftVoucher?.eventPromotionId === voucher.id;
                 const usagePercent = Number(voucher.usageLimit) > 0
                   ? Math.min(100, Math.max(0, Math.round((Number(voucher.usedCount) || 0) / Number(voucher.usageLimit) * 100)))
                   : null;
@@ -2247,13 +3228,13 @@ export default function App() {
                       <Text style={styles.voucherMinimum}>Đơn tối thiểu {money(voucher.minOrderAmount || 0)}</Text>
                       <Text style={styles.voucherPromotionName} numberOfLines={2}>{voucher.name || "Ưu đãi sự kiện"}</Text>
                       {voucher.endDate && <Text style={styles.voucherExpiry}>Hạn {new Date(voucher.endDate).toLocaleDateString("vi-VN")}</Text>}
-                      <Text style={styles.voucherUsage}>{usagePercent !== null ? `Đã dùng ${usagePercent}%` : `Đã dùng ${voucher.usedCount || 0} lượt · Không giới hạn`}</Text>
+                      <Text style={styles.voucherUsage}>{voucher.type === "voucher" ? `Mã: ${voucher.voucherCode} · Dùng 1 lần` : usagePercent !== null ? `Đã dùng ${usagePercent}%` : `Đã dùng ${voucher.usedCount || 0} lượt · Không giới hạn`}</Text>
                     </View>
-                    <Pressable disabled={disabled} accessibilityRole="radio" accessibilityLabel={`Chọn ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled, checked: selected }} onPress={() => { if (selected) { setDraftVoucher(null); setVoucherMessage(""); } else { applyVoucher("", voucher.id); } }} style={styles.voucherSelectTarget}>
+                    {voucherContext === "account" ? <View style={styles.voucherSaveLater}><Text style={styles.voucherSaveLaterText}>Dùng sau</Text></View> : <Pressable disabled={disabled} accessibilityRole="radio" accessibilityLabel={`Chọn ${voucher.name || "ưu đãi sự kiện"}`} accessibilityState={{ disabled, checked: selected }} onPress={() => { if (selected) { setDraftVoucher(null); setVoucherMessage(""); } else { applyVoucher(voucher.type === "voucher" ? voucher.voucherCode : "", voucher.type === "event" ? voucher.id : null); } }} style={styles.voucherSelectTarget}>
                       <View style={[styles.voucherRadio, selected && styles.voucherRadioSelected, !!issue && styles.voucherRadioUnavailable]}>
                         {selected && <Text style={styles.voucherRadioCheck}>✓</Text>}
                       </View>
-                    </Pressable>
+                    </Pressable>}
                   </View>
                   {!!issue && <Text style={styles.voucherUnavailableText}>{issue}</Text>}
                 </View>
@@ -2261,16 +3242,17 @@ export default function App() {
                 })}</View>;
               })}
               {!vouchersLoading && !voucherList.length && !voucherMessage && (
-                <View style={styles.centerState}><Text style={styles.stateText}>Hiện chưa có ưu đãi sự kiện. Nếu có voucher, bạn có thể nhập mã ở trên.</Text></View>
+                <View style={styles.centerState}><Text style={styles.stateText}>Kho chưa có voucher. Vào trang Nhận voucher hoặc nhập mã để nhận.</Text></View>
               )}
               {voucherMessage ? <Text style={styles.voucherMessage}>{voucherMessage}</Text> : null}
+              </>}
             </ScrollView>
 
-            <View style={styles.voucherFooter}>
+            {voucherContext === "checkout" && voucherView === "available" && <View style={styles.voucherFooter}>
               <Text style={styles.voucherFooterHint}>{draftVoucher ? "1 voucher đã được chọn." : "Chưa chọn voucher."}</Text>
               {draftVoucher && <Text style={styles.voucherFooterSaving}>Giảm <Text style={styles.voucherSavingAmount}>-{money(draftVoucher.discountAmount)}</Text></Text>}
               <AppButton title={voucherBusy ? "Đang kiểm tra..." : "Đồng ý"} disabled={voucherBusy} style={styles.voucherConfirm} onPress={() => { setAppliedVoucher(draftVoucher); setVoucherOpen(false); }} />
-            </View>
+            </View>}
           </View>
         </View>
       </Modal>
@@ -2280,7 +3262,8 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  homeProductRow: { justifyContent: "space-between", marginBottom: 10 },
+  // Keep incomplete rows aligned with the same fixed column positions as full rows.
+  homeProductRow: { justifyContent: "flex-start", columnGap: 10, marginBottom: 10 },
   flyingProductOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 100, elevation: 100 },
   flyingProduct: { position: "absolute", top: 0, left: 0, width: 52, height: 52, borderRadius: 26, backgroundColor: "#fff", borderWidth: 2, borderColor: BHX_GREEN, overflow: "hidden" },
   flyingProductImage: { width: "100%", height: "100%" },
@@ -2295,8 +3278,9 @@ const styles = StyleSheet.create({
   bhxHeaderCircleBtn: { alignItems: "center", justifyContent: "center", gap: 4, minHeight: 48, minWidth: 44, paddingHorizontal: 2 },
   bhxHeaderBtnLabel: { color: "#fff", fontSize: 11, fontWeight: "700", textAlign: "center" },
   bhxModalSearchBox: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8, minHeight: 42, backgroundColor: "#fff", borderRadius: 8, paddingHorizontal: 10 },
-  bhxModalSearchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 12, paddingVertical: 8 },
+  bhxModalSearchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 12, paddingVertical: 8, outlineStyle: "none" },
   drawerBody: { flex: 1, minHeight: 0, flexDirection: "row" },
+  drawerLoadMore: { width: "100%", paddingHorizontal: 12, paddingVertical: 16 },
   drawerSidebarWrapper: { backgroundColor: "#f1f5f9", flexShrink: 0 },
   drawerSidebar: { flex: 1 },
   bhxSidebarItem: { alignItems: "center", justifyContent: "center", minHeight: 88, paddingHorizontal: 6, paddingVertical: 10, gap: 5, borderBottomWidth: 1, borderBottomColor: BORDER_COLOR },
@@ -2362,7 +3346,7 @@ const styles = StyleSheet.create({
   voucherUseText: { color: "#fff", fontSize: 11, fontWeight: "800" },
   header: { backgroundColor: BHX_GREEN, paddingHorizontal: 14, paddingTop: 7, paddingBottom: 10, flexShrink: 0 },
   headerResponsiveInner: { width: "100%", maxWidth: 1200, alignSelf: "center" },
-  locationBar: { backgroundColor: "#fff", borderRadius: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingHorizontal: 12, paddingVertical: 10 },
+  locationBar: { width: "100%", maxWidth: 760, alignSelf: "center", backgroundColor: "#fff", borderRadius: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingHorizontal: 12, paddingVertical: 7 },
   locationLeft: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 4 },
   locationLabel: { color: TEXT_DARK, fontSize: 11 },
   locationAddress: { flex: 1, color: TEXT_DARK, fontSize: 11, fontWeight: "700" },
@@ -2396,9 +3380,13 @@ const styles = StyleSheet.create({
   cartBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
   searchBar: { height: 44, backgroundColor: "#f4f6f2", borderRadius: 11, marginTop: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center" },
   searchIcon: { color: "#7f8a81", fontSize: 24, marginRight: 7 },
-  searchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 13, paddingVertical: 0 },
+  searchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 13, paddingVertical: 0, outlineStyle: "none" },
   searchClearButton: { width: 36, height: 44, alignItems: "center", justifyContent: "center" },
   searchCategoryBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", marginRight: 8 },
+  searchFilterButton: { height: 36, flexDirection: "row", alignItems: "center", gap: 4, paddingLeft: 10, marginLeft: 4, borderLeftWidth: 1, borderLeftColor: "#d9e2dc" },
+  searchFilterText: { color: BHX_GREEN, fontSize: 12, fontWeight: "700" },
+  searchFilterBadge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, backgroundColor: BHX_RED, alignItems: "center", justifyContent: "center" },
+  searchFilterBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
   promises: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: 9, gap: 9 },
   promiseText: { color: "#708077", fontSize: 10, fontWeight: "600" },
   promiseDot: { color: "#b6c0b8" },
@@ -2415,6 +3403,32 @@ const styles = StyleSheet.create({
   bannerDots: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 12 },
   bannerDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#ffffff66" },
   bannerDotActive: { width: 20, backgroundColor: BHX_YELLOW },
+  flashHomeSection: { marginTop: 16, backgroundColor: "#fff", borderRadius: 12, paddingVertical: 14 },
+  flashHomeHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginBottom: 12 },
+  flashHomeTitle: { color: "#d32f2f", fontSize: 19, fontWeight: "900" },
+  flashCountdownRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 7 },
+  flashEndingText: { color: TEXT_MUTED, fontSize: 10, marginRight: 3 },
+  flashTimeGroup: { alignItems: "center", gap: 2 },
+  flashTimeBox: { minWidth: 27, height: 27, borderRadius: 4, backgroundColor: "#c83232", alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
+  flashTimeText: { color: "#fff", fontSize: 11, fontWeight: "900" },
+  flashTimeLabel: { color: TEXT_MUTED, fontSize: 8, fontWeight: "600" },
+  flashShopAllButton: { borderWidth: 1, borderColor: BHX_ORANGE, borderRadius: 5, paddingHorizontal: 10, paddingVertical: 9 },
+  flashShopAllText: { color: BHX_ORANGE, fontSize: 10, fontWeight: "800" },
+  flashProductRow: { paddingHorizontal: 12, gap: 10 },
+  flashProductCard: { width: 145, backgroundColor: "#fff" },
+  flashProductImageBox: { height: 130, backgroundColor: "#f7f8f7", borderRadius: 7, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  flashProductName: { color: TEXT_DARK, fontSize: 11, lineHeight: 16, minHeight: 32, marginTop: 7 },
+  flashProductPrice: { color: BHX_ORANGE, fontSize: 14, fontWeight: "900", marginTop: 4 },
+  flashOldPriceRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 3 },
+  flashOriginalPrice: { color: "#9aa1a8", fontSize: 10, textDecorationLine: "line-through" },
+  flashDiscountBadge: { color: "#fff", backgroundColor: "#d33b35", borderRadius: 3, overflow: "hidden", paddingHorizontal: 4, fontSize: 9, fontWeight: "800" },
+  flashPageHeader: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#fff", borderRadius: 12, padding: 12, marginBottom: 14 },
+  flashBackButton: { width: 38, height: 42, alignItems: "center", justifyContent: "center" },
+  flashBackText: { color: BHX_ORANGE, fontSize: 36, lineHeight: 39 },
+  flashPageTitle: { color: TEXT_DARK, fontSize: 19, fontWeight: "900" },
+  flashPageSubtitle: { color: TEXT_MUTED, fontSize: 10, marginTop: 3 },
+  loadMoreFooter: { paddingVertical: 18, alignItems: "center" },
+  loadMoreButton: { width: "100%", maxWidth: 360 },
   trustBar: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 10, paddingVertical: 12, marginTop: 10 },
   trustItem: { flex: 1, minWidth: 0, alignItems: "center", gap: 5, paddingHorizontal: 3 },
   trustLabel: { color: TEXT_MUTED, fontSize: 9, textAlign: "center" },
@@ -2428,6 +3442,13 @@ const styles = StyleSheet.create({
   sortPillActive: { backgroundColor: BHX_GREEN, borderColor: BHX_GREEN },
   sortPillText: { color: TEXT_MUTED, fontSize: 10 },
   sortPillTextActive: { color: "#fff", fontWeight: "700" },
+  advancedFilterPill: { borderColor: BHX_GREEN },
+  advancedFilterPillActive: { backgroundColor: "#e7f5ee" },
+  advancedFilterPillText: { color: BHX_GREEN, fontSize: 10, fontWeight: "700" },
+  activeFilterChip: { flexDirection: "row", alignItems: "center", gap: 4, maxWidth: 180, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 16, backgroundColor: "#e7f5ee", borderWidth: 1, borderColor: "#b7e0c9" },
+  activeFilterChipText: { color: BHX_GREEN, fontSize: 10, fontWeight: "600", flexShrink: 1 },
+  clearFiltersButton: { justifyContent: "center", paddingHorizontal: 6, paddingVertical: 7 },
+  clearFiltersText: { color: BHX_RED, fontSize: 10, fontWeight: "700", textDecorationLine: "underline" },
   scrollContent: { padding: 16, paddingBottom: 20 },
   hero: { minHeight: 176, borderRadius: 18, backgroundColor: "#e8f2e5", padding: 19, overflow: "hidden", justifyContent: "center" },
   heroKicker: { color: "#57936e", fontSize: 9, fontWeight: "900", letterSpacing: 1.1, marginBottom: 8 },
@@ -2482,6 +3503,12 @@ const styles = StyleSheet.create({
   emptyEmoji: { fontSize: 51, marginBottom: 9 },
   emptyTitle: { color: TEXT_DARK, fontSize: 16, fontWeight: "900", textAlign: "center" },
   emptyCta: { marginTop: 18, alignSelf: "stretch" },
+  guestRestrictedState: { flex: 1, minHeight: 400, alignItems: "center", justifyContent: "center", paddingHorizontal: 24, paddingVertical: 48, backgroundColor: "#f4f4f4" },
+  guestRestrictedIllustration: { width: 142, height: 142, borderRadius: 71, alignItems: "center", justifyContent: "center", marginBottom: 28, backgroundColor: "#e7f4ec" },
+  guestRestrictedTitle: { color: "#4b5563", fontSize: 22, lineHeight: 30, fontWeight: "600", textAlign: "center" },
+  guestRestrictedActions: { width: "100%", maxWidth: 360, marginTop: 24 },
+  guestRestrictedButton: { width: "100%", minHeight: 52, borderRadius: 4 },
+  guestRestrictedHomeButton: { borderWidth: 1, borderColor: BHX_GREEN, backgroundColor: "transparent" },
   errorCard: { backgroundColor: "#fff", borderRadius: 13, padding: 17, borderWidth: 1, borderColor: "#f0dfda" },
   errorTitle: { color: "#a3443c", fontSize: 14, fontWeight: "900" },
   errorText: { color: "#785f5b", fontSize: 11, lineHeight: 17, marginTop: 6 },
@@ -2597,6 +3624,50 @@ const styles = StyleSheet.create({
   voucherInput: { flex: 1, minHeight: 48, backgroundColor: "#fff", borderColor: "#dce3e9", borderWidth: 1, borderRadius: 10, paddingHorizontal: 13, color: TEXT_DARK, fontSize: 14 },
   voucherAdd: { width: 86, borderRadius: 6, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center" },
   voucherAddText: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  voucherHistoryButton: { paddingHorizontal: 8, paddingVertical: 10 },
+  voucherHistoryButtonText: { color: "#ee4d2d", fontSize: 13, fontWeight: "700" },
+  voucherExploreRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, backgroundColor: "#fff", paddingHorizontal: 12, paddingBottom: 12 },
+  voucherExploreButton: { width: "100%", minHeight: 42, borderWidth: 1, borderColor: "#f1c2b7", borderRadius: 7, alignItems: "center", justifyContent: "center" },
+  voucherExploreText: { color: "#ee4d2d", fontSize: 13, fontWeight: "700" },
+  voucherDiscoverHero: { margin: 12, minHeight: 118, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 18, justifyContent: "center", backgroundColor: "#f4512a", overflow: "hidden" },
+  voucherDiscoverHeroSmall: { color: "#fff2d8", fontSize: 11, fontWeight: "800", letterSpacing: 2 },
+  voucherDiscoverHeroTitle: { color: "#fff", fontSize: 27, lineHeight: 33, fontWeight: "900", letterSpacing: 0.5 },
+  voucherDiscoverHeroText: { color: "#fff7ed", fontSize: 12, marginTop: 4 },
+  voucherDiscoverGuide: { paddingHorizontal: 20, paddingTop: 7, paddingBottom: 17, gap: 8 },
+  voucherDiscoverEmpty: { alignItems: "center", justifyContent: "center", paddingHorizontal: 24, paddingTop: 26, paddingBottom: 36, gap: 9 },
+  voucherDiscoverEmptyTitle: { color: TEXT_DARK, fontSize: 14, fontWeight: "800", textAlign: "center" },
+  voucherDiscoverEmptyText: { maxWidth: 360, color: TEXT_MUTED, fontSize: 12, lineHeight: 18, textAlign: "center" },
+  voucherDiscoverEmptyButton: { marginTop: 5, minHeight: 40, borderRadius: 8, backgroundColor: "#ee4d2d", paddingHorizontal: 16, alignItems: "center", justifyContent: "center" },
+  voucherDiscoverEmptyButtonText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  voucherDiscoverGuideText: { color: "#344054", fontSize: 13, lineHeight: 20 },
+  voucherDiscoverGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, paddingHorizontal: 12, paddingBottom: 18 },
+  voucherDiscoverCard: { width: "48.5%", minHeight: 214, flexDirection: "row", backgroundColor: "#fff", borderWidth: 1, borderColor: "#e7e7e7", borderRadius: 10, overflow: "hidden", elevation: 1, shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 3 },
+  voucherDiscoverBadge: { width: 72, paddingHorizontal: 5, paddingVertical: 14, backgroundColor: "#f4512a", alignItems: "center", justifyContent: "center", gap: 7 },
+  voucherDiscoverBadgeIcon: { color: "#ffe084", fontSize: 24, fontWeight: "900" },
+  voucherDiscoverBadgeValue: { color: "#fff", fontSize: 11, textAlign: "center", fontWeight: "900", lineHeight: 15 },
+  voucherDiscoverBadgeBrand: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.7 },
+  voucherDiscoverInfo: { flex: 1, minWidth: 0, paddingHorizontal: 9, paddingVertical: 12, justifyContent: "center" },
+  voucherDiscoverName: { color: "#1d2939", fontSize: 16, lineHeight: 20, fontWeight: "800" },
+  voucherDiscoverDetail: { color: "#475467", fontSize: 10, lineHeight: 15, marginTop: 2 },
+  voucherDiscoverSave: { marginTop: 10, minHeight: 31, borderRadius: 5, alignItems: "center", justifyContent: "center", backgroundColor: "#f4512a" },
+  voucherDiscoverSaveDisabled: { backgroundColor: "#d0d5dd" },
+  voucherDiscoverSaveText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  voucherDiscoverSaveTextDisabled: { color: "#667085" },
+  voucherDiscoverConditions: { color: "#447bc3", fontSize: 10, textAlign: "center", marginTop: 5, fontWeight: "700" },
+  voucherFilterChip: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 16, backgroundColor: "#f2f3f5" },
+  voucherFilterChipActive: { backgroundColor: "#ee4d2d" },
+  voucherFilterText: { color: TEXT_MUTED, fontSize: 11 },
+  voucherFilterTextActive: { color: "#fff", fontWeight: "700" },
+  voucherHistoryTabs: { flexDirection: "row", backgroundColor: "#fff", marginBottom: 10 },
+  voucherHistoryTab: { flex: 1, alignItems: "center", paddingVertical: 14, borderBottomWidth: 2, borderBottomColor: "transparent" },
+  voucherHistoryTabActive: { borderBottomColor: "#ee4d2d" },
+  voucherHistoryTabText: { color: TEXT_MUTED, fontSize: 13 },
+  voucherHistoryTabTextActive: { color: "#ee4d2d", fontWeight: "800" },
+  voucherHistoryCard: { flexDirection: "row", gap: 12, marginHorizontal: 12, marginBottom: 10, padding: 14, backgroundColor: "#fff", borderRadius: 8 },
+  voucherHistoryIcon: { width: 70, minHeight: 86, backgroundColor: "#f6a89b", alignItems: "center", justifyContent: "center" },
+  voucherHistoryIconText: { color: "#fff", fontSize: 29, fontWeight: "900" },
+  voucherSaveLater: { width: 66, alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
+  voucherSaveLaterText: { color: "#ee4d2d", borderWidth: 1, borderColor: "#ee4d2d", borderRadius: 4, paddingHorizontal: 7, paddingVertical: 7, fontSize: 11, textAlign: "center" },
   voucherSubheading: { color: "#222", fontSize: 17, fontWeight: "700", marginBottom: 18 },
   voucherList: { flex: 1 },
   voucherListContent: { paddingBottom: 12 },
@@ -2646,8 +3717,6 @@ const styles = StyleSheet.create({
   phoneHint: { color: "#98a0ac", fontSize: 12 },
   deleteHint: { color: "#293443", fontSize: 14, lineHeight: 21, textAlign: "center", marginTop: 22 },
   deleteLink: { color: "#c44343", textDecorationLine: "underline", fontSize: 16, textAlign: "center", marginTop: 12, marginBottom: 5 },
-  locationButton: { minHeight: 48, borderWidth: 1, borderColor: "#e1e5e1", borderRadius: 10, alignItems: "center", justifyContent: "center", marginBottom: 15 },
-  locationButtonText: { color: BHX_GREEN, fontSize: 16, fontWeight: "800" },
   receiverLine: { color: "#293443", fontSize: 15, marginTop: 5, marginBottom: 10 },
   receiverPhone: { fontWeight: "900" },
   receiverCheck: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 9 },
@@ -2704,11 +3773,15 @@ const styles = StyleSheet.create({
   checkoutContent: { paddingBottom: 10 },
   checkoutTitle: { color: TEXT_DARK, fontSize: 21, fontWeight: "900", marginTop: 4 },
   checkoutDescription: { color: TEXT_MUTED, fontSize: 11, marginTop: 5, marginBottom: 14 },
-  inputLabel: { color: "#536257", fontSize: 9, fontWeight: "900", letterSpacing: 0.7, marginTop: 12, marginBottom: 6 },
-  formInput: { minHeight: 43, backgroundColor: "#fbfcfa", borderWidth: 1, borderColor: "#dfe7df", borderRadius: 9, paddingHorizontal: 11, color: TEXT_DARK, fontSize: 12 },
+  registerInfoCard: { width: "100%", maxWidth: 720, alignSelf: "center", padding: 24, marginTop: 10 },
+  inputLabel: { color: "#536257", fontSize: 10, fontWeight: "900", letterSpacing: 0.8, marginTop: 2, marginBottom: 14 },
+  formInput: { minHeight: 48, marginBottom: 10, backgroundColor: "#fbfcfa", borderWidth: 1, borderColor: "#dfe7df", borderRadius: 10, paddingHorizontal: 14, color: TEXT_DARK, fontSize: 14 },
   addressInput: { minHeight: 62, textAlignVertical: "top", paddingTop: 10 },
   noteInput: { minHeight: 48, textAlignVertical: "top", paddingTop: 9 },
   orderError: { color: "#a33e36", fontSize: 11, backgroundColor: "#fff1ef", borderRadius: 8, padding: 10, marginTop: 10 },
+  phoneAvailability: { fontSize: 11, paddingHorizontal: 9, paddingTop: 0, paddingBottom: 9, marginTop: -6 },
+  phoneAvailable: { color: BHX_GREEN },
+  phoneUnavailable: { color: "#a33e36" },
   accountMessage: { color: BHX_GREEN, fontSize: 11, marginTop: 10, textAlign: "center" },
   accountLink: { color: BHX_GREEN, fontSize: 13, fontWeight: "700", textAlign: "center", marginTop: 14 },
   webDateInput: { width: "100%", minHeight: 53, borderWidth: 1, borderColor: "#dce3e9", borderRadius: 10, paddingLeft: 14, paddingRight: 14, color: TEXT_DARK, fontSize: 16, marginBottom: 12, backgroundColor: "#fff" },

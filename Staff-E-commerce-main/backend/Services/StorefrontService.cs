@@ -47,10 +47,9 @@ public sealed class StorefrontService(
     }
 
     /// <summary>
-    /// The whole storefront catalogue is built once and kept in RAM. List, page, flash sale, detail and the app's
-    /// search all reuse this one list instead of querying SQL per request. Any write request (new product, order,
-    /// stock adjustment, payment...) clears it through ReadCacheInvalidationFilter, so stock and new products show
-    /// up on the next read; the short TTL covers promotions that start or end by the clock.
+    /// The storefront catalogue (names, images, prices, promotions) is built once and kept in RAM. Every committed
+    /// write evicts it (CacheInvalidationSignal); the short TTL covers promotions that start or end by the clock.
+    /// Stock is NOT trusted from this copy: every public read overlays live stock from SQL (see WithLiveStock).
     /// </summary>
     private async Task<IReadOnlyList<StorefrontProductDTO>> GetCatalogAsync()
     {
@@ -67,13 +66,14 @@ public sealed class StorefrontService(
         return items;
     }
 
-    public async Task<List<StorefrontProductDTO>> GetAvailableProductsAsync() => (await GetCatalogAsync()).ToList();
+    public async Task<List<StorefrontProductDTO>> GetAvailableProductsAsync() =>
+        WithLiveStock(await GetCatalogAsync(), await repository.GetLiveStockAsync());
 
     public async Task<StorefrontProductPageDTO> GetAvailableProductsPageAsync(int page, int pageSize, bool discountedOnly)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
-        IEnumerable<StorefrontProductDTO> catalog = await GetCatalogAsync();
+        IEnumerable<StorefrontProductDTO> catalog = WithLiveStock(await GetCatalogAsync(), await repository.GetLiveStockAsync());
         if (discountedOnly) catalog = catalog.Where(product => product.DiscountAmount > 0 && product.StockQuantity > 0);
         var filtered = catalog as IReadOnlyCollection<StorefrontProductDTO> ?? catalog.ToList();
         return new StorefrontProductPageDTO
@@ -85,8 +85,40 @@ public sealed class StorefrontService(
         };
     }
 
-    public async Task<StorefrontProductDTO?> GetAvailableProductAsync(int productId) =>
-        (await GetCatalogAsync()).FirstOrDefault(product => product.Id == productId);
+    public async Task<StorefrontProductDTO?> GetAvailableProductAsync(int productId)
+    {
+        var product = (await GetCatalogAsync()).FirstOrDefault(item => item.Id == productId);
+        return product == null ? null : WithLiveStock([product], await repository.GetLiveStockAsync(productId)).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Copies the cached products with the live stock level (cached objects are shared, so they are never edited).
+    /// Products hidden since the catalogue was cached are dropped; in-stock items stay first.
+    /// </summary>
+    private static List<StorefrontProductDTO> WithLiveStock(
+        IEnumerable<StorefrontProductDTO> products, IReadOnlyDictionary<int, int> stock) =>
+        products.Where(product => stock.ContainsKey(product.Id))
+            .Select(product => new StorefrontProductDTO
+            {
+                Id = product.Id,
+                ProductName = product.ProductName,
+                Description = product.Description,
+                CategoryId = product.CategoryId,
+                CategoryName = product.CategoryName,
+                Price = product.Price,
+                OriginalPrice = product.OriginalPrice,
+                UnitName = product.UnitName,
+                StockQuantity = Math.Max(0, stock[product.Id]),
+                DiscountAmount = product.DiscountAmount,
+                DiscountPercent = product.DiscountPercent,
+                PromotionName = product.PromotionName,
+                PromotionEndsAt = product.PromotionEndsAt,
+                ImageUrl = product.ImageUrl,
+                SoldCount = product.SoldCount,
+                IsBestSeller = product.IsBestSeller
+            })
+            .OrderBy(product => product.StockQuantity > 0 ? 0 : 1) // stable: keeps the catalogue order otherwise
+            .ToList();
 
     private async Task<List<StorefrontProductDTO>> MapProductsAsync(List<backend.Models.Product> entities)
     {

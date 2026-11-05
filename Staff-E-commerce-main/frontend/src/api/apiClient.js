@@ -1,5 +1,6 @@
 // src/api/apiClient.js
 import { trackRequestStart, trackRequestEnd } from "../utils/requestTracker";
+import { lockTriggeringControl } from "../utils/actionLock";
 
 // The backend runs on port 5099 of the same machine that serves this page, so opening the admin site from
 // another computer on the LAN (http://192.168.x.x:5173) still reaches the API. VITE_API_URL overrides it.
@@ -37,12 +38,61 @@ function setCurrentUserId(id) {
   }
 }
 
+/** ---------- Auth token change notifications ---------- */
+const tokenListeners = new Set();
+let storageListenerAttached = false;
+
+function notifyTokenChange() {
+  // Deferred: getAuthToken() may clear an expired token while a component is rendering.
+  queueMicrotask(() => tokenListeners.forEach((listener) => {
+    try { listener(cachedAuthToken); } catch (error) { console.error("auth token listener error", error); }
+  }));
+}
+
+/** Calls `listener(token)` whenever the token is set, renewed or cleared (also from another browser tab). */
+export function subscribeAuthToken(listener) {
+  tokenListeners.add(listener);
+  if (!storageListenerAttached && typeof window !== "undefined") {
+    storageListenerAttached = true;
+    window.addEventListener("storage", (event) => {
+      if (event.key !== AUTH_TOKEN_KEY) return;
+      cachedAuthToken = event.newValue || null;
+      notifyTokenChange();
+    });
+  }
+  return () => tokenListeners.delete(listener);
+}
+
+/** Expiry time of a JWT in epoch milliseconds, or null when it cannot be read. */
+export function getTokenExpiry(token) {
+  try {
+    const payload = JSON.parse(decodeURIComponent(
+      atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    ));
+    return payload.exp ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Renews a still-valid staff session (POST /api/me/session/refresh) and stores the new token. */
+export async function refreshSession() {
+  const data = await request("/me/session/refresh", { method: "POST" });
+  if (!data?.token) throw new Error("Không gia hạn được phiên đăng nhập.");
+  setAuthToken(data.token);
+  return data.token;
+}
+
 /** ---------- Auth token helpers ---------- */
 function setAuthToken(token, { persist = true } = {}) {
   cachedAuthToken = token;
   if (persist && typeof window !== "undefined") {
     window.localStorage.setItem(AUTH_TOKEN_KEY, token);
   }
+  notifyTokenChange();
 }
 
 function getAuthToken() {
@@ -69,11 +119,14 @@ function getAuthToken() {
 }
 
 function clearAuthToken() {
+  const hadToken = cachedAuthToken !== null ||
+    (typeof window !== "undefined" && window.localStorage.getItem(AUTH_TOKEN_KEY) !== null);
   cachedAuthToken = null;
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(AUTH_TOKEN_KEY);
     window.localStorage.removeItem(AUTH_REFRESH_KEY);
   }
+  if (hadToken) notifyTokenChange();
 }
 
 function isTokenExpired(token) {
@@ -122,7 +175,36 @@ export function setRefreshToken(token) {
 }
 
 /** ---------- core request helper ---------- */
-export async function request(path, options = {}) {
+// Writes in flight, keyed by method + path + body. A second identical write (double click, Enter pressed twice)
+// gets the SAME promise instead of a second request, so the server only ever sees it once.
+const inFlightWrites = new Map();
+
+export function request(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  if (method === "GET" || method === "HEAD") return performRequest(path, options);
+
+  const body = options.body;
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+  let key = null;
+  if (!isFormData) {
+    try {
+      key = `${method} ${path} ${typeof body === "string" ? body : JSON.stringify(body ?? null)}`;
+    } catch {
+      key = null; // body cannot be serialised as a key: do not merge
+    }
+  }
+  if (key && inFlightWrites.has(key)) return inFlightWrites.get(key);
+
+  const releaseControl = lockTriggeringControl(); // disables the clicked button until the answer arrives
+  const pending = performRequest(path, options).finally(() => {
+    releaseControl();
+    if (key) inFlightWrites.delete(key);
+  });
+  if (key) inFlightWrites.set(key, pending);
+  return pending;
+}
+
+async function performRequest(path, options = {}) {
   const url = `${BASE_URL}${path}`;
   const isLoginPath = path.toLowerCase().startsWith("/auth/login");
 

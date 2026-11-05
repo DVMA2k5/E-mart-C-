@@ -48,8 +48,17 @@ public sealed class RevenueAnalyticsService(RevenueAnalyticsRepository repositor
         var yearColumns = years.Select(y => y.ToString()).ToList();
         List<decimal> AnnualRevenue(Func<RevenueOrderRawDTO, bool> predicate) => years.Select(y => raw.Orders.Where(o => o.Date.Year == y && predicate(o)).Sum(o => o.Revenue)).ToList();
         var employeeRows = raw.Employees.Select(e => Matrix(e.Name, AnnualRevenue(o => o.EmployeeId == e.Id), e.Id)).ToList();
+        // Admins (chủ cửa hàng) selling without an employee profile: matched by the order's creating user.
+        var adminIds = raw.Admins.Select(a => a.Id).ToHashSet();
+        bool SoldByAdmin(RevenueOrderRawDTO o) => !o.EmployeeId.HasValue && o.SellerUserId.HasValue && adminIds.Contains(o.SellerUserId.Value);
+        foreach (var admin in raw.Admins)
+        {
+            var values = AnnualRevenue(o => !o.EmployeeId.HasValue && o.SellerUserId == admin.Id);
+            if (admin.IsActive || values.Any(v => v != 0))
+                employeeRows.Add(Matrix($"{admin.Name} (Chủ cửa hàng)", values));
+        }
         var customerRows = raw.Customers.Select(c => Matrix(c.Name, AnnualRevenue(o => o.CustomerId == c.Id), c.Id)).ToList();
-        employeeRows.Add(Matrix("Tổng cộng", years.Select(y => raw.Orders.Where(o => o.Date.Year == y && o.EmployeeId.HasValue).Sum(o => o.Revenue)).ToList()));
+        employeeRows.Add(Matrix("Tổng cộng", years.Select(y => raw.Orders.Where(o => o.Date.Year == y && (o.EmployeeId.HasValue || SoldByAdmin(o))).Sum(o => o.Revenue)).ToList()));
         customerRows.Add(Matrix("Tổng cộng", years.Select(y => raw.Orders.Where(o => o.Date.Year == y && o.CustomerId.HasValue).Sum(o => o.Revenue)).ToList()));
 
         var productRows = raw.Products.Select(p =>

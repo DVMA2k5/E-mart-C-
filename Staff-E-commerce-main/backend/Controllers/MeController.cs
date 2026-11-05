@@ -13,10 +13,29 @@ namespace backend.Controllers
     public class MeController : ControllerBase
     {
         private readonly UserService _userService;
+        private readonly AuthService _authService;
 
-        public MeController(UserService userService)
+        public MeController(UserService userService, AuthService authService)
         {
             _userService = userService;
+            _authService = authService;
+        }
+
+        /// <summary>Extends a still-valid staff session so an expiring token does not discard unsaved forms.</summary>
+        [HttpPost("session/refresh")]
+        [backend.Security.ReadOnlyRequest]
+        public async Task<IActionResult> RefreshSession()
+        {
+            var userId = ResolveUserId();
+            var username = User.FindFirst(ClaimTypes.Name)?.Value;
+            if (userId is null || string.IsNullOrEmpty(username) ||
+                !int.TryParse(User.FindFirst("session_version")?.Value, out var sessionVersion))
+                return Unauthorized(new { message = "Phiên đăng nhập không hợp lệ." });
+
+            var refreshed = await _authService.RefreshAsync(username, userId.Value, sessionVersion);
+            return refreshed == null
+                ? Unauthorized(new { message = "Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại." })
+                : Ok(refreshed);
         }
 
         [HttpGet("access")]

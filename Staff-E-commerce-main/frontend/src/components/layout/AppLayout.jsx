@@ -4,6 +4,7 @@ import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import GlobalSpinner from "../ui/GlobalSpinner";
+import SessionExpiryWarning from "../auth/SessionExpiryWarning";
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -42,6 +43,7 @@ export default function AppLayout() {
         </main>
       </div>
       {/* <GlobalSpinner /> */}
+      <SessionExpiryWarning />
     </div>
   );
 }

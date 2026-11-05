@@ -36,13 +36,16 @@ builder.Services.AddScoped<ActorPermissionService>();
 builder.Services.AddScoped<PaymentSimulator>();
 builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddScoped<AccountMutationFilter>();
-builder.Services.AddScoped<ReadCacheInvalidationFilter>();
-builder.Services.AddScoped<ReadCacheInvalidationService>();
+// Read caches: one size-limited MemoryCache, evicted by a change token fired after each committed DB write.
+builder.Services.AddSingleton<backend.Services.Caching.BusCacheStore>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationSignal>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationSaveChangesInterceptor>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationCommandInterceptor>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationTransactionInterceptor>();
 builder.Services.AddControllers(options =>
     {
         options.Filters.AddService<PermissionFilter>();
         options.Filters.AddService<AccountMutationFilter>();
-        options.Filters.AddService<ReadCacheInvalidationFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -70,8 +73,12 @@ builder.Services.AddAuthorization(options =>
 
 // Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-builder.Services.AddDbContext<AppDbContext>(options =>
+builder.Services.AddDbContext<AppDbContext>((services, options) =>
     options.UseSqlServer(connectionString)
+        .AddInterceptors(
+            services.GetRequiredService<backend.Services.Caching.CacheInvalidationSaveChangesInterceptor>(),
+            services.GetRequiredService<backend.Services.Caching.CacheInvalidationCommandInterceptor>(),
+            services.GetRequiredService<backend.Services.Caching.CacheInvalidationTransactionInterceptor>())
 // .EnableSensitiveDataLogging() // Dev only
 );
 // -------------------------
@@ -202,13 +209,21 @@ static bool IsLocalOrLanOrigin(string origin)
     return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
 }
 
+// Development only: the customer web app opened through a Cloudflare quick tunnel (Start-Customer-Public.cmd)
+// has an https://<random>.trycloudflare.com origin.
+var allowDevTunnelOrigins = builder.Environment.IsDevelopment();
+static bool IsDevTunnelOrigin(string origin) =>
+    Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
+    uri.Host.EndsWith(".trycloudflare.com", StringComparison.OrdinalIgnoreCase);
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReact", policy =>
     {
-        policy.SetIsOriginAllowed(origin => allowedOrigins.Count > 0
-                ? allowedOrigins.Contains(origin.TrimEnd('/'))
-                : IsLocalOrLanOrigin(origin))
+        policy.SetIsOriginAllowed(origin => (allowDevTunnelOrigins && IsDevTunnelOrigin(origin)) ||
+                (allowedOrigins.Count > 0
+                    ? allowedOrigins.Contains(origin.TrimEnd('/'))
+                    : IsLocalOrLanOrigin(origin)))
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -239,6 +254,9 @@ if (app.Environment.IsDevelopment())
 app.UseRouting();
 
 app.UseCors("AllowReact");
+
+// Turns lock time-outs / deadlocks into 503 + Retry-After and other escaped errors into JSON (never HTML/stack).
+app.UseMiddleware<GlobalExceptionMiddleware>();
 
 // Product images are public files and cannot send the API's bearer token via <img>.
 app.UseStaticFiles(new StaticFileOptions

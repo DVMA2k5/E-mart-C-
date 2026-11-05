@@ -105,9 +105,9 @@ namespace backend.Controllers
             {
                 return BadRequest(ex.Message);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                return StatusCode(500, "Server error updating supplier");
+                return this.ServerError(ex);
             }
         }
 

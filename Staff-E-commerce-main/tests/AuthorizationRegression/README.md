@@ -27,3 +27,5 @@ Frontend recovery and cart-state checks: run `node --test tests/posWorkflow.test
 See [POS_CHECKOUT.md](../../POS_CHECKOUT.md) for the new checkout workflow and deployment notes.
 
 On the first application start after this change, the initializer adds `users.session_version` and seeds the permission catalog once. Existing tokens must sign in again. Default `staff` permissions preserve operational access; review them in the role page. Subsequent starts preserve permission changes. The four administrator account/role management permissions are mandatory to avoid losing access to administration.
+
+Cache/busy coverage (`CacheAndBusyRegression.cs`): a write committed while a read cache is loading is never cached stale; uncommitted and rolled-back writes keep the cache while committed ones evict it; storefront product reads show live stock even while the catalogue copy is cached; payment-status lookup prefers the completed attempt, otherwise the newest; a held `storefront-checkout` / `pos-checkout` lock answers 503 with `Retry-After` and a JSON message, and resending the same request key afterwards creates the order exactly once.

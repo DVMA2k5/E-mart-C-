@@ -73,3 +73,28 @@ body {
     }
   }
 }
+
+/* A button whose write request is in flight (see src/utils/actionLock.js): looks disabled and shows a spinner. */
+[data-submitting] {
+  position: relative;
+  cursor: progress !important;
+  opacity: 0.65;
+}
+[data-submitting]::after {
+  content: "";
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-left: 0.45em;
+  vertical-align: -0.12em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 9999px;
+  animation: action-lock-spin 0.7s linear infinite;
+}
+@keyframes action-lock-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-submitting]::after { animation-duration: 2s; }
+}

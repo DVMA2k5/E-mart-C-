@@ -103,8 +103,8 @@ namespace backend.Controllers
             catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Create order failed: {ex}");
-                return StatusCode(500, new { message = "Không thể tạo đơn hàng. Vui lòng thử lại." });
+                // Lock time-out → 503 + Retry-After: the POS keeps its saved request and resends the same key.
+                return this.ServerError(ex);
             }
         }
 
@@ -223,8 +223,7 @@ namespace backend.Controllers
             catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Complete pending order failed: {ex}");
-                return StatusCode(500, new { message = "Không thể hoàn thành đơn hàng." });
+                return this.ServerError(ex);
             }
         }
 

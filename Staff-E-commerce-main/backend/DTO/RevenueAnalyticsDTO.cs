@@ -27,6 +27,8 @@ public sealed class RevenueAnalyticsRawDTO
     public List<RevenuePurchaseRawDTO> Purchases { get; set; } = [];
     public List<RevenueProductRawDTO> SoldItems { get; set; } = [];
     public List<RevenuePersonRawDTO> Employees { get; set; } = [];
+    /// <summary>Admin (chủ cửa hàng) accounts that sell directly without a linked employee profile.</summary>
+    public List<RevenuePersonRawDTO> Admins { get; set; } = [];
     public List<RevenuePersonRawDTO> Customers { get; set; } = [];
     public List<RevenueProductRawDTO> Products { get; set; } = [];
 }
@@ -38,6 +40,8 @@ public sealed class RevenueOrderRawDTO
     public string? CustomerName { get; set; }
     public int? EmployeeId { get; set; }
     public string? EmployeeName { get; set; }
+    /// <summary>User account that created the order (null for customer self-checkout).</summary>
+    public int? SellerUserId { get; set; }
     public decimal Revenue { get; set; }
 }
 
@@ -49,4 +53,4 @@ public sealed class RevenueProductRawDTO
     public DateTime Date { get; set; }
     public decimal Revenue { get; set; }
 }
-public sealed class RevenuePersonRawDTO { public int Id { get; set; } public string Name { get; set; } = ""; }
+public sealed class RevenuePersonRawDTO { public int Id { get; set; } public string Name { get; set; } = ""; public bool IsActive { get; set; } = true; }

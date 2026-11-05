@@ -28,6 +28,7 @@ public sealed class RevenueAnalyticsRepository(AppDbContext db)
             CustomerName = o.Customer == null ? null : o.Customer.FullName,
             EmployeeId = o.User == null ? null : o.User.EmployeeId,
             EmployeeName = o.User == null ? null : o.User.Employee == null ? o.User.FullName : o.User.Employee.FullName,
+            SellerUserId = o.UserId,
             Revenue = o.PaymentStatus == "refunded" ? -o.TotalAmount : o.TotalAmount
         }).ToListAsync(ct);
 
@@ -45,12 +46,16 @@ public sealed class RevenueAnalyticsRepository(AppDbContext db)
 
         var employees = await db.Employees.AsNoTracking().Where(e => e.IsActive)
             .Select(e => new RevenuePersonRawDTO { Id = e.Id, Name = e.FullName }).ToListAsync(ct);
+        // Admin (chủ cửa hàng) accounts have no employee profile but still create orders directly.
+        var admins = await db.Users.AsNoTracking()
+            .Where(u => u.EmployeeId == null && u.RoleEntity.Name.ToLower() == "admin")
+            .Select(u => new RevenuePersonRawDTO { Id = u.Id, Name = u.FullName, IsActive = u.IsActive }).ToListAsync(ct);
         var customers = await db.Customers.AsNoTracking()
             .Select(c => new RevenuePersonRawDTO { Id = c.Id, Name = c.FullName }).ToListAsync(ct);
         var products = await db.Products.AsNoTracking()
             .Select(p => new RevenueProductRawDTO { Id = p.Id, Name = p.ProductName }).ToListAsync(ct);
 
         return new RevenueAnalyticsRawDTO { Orders = orderRows, Purchases = purchases, SoldItems = soldItems,
-            Employees = employees, Customers = customers, Products = products };
+            Employees = employees, Admins = admins, Customers = customers, Products = products };
     }
 }

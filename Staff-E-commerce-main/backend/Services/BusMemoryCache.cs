@@ -1,23 +1,27 @@
 using System.Diagnostics;
+using backend.Services.Caching;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace backend.Services;
 
 /// <summary>
-/// Thread-safe process cache used by BUS classes. The cache is intentionally bounded by TTL.
+/// List cache used by the BUS classes, backed by the size-limited <see cref="BusCacheStore"/> (ASP.NET Core
+/// MemoryCache). Freshness rules:
+/// <list type="bullet">
+/// <item>Each entry is tied to the change token that was current when its database read began, so a commit
+/// anywhere in the system evicts it (see <see cref="CacheInvalidationSignal"/>).</item>
+/// <item>Write helpers never patch cached objects in place; they drop the entry and the next read reloads it.</item>
+/// <item>The entry also has an absolute TTL as a safety net for clock-based changes (promotions starting).</item>
+/// </list>
 /// </summary>
-public sealed class BusMemoryCache<T>
+public sealed class BusMemoryCache<T>(
+    BusCacheStore store,
+    CacheInvalidationSignal signal,
+    ILogger<BusMemoryCache<T>> logger)
 {
-    private readonly object _sync = new();
+    private const int MaxReloadAttempts = 3;
+    private static readonly string Key = $"bus-list:{typeof(T).FullName}";
     private readonly SemaphoreSlim _loadGate = new(1, 1);
-    private List<T>? _items;
-    private DateTimeOffset _lastFetchTime;
-    private long _generation;
-    private readonly ILogger<BusMemoryCache<T>> _logger;
-
-    public BusMemoryCache(ILogger<BusMemoryCache<T>> logger)
-    {
-        _logger = logger;
-    }
 
     public async Task<(IReadOnlyList<T> Items, bool LoadedFromDatabase)> GetOrCreateAsync(
         Func<Task<List<T>>> factory,
@@ -25,45 +29,37 @@ public sealed class BusMemoryCache<T>
     {
         var stopwatch = Stopwatch.StartNew();
         var beforeMemory = GC.GetTotalMemory(false);
-        if (TryGetFresh(ttl, out var cached))
+        if (TryGet(out var cached))
         {
             LogMeasurement("RAM Cache", stopwatch, beforeMemory);
             return (cached, false);
         }
 
+        // One loader per list: concurrent misses wait for the first load instead of all hitting SQL.
         await _loadGate.WaitAsync();
         try
         {
-            if (TryGetFresh(ttl, out cached))
+            if (TryGet(out cached))
             {
                 LogMeasurement("RAM Cache", stopwatch, beforeMemory);
                 return (cached, false);
             }
 
-            while (true)
+            for (var attempt = 1; ; attempt++)
             {
-                long generation;
-                lock (_sync) generation = _generation;
-
+                var token = signal.Current; // captured BEFORE reading, see CacheInvalidationSignal
                 var loaded = await factory();
-                lock (_sync)
-                {
-                    // A write may invalidate the cache while the database read is in flight.
-                    if (generation != _generation)
-                    {
-                        if (TryGetFresh(ttl, out cached))
-                        {
-                            LogMeasurement("RAM Cache", stopwatch, beforeMemory);
-                            return (cached, false);
-                        }
-                        continue;
-                    }
+                if (token.HasChanged && attempt < MaxReloadAttempts) continue; // a commit landed mid-read
 
-                    _items = loaded;
-                    _lastFetchTime = DateTimeOffset.UtcNow;
-                    LogMeasurement("Database", stopwatch, beforeMemory);
-                    return (_items, true);
-                }
+                var options = new MemoryCacheEntryOptions
+                {
+                    Size = Math.Max(1, loaded.Count),
+                    AbsoluteExpirationRelativeToNow = ttl,
+                    Priority = CacheItemPriority.Normal
+                }.AddExpirationToken(token);
+                store.Cache.Set(Key, loaded, options); // ignored by MemoryCache if the token already fired
+                LogMeasurement("Database", stopwatch, beforeMemory);
+                return (loaded, true);
             }
         }
         finally
@@ -72,11 +68,22 @@ public sealed class BusMemoryCache<T>
         }
     }
 
+    private bool TryGet(out IReadOnlyList<T> items)
+    {
+        if (store.Cache.TryGetValue(Key, out List<T>? value) && value is not null)
+        {
+            items = value;
+            return true;
+        }
+        items = Array.Empty<T>();
+        return false;
+    }
+
     private void LogMeasurement(string source, Stopwatch stopwatch, long beforeMemory)
     {
         stopwatch.Stop();
         var memoryMb = Math.Max(0, GC.GetTotalMemory(false) - beforeMemory) / 1024d / 1024d;
-        _logger.LogInformation(
+        logger.LogInformation(
             "[BUS Cache] Type: {CacheType} | Nguồn: {Source} | Thời gian: {ElapsedMs} ms | Bộ nhớ: {MemoryMb:F3} MB",
             typeof(T).Name,
             source,
@@ -84,96 +91,13 @@ public sealed class BusMemoryCache<T>
             memoryMb);
     }
 
-    private bool TryGetFresh(TimeSpan ttl, out IReadOnlyList<T> items)
-    {
-        lock (_sync)
-        {
-            if (_items is not null && DateTimeOffset.UtcNow - _lastFetchTime <= ttl)
-            {
-                items = _items;
-                return true;
-            }
-        }
+    /// <summary>Drops this list; the next read reloads it from the database.</summary>
+    public void Clear() => store.Cache.Remove(Key);
 
-        items = Array.Empty<T>();
-        return false;
-    }
-
-    public void Replace(IEnumerable<T> items)
-    {
-        lock (_sync)
-        {
-            _items = items.ToList();
-            _lastFetchTime = DateTimeOffset.UtcNow;
-            _generation++;
-        }
-    }
-
-    public void Clear()
-    {
-        lock (_sync)
-        {
-            _items = null;
-            _lastFetchTime = default;
-            _generation++;
-        }
-    }
-
-    public void AddOrUpdate(T item, Func<T, object> keySelector)
-    {
-        lock (_sync)
-        {
-            if (_items is null)
-                return;
-
-            var items = _items.ToList();
-            var key = keySelector(item);
-            var index = items.FindIndex(existing => Equals(keySelector(existing), key));
-            if (index >= 0)
-                items[index] = item;
-            else
-                items.Add(item);
-
-            _items = items;
-            _lastFetchTime = DateTimeOffset.UtcNow;
-            _generation++;
-        }
-    }
-
-    public bool RemoveWhere(Func<T, bool> predicate)
-    {
-        lock (_sync)
-        {
-            if (_items is null) return false;
-            var removed = _items.RemoveAll(item => predicate(item)) > 0;
-            if (removed)
-            {
-                _lastFetchTime = DateTimeOffset.UtcNow;
-                _generation++;
-            }
-            return removed;
-        }
-    }
-
-    public void UpdateWhere(Func<T, bool> predicate, Func<T, T> updater)
-    {
-        lock (_sync)
-        {
-            if (_items is null) return;
-
-            var changed = false;
-            for (var index = 0; index < _items.Count; index++)
-            {
-                if (!predicate(_items[index])) continue;
-                _items[index] = updater(_items[index]);
-                changed = true;
-            }
-
-            if (changed)
-            {
-                _lastFetchTime = DateTimeOffset.UtcNow;
-                _generation++;
-            }
-        }
-    }
+    // The helpers below keep their old signatures for the services, but no longer edit cached objects in place.
+    // Editing shared objects raced with readers and could leave uncommitted values cached after a rollback.
+    public void Replace(IEnumerable<T> items) => Clear();
+    public void AddOrUpdate(T item, Func<T, object> keySelector) => Clear();
+    public bool RemoveWhere(Func<T, bool> predicate) { Clear(); return true; }
+    public void UpdateWhere(Func<T, bool> predicate, Func<T, T> updater) => Clear();
 }

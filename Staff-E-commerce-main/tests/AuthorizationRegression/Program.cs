@@ -34,7 +34,15 @@ builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
     ["Jwt:Key"] = "authorization-regression-test-key-at-least-32-bytes",
     ["Jwt:Issuer"] = "test", ["Jwt:Audience"] = "test"
 });
-builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlServer(connection.ConnectionString));
+builder.Services.AddSingleton<backend.Services.Caching.BusCacheStore>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationSignal>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationSaveChangesInterceptor>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationCommandInterceptor>();
+builder.Services.AddSingleton<backend.Services.Caching.CacheInvalidationTransactionInterceptor>();
+builder.Services.AddDbContext<AppDbContext>((services, o) => o.UseSqlServer(connection.ConnectionString).AddInterceptors(
+    services.GetRequiredService<backend.Services.Caching.CacheInvalidationSaveChangesInterceptor>(),
+    services.GetRequiredService<backend.Services.Caching.CacheInvalidationCommandInterceptor>(),
+    services.GetRequiredService<backend.Services.Caching.CacheInvalidationTransactionInterceptor>()));
 builder.Services.AddSingleton(typeof(BusMemoryCache<>));
 builder.Services.AddSignalR();
 builder.Services.AddScoped<UserRepository>();
@@ -76,13 +84,10 @@ builder.Services.AddScoped<PaymentSimulator>();
 builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddScoped<PermissionFilter>();
 builder.Services.AddScoped<AccountMutationFilter>();
-builder.Services.AddScoped<ReadCacheInvalidationService>();
-builder.Services.AddScoped<ReadCacheInvalidationFilter>();
 builder.Services.AddControllers(o =>
 {
     o.Filters.AddService<PermissionFilter>();
     o.Filters.AddService<AccountMutationFilter>();
-    o.Filters.AddService<ReadCacheInvalidationFilter>();
 }).AddApplicationPart(typeof(UsersController).Assembly);
 builder.Services.AddAuthorization(o => o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
@@ -95,6 +100,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     o.Events = new JwtBearerEvents { OnTokenValidated = SessionValidator.ValidateAsync };
 });
 await using var app = builder.Build();
+app.UseMiddleware<backend.Middlewares.GlobalExceptionMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
@@ -318,6 +324,7 @@ try
     await PosCheckoutRegression.RunAsync(app.Services, client, adminToken);
     await OrderDeliveryRegression.RunAsync(app.Services, client, adminToken);
     await VoucherWalletRegression.RunAsync(app.Services, client, adminToken);
+    await CacheAndBusyRegression.RunAsync(app.Services, client, connection.ConnectionString, adminToken);
 
     async Task CheckUserFilter(string query, int expectedTotal, int? expectedId = null, int? expectedPage = null)
     {

@@ -1,12 +1,13 @@
 // src/api/importApi.js
 import { BASE_URL, getCurrentUserId } from "./apiClient";
+import { lockTriggeringControl } from "../utils/actionLock";
 
 /**
  * Import sản phẩm từ file
  * @param {File} file - File CSV hoặc Excel
  * @returns {Promise<Object>} Kết quả import
  */
-export async function importProducts(file) {
+async function importProductsRequest(file) {
   const formData = new FormData();
   formData.append("file", file);
 
@@ -42,7 +43,7 @@ export async function importProducts(file) {
  * @param {File} file - File CSV hoặc Excel
  * @returns {Promise<Object>} Kết quả import
  */
-export async function importCustomers(file) {
+async function importCustomersRequest(file) {
   const formData = new FormData();
   formData.append("file", file);
 
@@ -162,3 +163,19 @@ export async function downloadCustomerTemplate(format = "excel") {
   window.URL.revokeObjectURL(url);
 }
 
+
+// Uploads keep the clicked button locked until the server answers, like every write made through request().
+async function withControlLock(task) {
+  const release = lockTriggeringControl();
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
+
+/** Import sản phẩm từ file CSV/Excel. */
+export const importProducts = (file) => withControlLock(() => importProductsRequest(file));
+
+/** Import khách hàng từ file CSV/Excel. */
+export const importCustomers = (file) => withControlLock(() => importCustomersRequest(file));

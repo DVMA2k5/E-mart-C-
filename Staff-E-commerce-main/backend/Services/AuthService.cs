@@ -42,4 +42,28 @@ public sealed class AuthService
             Role = user.RoleEntity.Name
         }, null, 200);
     }
+
+    /// <summary>
+    /// Issues a fresh token for a staff session that is still valid (the bearer token was already checked by
+    /// SessionValidator). A revoked session (password/role change, lock) has a new session version and is refused.
+    /// </summary>
+    public async Task<AuthResponse?> RefreshAsync(string username, int userId, int sessionVersion)
+    {
+        var user = await _users.GetForLoginAsync(username);
+        if (user is null || user.Id != userId || user.SessionVersion != sessionVersion ||
+            !user.IsActive || user.IsLocked || !user.RoleEntity.IsActive || user.Employee?.IsActive == false ||
+            string.Equals(user.RoleEntity.Name, "customer", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var (token, expiresIn) = _jwt.GenerateToken(user);
+        return new AuthResponse
+        {
+            Token = token,
+            TokenType = "Bearer",
+            ExpiresIn = expiresIn,
+            UserId = user.Id,
+            UserName = user.Username,
+            Role = user.RoleEntity.Name
+        };
+    }
 }

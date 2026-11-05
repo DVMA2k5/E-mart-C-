@@ -212,6 +212,17 @@ public sealed class StorefrontRepository
             .OrderBy(product => product.ProductName).ThenBy(product => product.Id)
             .ToListAsync();
 
+    /// <summary>
+    /// Live stock of every sellable product, read straight from SQL (never cached). Products that were hidden since
+    /// the catalogue was cached are absent from the result.
+    /// </summary>
+    public Task<Dictionary<int, int>> GetLiveStockAsync(int? productId = null) =>
+        _context.Products.AsNoTracking()
+            .Where(product => product.IsActive && (product.Category == null || product.Category.IsActive) &&
+                (productId == null || product.Id == productId))
+            .Select(product => new { product.Id, product.StockQuantity })
+            .ToDictionaryAsync(row => row.Id, row => row.StockQuantity);
+
     /// <summary>Units sold per product in completed orders since <paramref name="sinceUtc"/>.</summary>
     public Task<Dictionary<int, int>> GetSoldQuantitiesAsync(DateTime sinceUtc) =>
         _context.OrderItems.AsNoTracking()

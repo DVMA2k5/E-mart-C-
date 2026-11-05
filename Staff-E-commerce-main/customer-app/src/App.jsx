@@ -1,5 +1,20 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 import ProductDescription from "./components/ProductDescription";
+import AdvancedSearchSheet from "./components/AdvancedSearchSheet";
+import {
+  DEFAULT_FILTERS,
+  PRICE_PRESETS,
+  activePricePresetOf,
+  buildSearchIndex,
+  describeActiveFilters,
+  filterSearchIndex,
+  hasPriceFilter,
+  normalizeSearch,
+  removeFilter,
+  singleCategoryId,
+  sortProducts,
+} from "./utils/productFilters";
 import {
   checkoutDefinitelyRejected,
   checkoutStorageKey,
@@ -48,17 +63,29 @@ import {
   IconShield,
   IconStar,
   IconSort,
+  IconFilter,
   getCategoryIcon,
 } from "./components/Icons";
+import { apiFetch, setSessionExpiredHandler, SESSION_EXPIRED_MESSAGE } from "./services/apiClient";
 
-const defaultHost = typeof window !== "undefined" && window.location?.hostname
-  ? `http://${window.location.hostname}:5099/api`
-  : "http://10.0.2.2:5099/api";
-const API_URL = (typeof window !== "undefined" && window.location?.hostname
-  ? defaultHost
-  : process.env.EXPO_PUBLIC_API_URL || defaultHost).replace(/\/$/, "");
+// EXPO_PUBLIC_API_URL wins everywhere (a public tunnel URL so phones on any network can reach the backend).
+// Without it: web uses the machine that serves the page; Expo Go uses the LAN IP of the computer running Expo
+// (from the dev-server address); the emulator alias 10.0.2.2 is only the last fallback.
+const isWeb = typeof window !== "undefined" && !!window.location?.hostname;
+function resolveApiUrl() {
+  const configured = (process.env.EXPO_PUBLIC_API_URL || "").trim();
+  // 10.0.2.2 only exists inside the Android emulator, so a browser must never use it.
+  if (configured && !(isWeb && configured.includes("10.0.2.2"))) return configured;
+  if (isWeb) return `http://${window.location.hostname}:5099/api`;
+  const hostUri = Constants.expoConfig?.hostUri || Constants.expoGoConfig?.debuggerHost || "";
+  const devHost = hostUri.split(":")[0];
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(devHost)) return `http://${devHost}:5099/api`;
+  return "http://10.0.2.2:5099/api";
+}
+const API_URL = resolveApiUrl().replace(/\/$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
-const CART_KEY = "e-mart-mobile-cart";
+const CART_KEY = "e-mart-mobile-cart"; // legacy key shared by every account; removed on start-up
+const cartStorageKey = (customerId) => `${CART_KEY}:${customerId || "guest"}`;
 const CUSTOMER_KEY = "e-mart-mobile-customer";
 const CUSTOMER_TOKEN_KEY = "e-mart-mobile-customer-token";
 const ADDRESS_KEY = "e-mart-mobile-delivery-address";
@@ -119,14 +146,6 @@ const normalizePaymentMethod = (method) => {
   return { cod: "cash", momo: "e_wallet", bank: "card" }[value] || value;
 };
 
-const PRICE_FILTERS = [
-  { id: "all", label: "Mọi giá", min: 0, max: Infinity },
-  { id: "lt20", label: "Dưới 20k", min: 0, max: 20000 },
-  { id: "20to50", label: "20k–50k", min: 20000, max: 50000 },
-  { id: "50to100", label: "50k–100k", min: 50000, max: 100000 },
-  { id: "gt100", label: "Trên 100k", min: 100000, max: Infinity },
-];
-
 // Keeps the previous object for each unchanged product (so memoised cards skip re-rendering) while taking the
 // server's list as the source of truth for which products exist and in what order.
 const mergeProducts = (current, incoming) => {
@@ -143,15 +162,6 @@ const mergeProducts = (current, incoming) => {
   });
   return changed ? merged : current;
 };
-
-// Lowercase and strip Vietnamese accents so "sua" finds "Sữa" and "banh" finds "Bánh".
-const normalizeSearch = (value) => String(value || "")
-  .normalize("NFD")
-  .replace(/[̀-ͯ]/g, "")
-  .replace(/đ/g, "d")
-  .replace(/Đ/g, "D")
-  .toLowerCase()
-  .trim();
 
 function ProductStock({ product, reservedQuantity = 0, style = styles.stockLabel }) {
   if (product.stockQuantity == null) return null;
@@ -513,7 +523,7 @@ function CustomerInvoice({ order, token, onClose }) {
     const load = async () => {
       try {
         if (!token) throw new Error("Vui lòng đăng nhập để xem hóa đơn.");
-        const response = await fetch(`${API_URL}/storefront/orders/${order.id}/invoice`, {
+        const response = await apiFetch(`${API_URL}/storefront/orders/${order.id}/invoice`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) throw new Error(await readError(response));
@@ -620,14 +630,18 @@ export default function App() {
   const [flashSaleOpen, setFlashSaleOpen] = useState(false);
   const [countdownNow, setCountdownNow] = useState(Date.now());
   const [query, setQuery] = useState("");
-  const [categoryId, setCategoryId] = useState("all");
   const homeListRef = useRef(null);
   const [tab, setTab] = useState("home");
   const [bannerIndex, setBannerIndex] = useState(0);
 
   // Bộ lọc & Sắp xếp
   const [sortOption, setSortOption] = useState("default");
-  const [priceFilter, setPriceFilter] = useState("all");
+  // One filter state (categories with OR, price range, promotion, stock) shared by the quick category
+  // tags, the home price chips, the category drawer and the advanced search sheet.
+  const [filters, setFilters] = useState(() => ({ ...DEFAULT_FILTERS }));
+  // "all", the one selected category, or null when several categories are chosen.
+  const categoryId = singleCategoryId(filters);
+  const [advancedSearchOpen, setAdvancedSearchOpen] = useState(false);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [selectedDrawerCatId, setSelectedDrawerCatId] = useState("all");
   const [drawerSearchText, setDrawerSearchText] = useState("");
@@ -653,6 +667,17 @@ export default function App() {
   const [customerToken, setCustomerToken] = useState("");
   const customerSession = useRef(customerToken);
   customerSession.current = customerToken;
+  // Synchronous single-flight lock for write actions (see the wrappers after claimVoucherTask).
+  const runningActions = useRef(new Set());
+  const runExclusive = useCallback(async (key, task) => {
+    if (runningActions.current.has(key)) return undefined;
+    runningActions.current.add(key);
+    try {
+      return await task();
+    } finally {
+      runningActions.current.delete(key);
+    }
+  }, []);
   const [accountReady, setAccountReady] = useState(false);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -701,7 +726,7 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    fetch(`${API_URL}/storefront/payment-options`)
+    apiFetch(`${API_URL}/storefront/payment-options`)
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("payment options unavailable")))
       .then((options) => {
         if (!active) return;
@@ -774,8 +799,8 @@ export default function App() {
     }
     try {
       const [productsResponse, categoriesResponse] = await Promise.all([
-        fetch(`${API_URL}/storefront/products`, { cache: "no-store" }),
-        fetch(`${API_URL}/storefront/categories`, { cache: "no-store" }),
+        apiFetch(`${API_URL}/storefront/products`, { cache: "no-store" }),
+        apiFetch(`${API_URL}/storefront/categories`, { cache: "no-store" }),
       ]);
       if (!productsResponse.ok) throw new Error(await readError(productsResponse));
       if (!categoriesResponse.ok) throw new Error(await readError(categoriesResponse));
@@ -819,7 +844,7 @@ export default function App() {
     productInfoRequest.current = controller;
     setDescriptionStatus({ id: product.id, loading: true });
     // Refresh from the public API, including descriptions edited after app startup.
-    fetch(`${API_URL}/storefront/products/${product.id}`, { cache: "no-store", signal: controller.signal })
+    apiFetch(`${API_URL}/storefront/products/${product.id}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
         const latest = await response.json();
@@ -836,26 +861,53 @@ export default function App() {
   }, []);
   useEffect(() => () => productInfoRequest.current?.abort(), []);
 
+  // Each account has its own saved cart (guests share one guest cart), so another person signing in on the same
+  // device never sees it. The cart is (re)loaded whenever the signed-in account changes.
+  const cartKey = cartStorageKey(customer?.id);
+  const cartOwner = useRef(null);
   useEffect(() => {
-    AsyncStorage.getItem(CART_KEY)
-      .then((stored) => setCart(stored ? JSON.parse(stored) : []))
-      .catch(() => setCart([]))
-      .finally(() => setCartLoaded(true));
-  }, []);
+    let active = true;
+    cartOwner.current = null; // block saving until this account's cart is loaded
+    setCartLoaded(false);
+    (async () => {
+      let next = [];
+      try {
+        await AsyncStorage.removeItem(CART_KEY); // retire the old cart key that every account shared
+        const stored = await AsyncStorage.getItem(cartKey);
+        next = stored ? JSON.parse(stored) : [];
+        if (customer?.id) {
+          // An unfinished order wins: its exact cart must be resent with the same request id.
+          const pending = await AsyncStorage.getItem(checkoutStorageKey(customer.id)).catch(() => null);
+          const pendingCart = (() => { try { return parsePendingCheckout(pending, customer.id)?.cart; } catch { return null; } })();
+          if (pendingCart?.length) next = pendingCart;
+          else if (!next.length) {
+            // Items picked before signing in move into the account's cart.
+            const guest = await AsyncStorage.getItem(cartStorageKey(null));
+            const guestCart = guest ? JSON.parse(guest) : [];
+            if (Array.isArray(guestCart) && guestCart.length) {
+              next = guestCart;
+              await AsyncStorage.removeItem(cartStorageKey(null));
+            }
+          }
+        }
+      } catch {
+        next = [];
+      }
+      if (!active) return;
+      setCart(Array.isArray(next) ? next : []);
+      cartOwner.current = cartKey;
+      setCartLoaded(true);
+    })();
+    return () => { active = false; };
+    // customer?.id is already part of cartKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartKey]);
 
   useEffect(() => {
     cartSnapshot.current = { cart, loaded: cartLoaded };
-    if (!cartLoaded) return;
-    const timer = setTimeout(() => {
-      AsyncStorage.setItem(CART_KEY, JSON.stringify(cart)).catch(() => { });
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [cart, cartLoaded]);
-
-  useEffect(() => () => {
-    const snapshot = cartSnapshot.current;
-    if (snapshot.loaded) AsyncStorage.setItem(CART_KEY, JSON.stringify(snapshot.cart)).catch(() => { });
-  }, []);
+    if (!cartLoaded || cartOwner.current !== cartKey) return;
+    AsyncStorage.setItem(cartKey, JSON.stringify(cart)).catch(() => { });
+  }, [cart, cartLoaded, cartKey]);
 
   useEffect(() => {
     if (!cartLoaded || loading || loadError || pendingCheckout) return;
@@ -892,7 +944,7 @@ export default function App() {
         const storedCustomer = values[1][1] ? JSON.parse(values[1][1]) : null;
         if (!token || !storedCustomer) return;
 
-        const response = await fetch(`${API_URL}/storefront/account`, {
+        const response = await apiFetch(`${API_URL}/storefront/account`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) throw new Error("Phiên đăng nhập đã hết hạn.");
@@ -920,7 +972,7 @@ export default function App() {
     let active = true;
     setOrdersLoading(true);
     setOrdersError("");
-    fetch(`${API_URL}/storefront/orders`, {
+    apiFetch(`${API_URL}/storefront/orders`, {
       headers: { Authorization: `Bearer ${customerToken}` },
     })
       .then(async (response) => {
@@ -939,7 +991,7 @@ export default function App() {
     return () => { active = false; };
   }, [tab, customerToken, ordersRefreshKey]);
 
-  const loginCustomer = async () => {
+  const loginCustomerTask = async () => {
     const username = loginUsername.trim();
     if (username.length < 3 || loginPassword.length < 6) {
       setAccountError("Vui lòng nhập tên đăng nhập và mật khẩu hợp lệ.");
@@ -950,7 +1002,7 @@ export default function App() {
     setAccountError("");
     setAccountMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/login`, {
+      const response = await apiFetch(`${API_URL}/storefront/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password: loginPassword }),
@@ -976,7 +1028,7 @@ export default function App() {
     }
   };
 
-  const registerCustomer = async () => {
+  const registerCustomerTask = async () => {
     const fullName = registerFullName.trim();
     const phone = normalizeVietnamesePhone(registerPhone);
     const email = registerEmail.trim();
@@ -1016,7 +1068,7 @@ export default function App() {
     setAccountError("");
     setAccountMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/register`, {
+      const response = await apiFetch(`${API_URL}/storefront/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: phone, password: loginPassword, fullName, phone, email: email || null, address: address || null, dateOfBirth: parsedBirthDate.iso }),
@@ -1058,7 +1110,7 @@ export default function App() {
     }
     setPhoneAvailability({ phone, checking: true });
     try {
-      const response = await fetch(`${API_URL}/storefront/register/phone-availability?phone=${encodeURIComponent(phone)}`);
+      const response = await apiFetch(`${API_URL}/storefront/register/phone-availability?phone=${encodeURIComponent(phone)}`);
       if (!response.ok) throw new Error("phone check failed");
       const result = await response.json();
       if (sequence === phoneCheckSequence.current) setPhoneAvailability({ phone, available: result.available === true });
@@ -1095,12 +1147,12 @@ export default function App() {
     ]);
   });
 
-  const cancelCustomerOrder = async (order) => {
+  const cancelCustomerOrderTask = async (order) => {
     if (!(await confirmDialog("Hủy đơn hàng", `Bạn chắc chắn muốn hủy đơn ${order.orderNumber}?`))) return;
     setOrderActionBusy(true);
     setOrderActionMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/orders/${order.id}/cancel`, {
+      const response = await apiFetch(`${API_URL}/storefront/orders/${order.id}/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
         body: JSON.stringify({ reason: "Khách hủy trên ứng dụng" }),
@@ -1116,14 +1168,14 @@ export default function App() {
   };
 
   // Opens the MoMo page (a new attempt each time) or the bank-transfer page for an unpaid order.
-  const payOrderOnline = async (order) => {
+  const payOrderOnlineTask = async (order) => {
     setOrderActionBusy(true);
     setOrderActionMessage("");
     try {
       const method = normalizePaymentMethod(order.paymentMethod);
       const response = method === "e_wallet"
-        ? await fetch(`${API_URL}/storefront/orders/${order.id}/pay-momo`, { method: "POST", headers: { Authorization: `Bearer ${customerToken}` } })
-        : await fetch(`${API_URL}/storefront/orders/${order.id}/payment-status`, { headers: { Authorization: `Bearer ${customerToken}` } });
+        ? await apiFetch(`${API_URL}/storefront/orders/${order.id}/pay-momo`, { method: "POST", headers: { Authorization: `Bearer ${customerToken}` } })
+        : await apiFetch(`${API_URL}/storefront/orders/${order.id}/payment-status`, { headers: { Authorization: `Bearer ${customerToken}` } });
       if (!response.ok) throw new Error(await readError(response));
       const result = await response.json();
       const url = method === "e_wallet" ? result.payUrl : result.bankSimulatorUrl;
@@ -1141,7 +1193,7 @@ export default function App() {
     }
   };
 
-  const changeCustomerPassword = async () => {
+  const changeCustomerPasswordTask = async () => {
     if (passwordForm.current.length < 6 || passwordForm.next.length < 6) {
       setAccountError("Mật khẩu phải có ít nhất 6 ký tự.");
       return;
@@ -1158,7 +1210,7 @@ export default function App() {
     setAccountError("");
     setAccountMessage("");
     try {
-      const response = await fetch(`${API_URL}/me/change-password`, {
+      const response = await apiFetch(`${API_URL}/me/change-password`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
         body: JSON.stringify({ currentPassword: passwordForm.current, newPassword: passwordForm.next, confirmNewPassword: passwordForm.confirm }),
@@ -1175,7 +1227,7 @@ export default function App() {
     }
   };
 
-  const saveAccountName = async () => {
+  const saveAccountNameTask = async () => {
     const fullName = accountName.trim();
     if (fullName.length < 2) {
       setAccountError("Họ tên cần có ít nhất 2 ký tự.");
@@ -1186,7 +1238,7 @@ export default function App() {
     setAccountError("");
     setAccountMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/account`, {
+      const response = await apiFetch(`${API_URL}/storefront/account`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -1215,7 +1267,7 @@ export default function App() {
     }
   };
 
-  const saveDeliveryAddress = async () => {
+  const saveDeliveryAddressTask = async () => {
     if (addressBusy) return;
     if (!accountReady) { setAddressMessage("Đang tải tài khoản, vui lòng thử lại sau."); return; }
     if (!customer || !customerToken) { setProfilePage(""); setAccountError("Vui lòng đăng nhập để quản lý địa chỉ nhận hàng."); return; }
@@ -1233,7 +1285,7 @@ export default function App() {
     try {
       if (customer || customerToken) {
         if (!customer || !customerToken) throw new Error("Vui lòng đăng nhập lại để cập nhật địa chỉ tài khoản.");
-        const response = await fetch(`${API_URL}/storefront/account/address`, {
+        const response = await apiFetch(`${API_URL}/storefront/account/address`, {
           method: "PUT",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
           body: JSON.stringify({ address: fullAddress }),
@@ -1263,9 +1315,45 @@ export default function App() {
     }
   };
 
+  // The token expired or was revoked (401 from any authenticated call). Only the broken session is dropped: the
+  // account's saved cart and any unfinished order request stay on the device, so after signing in again the
+  // customer continues exactly where they were, and a resent order reuses its request id (no duplicate order).
+  const expireCustomerSession = useCallback((phone) => {
+    customerSession.current = ""; // later 401s from requests already in flight are ignored
+    AsyncStorage.multiRemove([CUSTOMER_TOKEN_KEY, CUSTOMER_KEY]).catch(() => { });
+    setCustomer(null);
+    setCustomerToken("");
+    setCustomerOrders([]);
+    setSelectedOrder(null);
+    setInvoiceOrder(null);
+    setSelectedProduct(null);
+    setCategoryModalOpen(false);
+    setVoucherOpen(false);
+    setCheckoutOpen(false);
+    setLoginPassword("");
+    if (phone) setLoginUsername((current) => current || phone);
+    setRegisterMode(false);
+    setProfilePage("");
+    setAccountError("");
+    setAccountMessage(SESSION_EXPIRED_MESSAGE);
+    setTab("profile"); // the login form
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined") window.setTimeout(() => window.alert(SESSION_EXPIRED_MESSAGE), 0);
+    } else {
+      Alert.alert("Hết phiên đăng nhập", SESSION_EXPIRED_MESSAGE);
+    }
+  }, []);
+
+  useEffect(() => setSessionExpiredHandler((token) => {
+    if (token && token === customerSession.current) expireCustomerSession(customer?.phone);
+  }), [customer?.phone, expireCustomerSession]);
+
+  // "Đăng xuất": removes this account's token, profile, addresses and saved cart from the device.
+  // An unfinished order request (keyed by account) is deliberately kept, see expireCustomerSession.
   const clearCustomerSession = async () => {
     const customerAddressKey = customer?.id ? `${ADDRESS_KEY}:${customer.id}` : null;
-    const sessionKeys = [CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY, CART_KEY, customerAddressKey].filter(Boolean);
+    const customerCartKey = customer?.id ? cartStorageKey(customer.id) : null;
+    const sessionKeys = [CUSTOMER_TOKEN_KEY, CUSTOMER_KEY, ADDRESS_KEY, CART_KEY, customerAddressKey, customerCartKey].filter(Boolean);
     let storageError = false;
     try {
       await AsyncStorage.multiRemove(sessionKeys);
@@ -1300,7 +1388,9 @@ export default function App() {
     setCheckoutForm({ fullName: "", phone: "", address: "", note: "" });
     setPendingCheckout(null);
     setCart([]);
-    cartSnapshot.current = { cart: [], loaded: true };
+    setCustomerOrders([]);
+    setSelectedOrder(null);
+    setInvoiceOrder(null);
     setAppliedVoucher(null);
     setDraftVoucher(null);
     setUseRewardPoints(false);
@@ -1324,32 +1414,18 @@ export default function App() {
   };
 
   // Search index built once per catalogue refresh, not on every keystroke.
-  const searchIndex = useMemo(
-    () => products.map((product) => ({ product, text: normalizeSearch(`${product.productName} ${product.categoryName || ""}`) })),
-    [products]
+  const searchIndex = useMemo(() => buildSearchIndex(products), [products]);
+  const appliedFilters = filters;
+  const activeFilterChips = useMemo(() => describeActiveFilters(appliedFilters, categories), [appliedFilters, categories]);
+  // A typed (non-preset) range highlights no price chip; it shows in the active filter chips instead.
+  const activePricePreset = activePricePresetOf(filters);
+  const anyPriceFilter = hasPriceFilter(filters);
+
+  // Lọc và Sắp xếp danh sách sản phẩm (same rules as the advanced search sheet's live result count).
+  const visibleProducts = useMemo(
+    () => sortProducts(filterSearchIndex(searchIndex, query, appliedFilters), sortOption),
+    [searchIndex, query, appliedFilters, sortOption]
   );
-
-  // Lọc và Sắp xếp danh sách sản phẩm
-  const visibleProducts = useMemo(() => {
-    const keyword = normalizeSearch(query);
-    const range = PRICE_FILTERS.find((filter) => filter.id === priceFilter) || PRICE_FILTERS[0];
-    let result = searchIndex
-      .filter(({ product, text }) =>
-        (!keyword || text.includes(keyword)) &&
-        (categoryId === "all" || String(product.categoryId) === String(categoryId)) &&
-        product.price >= range.min && product.price < range.max)
-      .map(({ product }) => product);
-
-    if (sortOption === "price_asc") {
-      result = [...result].sort((a, b) => a.price - b.price);
-    } else if (sortOption === "price_desc") {
-      result = [...result].sort((a, b) => b.price - a.price);
-    } else if (sortOption === "hot") {
-      // Real sales from the last 30 days; ties keep the catalogue order.
-      result = [...result].sort((a, b) => (b.soldCount || 0) - (a.soldCount || 0));
-    }
-    return result;
-  }, [searchIndex, query, categoryId, sortOption, priceFilter]);
 
   const visibleVoucherHistory = useMemo(() => voucherHistory.filter((item) => {
     return item.walletStatus === voucherHistoryTab;
@@ -1414,12 +1490,12 @@ export default function App() {
     setVoucherMessage("");
     setVouchersLoading(true);
     try {
-      const walletResponse = await fetch(`${API_URL}/storefront/vouchers`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      const walletResponse = await apiFetch(`${API_URL}/storefront/vouchers`, { headers: { Authorization: `Bearer ${customerToken}` } });
       if (!walletResponse.ok) throw new Error(await readError(walletResponse));
       const wallet = await walletResponse.json();
       let events = [];
       if (context === "checkout") {
-        const response = await fetch(`${API_URL}/storefront/promotions`);
+        const response = await apiFetch(`${API_URL}/storefront/promotions`);
         if (!response.ok) throw new Error(await readError(response));
         events = (await response.json()).filter((promotion) => promotion.type === "event");
       }
@@ -1431,7 +1507,7 @@ export default function App() {
     }
   };
 
-  const applyVoucher = async (code = voucherCode, eventPromotionId = null) => {
+  const applyVoucherTask = async (code = voucherCode, eventPromotionId = null) => {
     const normalizedCode = code.trim();
     if (!eventPromotionId && !normalizedCode) { setVoucherMessage("Nhập mã voucher."); return; }
     if (eventPromotionId) {
@@ -1442,7 +1518,7 @@ export default function App() {
     setVoucherBusy(true);
     setVoucherMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/promotions/validate`, {
+      const response = await apiFetch(`${API_URL}/storefront/promotions/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
         body: JSON.stringify({ code: eventPromotionId ? "" : normalizedCode, eventPromotionId, orderAmount: subtotal }),
@@ -1480,7 +1556,7 @@ export default function App() {
     setVouchersLoading(true);
     setVoucherMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/promotions/history`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      const response = await apiFetch(`${API_URL}/storefront/promotions/history`, { headers: { Authorization: `Bearer ${customerToken}` } });
       if (!response.ok) throw new Error(await readError(response));
       const data = await response.json();
       setVoucherHistory(Array.isArray(data) ? data : []);
@@ -1502,7 +1578,7 @@ export default function App() {
     setCodeResult(null);
     setVouchersLoading(true);
     try {
-      const response = await fetch(`${API_URL}/storefront/vouchers/discover`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      const response = await apiFetch(`${API_URL}/storefront/vouchers/discover`, { headers: { Authorization: `Bearer ${customerToken}` } });
       if (!response.ok) throw new Error(await readError(response));
       const data = await response.json();
       setVoucherList(Array.isArray(data) ? data : []);
@@ -1515,13 +1591,13 @@ export default function App() {
   };
 
   // Asks the server for the voucher with exactly this code (works for Public and Only-code vouchers).
-  const lookupVoucherCode = async (rawCode = voucherSearch) => {
+  const lookupVoucherCodeTask = async (rawCode = voucherSearch) => {
     const code = rawCode.trim().toUpperCase();
     if (!code) { setVoucherMessage("Nhập mã voucher để tìm."); return; }
     setVoucherBusy(true);
     setVoucherMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/vouchers/lookup?code=${encodeURIComponent(code)}`, { headers: { Authorization: `Bearer ${customerToken}` } });
+      const response = await apiFetch(`${API_URL}/storefront/vouchers/lookup?code=${encodeURIComponent(code)}`, { headers: { Authorization: `Bearer ${customerToken}` } });
       if (!response.ok) throw new Error(await readError(response));
       setCodeResult(await response.json());
     } catch (error) {
@@ -1567,14 +1643,14 @@ export default function App() {
     </View>;
   };
 
-  const claimVoucher = async (promotionId = null, codeOverride = null) => {
+  const claimVoucherTask = async (promotionId = null, codeOverride = null) => {
     if (voucherBusy || !requireAuthenticatedCustomer()) return;
     const code = (codeOverride ?? voucherCode).trim().toUpperCase();
     if (!promotionId && !code) { setVoucherMessage("Nhập mã voucher để nhận."); return; }
     setVoucherBusy(true);
     setVoucherMessage("");
     try {
-      const response = await fetch(`${API_URL}/storefront/vouchers/claim`, {
+      const response = await apiFetch(`${API_URL}/storefront/vouchers/claim`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${customerToken}` },
         body: JSON.stringify(promotionId ? { promotionId } : { code }),
@@ -1591,6 +1667,20 @@ export default function App() {
       setVoucherMessage(error.message || "Không thể nhận voucher.");
     } finally { setVoucherBusy(false); }
   };
+
+  // Every action that writes (or spends a rate-limited lookup) runs at most once at a time. The lock is a ref, so
+  // it holds even for two taps that arrive before React re-renders the disabled button (and covers the confirm
+  // dialog of "Hủy đơn"). Actions on one order share a key, so cancelling and paying cannot overlap.
+  const loginCustomer = () => runExclusive("account", loginCustomerTask);
+  const registerCustomer = () => runExclusive("account", registerCustomerTask);
+  const changeCustomerPassword = () => runExclusive("account", changeCustomerPasswordTask);
+  const saveAccountName = () => runExclusive("account", saveAccountNameTask);
+  const saveDeliveryAddress = () => runExclusive("address", saveDeliveryAddressTask);
+  const cancelCustomerOrder = (order) => runExclusive("order-action", () => cancelCustomerOrderTask(order));
+  const payOrderOnline = (order) => runExclusive("order-action", () => payOrderOnlineTask(order));
+  const applyVoucher = (...args) => runExclusive("voucher", () => applyVoucherTask(...args));
+  const lookupVoucherCode = (...args) => runExclusive("voucher", () => lookupVoucherCodeTask(...args));
+  const claimVoucher = (...args) => runExclusive("voucher", () => claimVoucherTask(...args));
 
   const flyProductToCart = useCallback((product, event) => {
     const x = event?.nativeEvent?.pageX;
@@ -1735,7 +1825,7 @@ export default function App() {
         },
       }));
       setPendingCheckout(pending);
-      const response = await fetch(`${API_URL}/storefront/orders`, {
+      const response = await apiFetch(`${API_URL}/storefront/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1759,7 +1849,7 @@ export default function App() {
         pointsDiscount: (result.pointsUsed ?? pending.payload.pointsUsed) * 1000,
         vietQrUrl: result.vietQrUrl || null,
       });
-      fetch(`${API_URL}/storefront/account`, { headers: { Authorization: `Bearer ${customerToken}` } })
+      apiFetch(`${API_URL}/storefront/account`, { headers: { Authorization: `Bearer ${customerToken}` } })
         .then((accountResponse) => accountResponse.ok ? accountResponse.json() : null)
         .then((profile) => { if (profile) setCustomer(profile); })
         .catch(() => {});
@@ -1813,10 +1903,35 @@ export default function App() {
     return { width: "48.5%" }; // 2 cột trên điện thoại
   }, [isDesktop, isWide]);
 
+  // Quick category tags / drawer pick exactly one category (or all); other filters stay as they are.
   const selectHomeCategory = useCallback((id) => {
-    setCategoryId(String(id));
+    setFilters((current) => ({ ...current, categoryIds: String(id) === "all" ? [] : [String(id)] }));
     homeListRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, []);
+
+  // One place that applies a full filter set (advanced search sheet, chip removal, reset) to the home list.
+  const applyFilters = useCallback((next) => {
+    setFilters({ ...DEFAULT_FILTERS, ...next });
+    homeListRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, []);
+
+  const applyAdvancedSearch = useCallback((next) => {
+    applyFilters(next);
+    setAdvancedSearchOpen(false);
+  }, [applyFilters]);
+
+  const togglePricePreset = useCallback((preset) => {
+    setFilters((current) => {
+      const active = preset && activePricePresetOf(current)?.id === preset.id;
+      const cleared = { ...current, priceMin: null, priceMax: null };
+      return !preset || active ? cleared : { ...cleared, priceMin: preset.min, priceMax: preset.max };
+    });
+  }, []);
+
+  const resetHomeSearch = useCallback(() => {
+    setQuery("");
+    applyFilters(DEFAULT_FILTERS);
+  }, [applyFilters]);
 
   const renderHomeProduct = useCallback(({ item: product }) => (
     <ProductCard
@@ -1910,7 +2025,11 @@ export default function App() {
         <View style={styles.filterToolbar}>
           <View style={styles.filterLeft}>
             <Text style={styles.filterResultCount} numberOfLines={1}>
-              {categoryId === "all" ? "Tất cả sản phẩm" : (categories.find((c) => String(c.id) === String(categoryId))?.name || "Ngành hàng")}
+              {categoryId === "all"
+                ? "Tất cả sản phẩm"
+                : categoryId == null
+                  ? `${activeFilterChips.find((chip) => chip.key === "category")?.label || "Nhiều danh mục"} · ${visibleProducts.length} sản phẩm`
+                  : (categories.find((c) => String(c.id) === String(categoryId))?.name || "Ngành hàng")}
             </Text>
           </View>
 
@@ -1939,17 +2058,53 @@ export default function App() {
             </Pressable>
           </View>
           <View style={styles.sortPillsRow}>
-            {PRICE_FILTERS.map((filter) => (
+            <Pressable
+              onPress={() => togglePricePreset(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Lọc giá Mọi giá"
+              style={[styles.sortPill, !anyPriceFilter && styles.sortPillActive]}
+            >
+              <Text style={[styles.sortPillText, !anyPriceFilter && styles.sortPillTextActive]}>Mọi giá</Text>
+            </Pressable>
+            {PRICE_PRESETS.map((preset) => (
               <Pressable
-                key={filter.id}
-                onPress={() => setPriceFilter(filter.id)}
+                key={preset.id}
+                onPress={() => togglePricePreset(preset)}
                 accessibilityRole="button"
-                accessibilityLabel={`Lọc giá ${filter.label}`}
-                style={[styles.sortPill, priceFilter === filter.id && styles.sortPillActive]}
+                accessibilityLabel={`Lọc giá ${preset.label}`}
+                style={[styles.sortPill, activePricePreset?.id === preset.id && styles.sortPillActive]}
               >
-                <Text style={[styles.sortPillText, priceFilter === filter.id && styles.sortPillTextActive]}>{filter.label}</Text>
+                <Text style={[styles.sortPillText, activePricePreset?.id === preset.id && styles.sortPillTextActive]}>{preset.label}</Text>
               </Pressable>
             ))}
+          </View>
+          <View style={styles.sortPillsRow}>
+            <Pressable
+              onPress={() => setAdvancedSearchOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel={`Mở bộ lọc nâng cao${activeFilterChips.length ? `, đang áp dụng ${activeFilterChips.length} điều kiện` : ""}`}
+              style={[styles.sortPill, styles.advancedFilterPill, activeFilterChips.length > 0 && styles.advancedFilterPillActive]}
+            >
+              <IconFilter size={12} color={BHX_GREEN} />
+              <Text style={styles.advancedFilterPillText}>Bộ lọc{activeFilterChips.length ? ` (${activeFilterChips.length})` : ""}</Text>
+            </Pressable>
+            {activeFilterChips.map((chip) => (
+              <Pressable
+                key={chip.key}
+                onPress={() => applyFilters(removeFilter(appliedFilters, chip.key))}
+                accessibilityRole="button"
+                accessibilityLabel={`Bỏ lọc ${chip.label}`}
+                style={styles.activeFilterChip}
+              >
+                <Text style={styles.activeFilterChipText} numberOfLines={1}>{chip.label}</Text>
+                <IconClose size={11} color={BHX_GREEN} />
+              </Pressable>
+            ))}
+            {activeFilterChips.length > 1 && (
+              <Pressable onPress={() => applyFilters(DEFAULT_FILTERS)} accessibilityRole="button" style={styles.clearFiltersButton}>
+                <Text style={styles.clearFiltersText}>Xóa tất cả</Text>
+              </Pressable>
+            )}
           </View>
         </View>
 
@@ -1970,8 +2125,11 @@ export default function App() {
           <View style={styles.emptyState}>
             <IconCart size={50} color="#cbd5e1" />
             <Text style={styles.emptyTitle}>Chưa có sản phẩm phù hợp</Text>
-            <Text style={styles.stateText}>Hãy chọn ngành hàng khác hoặc bấm xem tất cả.</Text>
-            <AppButton title="Xem tất cả sản phẩm" onPress={() => { setQuery(""); setPriceFilter("all"); selectHomeCategory("all"); }} style={styles.emptyCta} />
+            <Text style={styles.stateText}>
+              {activeFilterChips.length ? "Thử bỏ bớt điều kiện lọc hoặc bấm xem tất cả." : "Hãy chọn ngành hàng khác hoặc bấm xem tất cả."}
+            </Text>
+            {activeFilterChips.length > 0 && <AppButton title="Điều chỉnh bộ lọc" secondary onPress={() => setAdvancedSearchOpen(true)} style={styles.emptyCta} />}
+            <AppButton title="Xem tất cả sản phẩm" onPress={resetHomeSearch} style={styles.emptyCta} />
           </View>
         )}
       ListFooterComponent={<View style={styles.loadMoreFooter}>
@@ -2488,7 +2646,7 @@ export default function App() {
           <View style={styles.searchBar}>
             <Pressable
               onPress={() => {
-                setSelectedDrawerCatId(categoryId === "all" ? "all" : categoryId);
+                setSelectedDrawerCatId(categoryId ?? "all");
                 setCategoryModalOpen(true);
               }}
               style={styles.searchCategoryBtn}
@@ -2513,6 +2671,20 @@ export default function App() {
                 accessibilityLabel="Xóa nội dung tìm kiếm"
               >
                 <IconClose size={18} color="#64748b" />
+              </Pressable>
+            )}
+            {tab === "home" && !flashSaleOpen && (
+              <Pressable
+                onPress={() => setAdvancedSearchOpen(true)}
+                style={styles.searchFilterButton}
+                accessibilityRole="button"
+                accessibilityLabel={`Tìm kiếm nâng cao${activeFilterChips.length ? `, đang áp dụng ${activeFilterChips.length} điều kiện` : ""}`}
+              >
+                <IconFilter size={18} color={BHX_GREEN} />
+                <Text style={styles.searchFilterText}>Lọc</Text>
+                {activeFilterChips.length > 0 && (
+                  <View style={styles.searchFilterBadge}><Text style={styles.searchFilterBadgeText}>{activeFilterChips.length}</Text></View>
+                )}
               </Pressable>
             )}
           </View>
@@ -2583,6 +2755,16 @@ export default function App() {
       {/* ========================================================================= */}
       {/* Danh mục loại sản phẩm và sản phẩm của cửa hàng. */}
       {/* ========================================================================= */}
+      <AdvancedSearchSheet
+        visible={advancedSearchOpen}
+        onClose={() => setAdvancedSearchOpen(false)}
+        onApply={applyAdvancedSearch}
+        criteria={appliedFilters}
+        categories={categories}
+        searchIndex={searchIndex}
+        keyword={query}
+      />
+
       <CategorySlideModal
         visible={categoryModalOpen}
         onRequestClose={() => selectedProduct ? setSelectedProduct(null) : setCategoryModalOpen(false)}
@@ -2764,10 +2946,10 @@ export default function App() {
                         <Text style={styles.paymentWaitText}>{completedOrder.paymentError || "Chưa tạo được liên kết MoMo."}</Text>
                         <Pressable
                           disabled={orderActionBusy}
-                          onPress={async () => {
+                          onPress={() => runExclusive("order-action", async () => {
                             setOrderActionBusy(true);
                             try {
-                              const response = await fetch(`${API_URL}/storefront/orders/${completedOrder.id}/pay-momo`, { method: "POST", headers: { Authorization: `Bearer ${customerToken}` } });
+                              const response = await apiFetch(`${API_URL}/storefront/orders/${completedOrder.id}/pay-momo`, { method: "POST", headers: { Authorization: `Bearer ${customerToken}` } });
                               if (!response.ok) throw new Error(await readError(response));
                               const result = await response.json();
                               setCompletedOrder((order) => order ? { ...order, momoPayUrl: result.payUrl, paymentError: null } : order);
@@ -2776,8 +2958,8 @@ export default function App() {
                             } finally {
                               setOrderActionBusy(false);
                             }
-                          }}
-                          style={styles.momoActionBtn}
+                          })}
+                          style={[styles.momoActionBtn, orderActionBusy && styles.buttonDisabled]}
                         >
                           <Text style={styles.momoActionText}>{orderActionBusy ? "Đang tạo liên kết..." : "Thử tạo lại liên kết MoMo"}</Text>
                         </Pressable>
@@ -3201,6 +3383,10 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, minWidth: 0, color: TEXT_DARK, fontSize: 13, paddingVertical: 0, outlineStyle: "none" },
   searchClearButton: { width: 36, height: 44, alignItems: "center", justifyContent: "center" },
   searchCategoryBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: BHX_GREEN, alignItems: "center", justifyContent: "center", marginRight: 8 },
+  searchFilterButton: { height: 36, flexDirection: "row", alignItems: "center", gap: 4, paddingLeft: 10, marginLeft: 4, borderLeftWidth: 1, borderLeftColor: "#d9e2dc" },
+  searchFilterText: { color: BHX_GREEN, fontSize: 12, fontWeight: "700" },
+  searchFilterBadge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, backgroundColor: BHX_RED, alignItems: "center", justifyContent: "center" },
+  searchFilterBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
   promises: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: 9, gap: 9 },
   promiseText: { color: "#708077", fontSize: 10, fontWeight: "600" },
   promiseDot: { color: "#b6c0b8" },
@@ -3256,6 +3442,13 @@ const styles = StyleSheet.create({
   sortPillActive: { backgroundColor: BHX_GREEN, borderColor: BHX_GREEN },
   sortPillText: { color: TEXT_MUTED, fontSize: 10 },
   sortPillTextActive: { color: "#fff", fontWeight: "700" },
+  advancedFilterPill: { borderColor: BHX_GREEN },
+  advancedFilterPillActive: { backgroundColor: "#e7f5ee" },
+  advancedFilterPillText: { color: BHX_GREEN, fontSize: 10, fontWeight: "700" },
+  activeFilterChip: { flexDirection: "row", alignItems: "center", gap: 4, maxWidth: 180, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 16, backgroundColor: "#e7f5ee", borderWidth: 1, borderColor: "#b7e0c9" },
+  activeFilterChipText: { color: BHX_GREEN, fontSize: 10, fontWeight: "600", flexShrink: 1 },
+  clearFiltersButton: { justifyContent: "center", paddingHorizontal: 6, paddingVertical: 7 },
+  clearFiltersText: { color: BHX_RED, fontSize: 10, fontWeight: "700", textDecorationLine: "underline" },
   scrollContent: { padding: 16, paddingBottom: 20 },
   hero: { minHeight: 176, borderRadius: 18, backgroundColor: "#e8f2e5", padding: 19, overflow: "hidden", justifyContent: "center" },
   heroKicker: { color: "#57936e", fontSize: 9, fontWeight: "900", letterSpacing: 1.1, marginBottom: 8 },

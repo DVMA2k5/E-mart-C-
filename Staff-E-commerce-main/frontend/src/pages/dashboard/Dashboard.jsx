@@ -7,10 +7,8 @@ import TopProductsChart from "./TopProductsChart";
 import OrderStatusChart from "./OrderStatusChart";
 import LowStockAlert from "./LowStockAlert";
 import { fetchDashboard } from "../../features/statistics/statisticsSlice";
-import { useTokenExpiry } from "../../hook/useTokenExpiry";
 
 export default function Dashboard() {
-  useTokenExpiry();
 
   const dispatch = useDispatch();
   const { overview, revenue, bestSellers, lowStock, orderStats, loading } =
